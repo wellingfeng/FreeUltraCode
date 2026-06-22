@@ -13,12 +13,17 @@ app/*.tsbuildinfo
 .gstack/
 .codex/
 .claude/
-.freeultracode/
+.ultragamestudio/
 memory/
 app/.gstack/
 app/src-tauri/.gstack/
+.ugs-run/
 .fuc-run/
-runner/
+
+# Temp / run / release artifacts
+.tmp/
+.tmp_pdf_pages/
+.release-logs/
 
 # Local scratch / test outputs / screenshots
 /test100/
@@ -55,3 +60,7 @@ Thumbs.db
 # Native debug artifacts
 *.pdb
 app/src-tauri/icons.bak.old/
+
+# CI artifacts / scratch
+/tmp/
+app/tmp/

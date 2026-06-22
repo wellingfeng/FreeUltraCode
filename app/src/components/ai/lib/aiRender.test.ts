@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { segmentMessage, hasReasoning } from './segmenter';
-import { parseFileRef, looksLikePath } from './filePath';
-import { repairMarkdown, repairFences } from './repairMarkdown';
+import { parseFileRef, looksLikePath, displayFileRefPath } from './filePath';
+import {
+  fenceLooseDiffBlocks,
+  repairMarkdown,
+  repairFences,
+  unwrapMarkdownWrapper,
+} from './repairMarkdown';
 
 describe('segmentMessage', () => {
   it('returns a single answer segment for plain text', () => {
@@ -195,6 +200,28 @@ describe('parseFileRef', () => {
   });
 });
 
+describe('displayFileRefPath', () => {
+  it('joins a relative path onto a real local cwd', () => {
+    const ref = parseFileRef('src/store/useStore.ts')!;
+    expect(displayFileRefPath(ref, '/home/u/proj')).toBe('/home/u/proj/src/store/useStore.ts');
+  });
+
+  it('does NOT join onto an opaque remote:// workspace root', () => {
+    // A remote workspace cwd is the synthetic `remote://<id>` path. Joining a
+    // relative chip path onto it fabricates an un-openable `remote://...` string
+    // and corrupts non-path text (e.g. a regex) via separator normalization.
+    const ref = parseFileRef('a/app/src-tauri/src/free_proxy.rs')!;
+    expect(displayFileRefPath(ref, 'remote://rw_0ab2d791')).toBe(
+      'a/app/src-tauri/src/free_proxy.rs',
+    );
+  });
+
+  it('leaves an absolute path untouched regardless of cwd', () => {
+    const ref = parseFileRef('C:/Users/x/main.rs')!;
+    expect(displayFileRefPath(ref, '/home/u/proj')).toBe('C:/Users/x/main.rs');
+  });
+});
+
 describe('repairMarkdown', () => {
   it('closes a dangling fence', () => {
     expect(repairMarkdown('```ts\nconst a = 1')).toBe('```ts\nconst a = 1\n```');
@@ -215,6 +242,50 @@ describe('repairMarkdown', () => {
   });
 });
 
+describe('unwrapMarkdownWrapper', () => {
+  it('removes a whole-message markdown wrapper when it contains inner fences', () => {
+    const src = [
+      '```markdown',
+      '说明',
+      '',
+      '```ts',
+      'const a = 1;',
+      '```',
+      '```',
+    ].join('\n');
+
+    expect(unwrapMarkdownWrapper(src)).toBe(
+      ['说明', '', '```ts', 'const a = 1;', '```'].join('\n'),
+    );
+  });
+
+  it('keeps ordinary markdown fences as code', () => {
+    const src = ['```markdown', '# Title', '```'].join('\n');
+    expect(unwrapMarkdownWrapper(src)).toBe(src);
+  });
+});
+
+describe('fenceLooseDiffBlocks', () => {
+  it('wraps loose code-like diff lines so markdown does not parse them as lists', () => {
+    const src = [
+      '-        });',
+      '-        controller.close();',
+      '-      },',
+      '+        await waitFor(',
+      '+          () => expect(done).toBe(true),',
+    ].join('\n');
+
+    expect(fenceLooseDiffBlocks(src)).toBe(
+      ['```diff', src, '```'].join('\n'),
+    );
+  });
+
+  it('does not wrap normal prose lists', () => {
+    const src = ['- item one', '- item two'].join('\n');
+    expect(fenceLooseDiffBlocks(src)).toBe(src);
+  });
+});
+
 describe('repairFences', () => {
   it('closes a dangling fence so it cannot swallow trailing prose', () => {
     expect(repairFences('```ts\nconst a = 1')).toBe('```ts\nconst a = 1\n```');
@@ -228,5 +299,20 @@ describe('repairFences', () => {
   it('does not append a stray inline backtick on final render', () => {
     // A finalized line that legitimately ends in a backtick must stay as-is.
     expect(repairFences('count is `n')).toBe('count is `n');
+  });
+
+  it('repairs whole-message markdown wrappers with nested fences', () => {
+    const src = [
+      '⚙ 路由：本地',
+      '```markdown',
+      '```ts',
+      'const code = `value`;',
+      '```',
+      '```',
+    ].join('\n');
+
+    expect(repairFences(src)).toBe(
+      ['⚙ 路由：本地', '```ts', 'const code = `value`;', '```'].join('\n'),
+    );
   });
 });

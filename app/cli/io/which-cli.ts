@@ -7,7 +7,7 @@
  *
  * Resolution order for a CLI binary (highest priority first):
  *   1. explicit override (`cliCommand` arg — an absolute path or a bare name)
- *   2. `FUC_<ADAPTER>_PATH` env var (e.g. FUC_CLAUDE_PATH / FUC_CODEX_PATH)
+ *   2. `UGS_<ADAPTER>_PATH` env var (e.g. UGS_CLAUDE_PATH / UGS_CODEX_PATH)
  *   3. config-file `adapters.<adapter>.path` (passed in by the caller)
  *   4. PATH scan for the adapter's default binary name (+ PATHEXT on Windows)
  */
@@ -191,7 +191,7 @@ export interface WhichCliOptions {
 /**
  * Locate the executable for an adapter. Returns the command string to spawn
  * (an absolute path when discoverable, otherwise the bare binary name so spawn
- * can still resolve it). Honors override > FUC_<ADAPTER>_PATH > config > PATH.
+ * can still resolve it). Honors override > UGS_<ADAPTER>_PATH > config > PATH.
  */
 export function whichCli(adapter: string, opts: WhichCliOptions = {}): string {
   const override = opts.cliCommand?.trim();
@@ -199,7 +199,7 @@ export function whichCli(adapter: string, opts: WhichCliOptions = {}): string {
     return resolveCommand(override) ?? override;
   }
 
-  const envKey = `FUC_${adapterEnvName(adapter)}_PATH`;
+  const envKey = `UGS_${adapterEnvName(adapter)}_PATH`;
   const envPath = process.env[envKey]?.trim();
   if (envPath) {
     return resolveCommand(envPath) ?? envPath;

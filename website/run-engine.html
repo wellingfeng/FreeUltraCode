@@ -1,0 +1,946 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运行核心剖析：UltraGameStudio 如何把一次聊天编译成可验收的执行图</title>
+  <meta name="description" content="深入 UltraGameStudio 的运行引擎：IRGraph、DAG 调度、RunGateway 网关、节点重试与背压、Schema 约束、共识否决、交互回合，以及六种动态策略的内部机制。">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --surface: #0d1727;
+      --surface-2: #111f34;
+      --text: #eef6ff;
+      --muted: #a9b7c7;
+      --soft: #718096;
+      --line: rgba(148, 163, 184, 0.22);
+      --accent: #43e0a7;
+      --accent-2: #7dd3fc;
+      --warn: #f8c66d;
+      --code: #0a1020;
+      --max: 1120px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(67, 224, 167, 0.13), transparent 30rem),
+        radial-gradient(circle at 90% 16%, rgba(125, 211, 252, 0.11), transparent 26rem),
+        linear-gradient(180deg, #07111f 0%, #09121e 52%, #060b14 100%);
+      color: var(--text);
+      font-family: "IBM Plex Sans", "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.72;
+      letter-spacing: 0;
+    }
+
+    main {
+      overflow-x: clip;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    .shell {
+      width: min(var(--max), calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(7, 17, 31, 0.82);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar-inner {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(67, 224, 167, 0.34);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(67, 224, 167, 0.18), rgba(125, 211, 252, 0.09));
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 0 22px rgba(67, 224, 167, 0.16);
+    }
+
+    .brand-title {
+      font-weight: 700;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .brand-subtitle {
+      color: var(--soft);
+      font-size: 12px;
+      line-height: 1.2;
+      margin-top: 3px;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .nav a {
+      border-bottom: 1px solid transparent;
+      padding: 4px 0;
+      transition: color 180ms ease, border-color 180ms ease;
+    }
+
+    .nav a:hover,
+    .nav a:focus-visible {
+      color: var(--text);
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .hero {
+      padding: 72px 0 44px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+      gap: 40px;
+      align-items: center;
+    }
+
+    .hero-grid > *,
+    .article > *,
+    .grid > *,
+    .flow > * {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0;
+      margin-bottom: 18px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 26px;
+      height: 1px;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(67, 224, 167, 0.7);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 780px;
+      font-size: clamp(40px, 6vw, 76px);
+      font-weight: 760;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    h2 {
+      font-size: clamp(28px, 4vw, 44px);
+      margin-bottom: 18px;
+    }
+
+    h3 {
+      font-size: 21px;
+      margin-bottom: 12px;
+    }
+
+    .lede {
+      max-width: 720px;
+      margin: 24px 0 0;
+      color: #cfdae7;
+      font-size: clamp(18px, 2vw, 21px);
+      line-height: 1.65;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: rgba(13, 23, 39, 0.64);
+    }
+
+    .hero-visual {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(17, 31, 52, 0.9), rgba(6, 11, 20, 0.96));
+      box-shadow: 0 26px 80px rgba(0, 0, 0, 0.36);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .window-bar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #64748b;
+    }
+
+    .dot:nth-child(1) {
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(3) {
+      background: #22c55e;
+    }
+
+    .terminal {
+      padding: 20px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #c9d7e8;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      background:
+        linear-gradient(90deg, rgba(125, 211, 252, 0.06) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(125, 211, 252, 0.04) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    .prompt {
+      color: var(--accent);
+    }
+
+    .comment {
+      color: #7f8ea3;
+    }
+
+    .callout {
+      margin-top: 18px;
+      border-left: 2px solid var(--accent);
+      background: rgba(67, 224, 167, 0.08);
+      padding: 14px 16px;
+      color: #d9f9ef;
+    }
+
+    section {
+      padding: 56px 0;
+      border-top: 1px solid rgba(148, 163, 184, 0.13);
+    }
+
+    .section-kicker {
+      color: var(--accent-2);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .section-intro {
+      max-width: 800px;
+      color: var(--muted);
+      font-size: 18px;
+      margin: 0 0 28px;
+    }
+
+    .article {
+      display: grid;
+      grid-template-columns: minmax(0, 720px) minmax(220px, 1fr);
+      gap: 44px;
+      align-items: start;
+    }
+
+    .article-body p {
+      color: #c8d3df;
+      margin: 0 0 20px;
+    }
+
+    .article-body strong {
+      color: var(--text);
+    }
+
+    .article-body code,
+    .terminal code {
+      color: #d8f7ff;
+      background: rgba(7, 17, 31, 0.68);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    .side-note {
+      position: sticky;
+      top: 92px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(17, 31, 52, 0.64);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .side-note b {
+      color: var(--text);
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .toc {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .toc a {
+      color: var(--muted);
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .toc a:hover,
+    .toc a:focus-visible {
+      color: var(--accent);
+      outline: none;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 31, 52, 0.58);
+      padding: 20px;
+    }
+
+    .panel p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .panel .number {
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .flow-step {
+      min-height: 114px;
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 8px;
+      background: rgba(10, 16, 32, 0.74);
+      padding: 16px;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 1px;
+      right: -11px;
+      top: 50%;
+      background: rgba(125, 211, 252, 0.46);
+    }
+
+    .flow-step b {
+      display: block;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .image-band {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #050a12;
+      margin-top: 28px;
+      box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+    }
+
+    .image-band img {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      object-position: top center;
+    }
+
+    .caption {
+      border-top: 1px solid var(--line);
+      padding: 12px 14px;
+      color: var(--soft);
+      font-size: 13px;
+      background: rgba(13, 23, 39, 0.84);
+    }
+
+    .compare {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 31, 52, 0.52);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 15px 16px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--text);
+      font-size: 13px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      background: rgba(7, 17, 31, 0.58);
+    }
+
+    td {
+      color: #c7d3df;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .quote {
+      border: 1px solid rgba(67, 224, 167, 0.22);
+      border-radius: 8px;
+      background: rgba(67, 224, 167, 0.07);
+      padding: 22px;
+      color: #d9f9ef;
+      font-size: 19px;
+      line-height: 1.65;
+    }
+
+    .footer {
+      padding: 42px 0 56px;
+      color: var(--soft);
+      border-top: 1px solid rgba(148, 163, 184, 0.13);
+      font-size: 14px;
+    }
+
+    .footer .beian {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+      color: var(--soft);
+    }
+
+    .footer .beian a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .footer .beian a:hover {
+      color: var(--accent-2);
+    }
+
+    .footer .beian-sep {
+      color: var(--line);
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid,
+      .article {
+        grid-template-columns: 1fr;
+      }
+
+      .side-note {
+        position: static;
+      }
+
+      .grid,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 28px, var(--max));
+      }
+
+      .nav {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 48px;
+      }
+
+      h1 {
+        font-size: clamp(34px, 10vw, 44px);
+        max-width: 100%;
+        line-height: 1.08;
+      }
+
+      section {
+        padding: 42px 0;
+      }
+
+      .terminal {
+        font-size: 12px;
+        padding: 16px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 26px;
+    }
+
+    .matrix .panel .number {
+      color: var(--accent-2);
+    }
+
+    .stack {
+      display: grid;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .layer {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(13, 23, 39, 0.6);
+      padding: 14px 16px;
+      display: grid;
+      grid-template-columns: 132px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .layer .tag {
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      padding-top: 2px;
+    }
+
+    .layer p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    code.inline {
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.88em;
+      color: var(--accent-2);
+      background: rgba(125, 211, 252, 0.1);
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+
+    @media (max-width: 920px) {
+      .matrix { grid-template-columns: 1fr; }
+      .layer { grid-template-columns: 1fr; gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#top" aria-label="UltraGameStudio 首页">
+        <span class="brand-mark">UGS</span>
+        <span>
+          <span class="brand-title">UltraGameStudio</span>
+          <span class="brand-subtitle">Run engine internals</span>
+        </span>
+      </a>
+      <nav class="nav" aria-label="文章导航">
+        <a href="#why">动机</a>
+        <a href="#ir">IRGraph</a>
+        <a href="#dag">调度</a>
+        <a href="#gateway">网关</a>
+        <a href="#guards">验收</a>
+        <a href="#strategies">策略</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="shell hero-grid">
+        <div>
+          <div class="eyebrow">RUN ENGINE INTERNALS / 2026</div>
+          <h1>运行核心剖析：把一次聊天编译成可验收的执行图</h1>
+          <p class="lede">
+            UltraGameStudio 不把任务直接丢给模型，而是先编译成一张有依赖关系的执行图，再交给一个宿主无关的引擎调度。本文拆开 <code class="inline">app/src/runtime/</code>：IRGraph 怎么被执行、节点如何重试与背压、Schema 与共识如何把不可控的文本收敛成可验收的结果。
+          </p>
+          <div class="meta" aria-label="文章标签">
+            <span class="chip">IRGraph DAG</span>
+            <span class="chip">RunGateway / RunCallbacks</span>
+            <span class="chip">Schema + 共识否决</span>
+            <span class="chip">桌面端 / Node CLI 同构</span>
+          </div>
+        </div>
+
+        <aside class="hero-visual" aria-label="执行图摘要">
+          <div class="window-bar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="terminal">
+            <div><span class="prompt">$</span> executeWorkflowDag(graph, ctx, callbacks)</div>
+            <div class="comment"># 拓扑入度 0 的节点先就绪</div>
+            <div>ready: [classify]</div>
+            <div>dispatchNode -> runParallel | runPipeline | runConsensus</div>
+            <div>runNodeWithRetry: attempt 0..N, backoff 1.5s*n</div>
+            <div>schema: extractJson -> validate -> 有界重试</div>
+            <div class="callout">引擎只认图、上下文、回调和网关。窗口、stdout、Tauri 命令都在宿主层，不进入任务语义。</div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="why">
+      <div class="shell article">
+        <div class="article-body">
+          <div class="section-kicker">01 / MOTIVATION</div>
+          <h2>为什么不把复杂任务塞进一次模型调用</h2>
+          <p>
+            最直接的做法是把整个任务写成一个长 prompt，让模型一口气给出答案。这在单步问答里够用，但游戏开发里的真实任务往往是多步的：先判断属于哪类问题，再并行收集证据，改代码，跑验收，最后汇总。把这些步骤压进一次调用，意味着失败时你只能看到一团文本，既无法定位是哪一步出错，也无法只重跑失败的部分。
+          </p>
+          <p>
+            UltraGameStudio 的运行核心选择把任务显式建成一张图。每个节点是一次可观测的执行单元，节点之间用依赖关系连接。调度器按拓扑顺序推进，能并行的并行，需要前置结果的等待，失败的节点按策略重试或让整图失败。这样做的代价是接口更明确、概念更多；收益是任务可恢复、可审计，而且同一套图能在桌面端和 CLI 上跑出完全一致的行为。
+          </p>
+          <p>
+            这张图就是 <code class="inline">IRGraph</code>。它既是 <code class="inline">/studio</code> 动态生成执行计划的产物，也是普通聊天会话的底层载体。引擎入口 <code class="inline">executeWorkflowDag</code> 不关心图是动态生成还是预置的，它只负责把图跑完并产出终态。
+          </p>
+        </div>
+        <aside class="side-note">
+          <b>本文范围</b>
+          只讲运行核心的执行语义：图、调度、网关、验收、策略。不涉及 UI 布局、资产生成模式和具体的 provider 配置。
+          <nav class="toc" aria-label="目录">
+            <a href="#ir">IRGraph 与节点</a>
+            <a href="#dag">DAG 调度</a>
+            <a href="#gateway">网关与交互</a>
+            <a href="#guards">Schema 与共识</a>
+            <a href="#strategies">六种动态策略</a>
+          </nav>
+        </aside>
+      </div>
+    </section>
+
+    <section id="ir">
+      <div class="shell">
+        <div class="section-kicker">02 / IR GRAPH</div>
+        <h2>IRGraph 是引擎运行其上的唯一底物</h2>
+        <p class="section-intro">
+          任务在执行前先被表达成节点和依赖。节点有类型，决定它如何被分派；依赖决定它何时就绪。引擎不读懂自然语言意图，它只读这张结构。
+        </p>
+        <div class="stack">
+          <div class="layer">
+            <span class="tag">node</span>
+            <p>一个执行单元，携带 prompt、可选的模型与网关覆盖、可选的 Schema 名称。普通 agent 节点直接调一次模型；复合节点展开成并行分支、流水线阶段或共识投票。</p>
+          </div>
+          <div class="layer">
+            <span class="tag">edge</span>
+            <p>表达依赖。<code class="inline">buildDependencyGraph</code> 把边折算成每个节点的入度；入度归零的节点进入就绪集合，由 <code class="inline">getRunnableNodes</code> 取出。</p>
+          </div>
+          <div class="layer">
+            <span class="tag">context</span>
+            <p><code class="inline">RunContext</code> 注入网关、个性化指令、超时与速度启发式。它是引擎够到模型的唯一通道，不直接持有 HTTP 客户端或子进程。</p>
+          </div>
+          <div class="layer">
+            <span class="tag">meta.schemaDefs</span>
+            <p>图级别的 Schema 字典。节点用名字（如 <code class="inline">VERDICT</code>）引用，引擎据此对该节点输出做结构校验和有界重试。</p>
+          </div>
+        </div>
+        <div class="quote" style="margin-top:26px;">
+          关键约束写在源码的 <code class="inline">CONTRACT:</code> 注释里：<code class="inline">runtime/</code> 对宿主是纯的——不 import React / Zustand / Tauri，不碰 window / document / localStorage。所有副作用走注入的回调，所有模型能力走注入的网关。
+        </div>
+      </div>
+    </section>
+
+    <section id="dag">
+      <div class="shell">
+        <div class="section-kicker">03 / SCHEDULING</div>
+        <h2>调度：拓扑推进、并行收敛、有界重试</h2>
+        <p class="section-intro">
+          <code class="inline">executeWorkflowDag</code> 是主循环。它反复取出就绪节点，分派执行，记录终态，再根据完成情况解锁后继节点，直到没有可跑的节点为止。
+        </p>
+        <div class="flow">
+          <div class="flow-step">
+            <b>就绪</b>
+            <span>入度为 0 的节点进入就绪集合。</span>
+          </div>
+          <div class="flow-step">
+            <b>分派</b>
+            <span>dispatchNode 按类型走 parallel / pipeline / consensus 或单次调用。</span>
+          </div>
+          <div class="flow-step">
+            <b>重试</b>
+            <span>可重试失败按 1.5s×n、上限 15s 退避，最多 N 次。</span>
+          </div>
+          <div class="flow-step">
+            <b>记录</b>
+            <span>写入 NodeRunResult：状态、输出、耗时、失败码、重试次数。</span>
+          </div>
+          <div class="flow-step">
+            <b>解锁</b>
+            <span>后继节点入度递减，归零即就绪，循环继续。</span>
+          </div>
+        </div>
+        <div class="matrix">
+          <div class="panel">
+            <div class="number">runParallel</div>
+            <p>把多个分支并发跑，受 <code class="inline">runWithConcurrency</code> 的并发上限约束。这是背压所在：分支再多，同时在飞的请求数也被限住，避免一次性打满上游通道。</p>
+          </div>
+          <div class="panel">
+            <div class="number">runPipeline</div>
+            <p>顺序阶段，前一阶段的输出作为后一阶段的上下文。适合"先草稿、后精修"这类需要逐步收敛的链路。</p>
+          </div>
+          <div class="panel">
+            <div class="number">runConsensus</div>
+            <p>多个投票者各自产出，再由 <code class="inline">resolveConsensus</code> 按策略裁决。对抗式验收在这里落地：让一组模型互相检查，而不是相信单次输出。</p>
+          </div>
+          <div class="panel">
+            <div class="number">runNodeWithRetry</div>
+            <p>统一的单节点执行加重试。失败先被 <code class="inline">parseRunFailure</code> 分类（timeout / idle_timeout / spawn / backend …），只有可重试类型才进退避循环。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gateway">
+      <div class="shell article">
+        <div class="article-body">
+          <div class="section-kicker">04 / GATEWAY</div>
+          <h2>网关把"调用模型"和"宿主怎么调"彻底分开</h2>
+          <p>
+            节点要调一次模型，走的是 <code class="inline">RunGateway</code>。它抽象掉三件事：直接 HTTP completion、CLI 子进程 spawn、网关路由解析。桌面端把它实现成 Tauri 的 <code class="inline">aiEditViaCli</code> spawn 接缝加 Zustand 流式渲染；Node CLI 把它实现成 <code class="inline">child_process</code> 加 stdout 和 readline。两个宿主消费同一份 <code class="inline">runtime/</code> 代码，所以同一张图跑出来的 DAG 顺序、重试、终态完全一致。
+          </p>
+          <p>
+            模型不是一次性吐完答案就结束。<code class="inline">runAgentWithInteraction</code> 在 <code class="inline">invokeAgent</code> 外面包了一层有界的"节点可以反问用户"循环：每一轮通过 <code class="inline">callbacks.beginStream</code> 流式输出，如果模型按交互协议发出一个询问块，引擎渲染成交互控件、阻塞等待 <code class="inline">promptInteraction</code> 的答复，把答复拼回上下文再跑下一轮。回合数有上限（<code class="inline">MAX_INTERACTION_ROUNDS</code>），避免模型把用户拖进无限问答。
+          </p>
+          <p>
+            这层设计让交互成为引擎能力而不是 UI 补丁。桌面端把交互渲染成可点按钮，CLI 把它渲染成命令行提问，但"什么时候该问、问几轮、答复怎么回填"由核心统一决定。
+          </p>
+        </div>
+        <aside class="side-note">
+          <b>失败分类</b>
+          <code class="inline">RunFailureCode</code> 把失败收敛成有限集合：timeout、idle_timeout、interrupted、exit、spawn、backend、wait、unknown。重试策略只对可重试类型生效，认证类 4xx 这种不可重试的会直接上报，不浪费退避时间。
+        </aside>
+      </div>
+    </section>
+
+    <section id="guards">
+      <div class="shell">
+        <div class="section-kicker">05 / GUARDS</div>
+        <h2>Schema 和共识：把不可控的文本收敛成可验收的结果</h2>
+        <p class="section-intro">
+          模型输出是自由文本，但下游往往需要结构化、可信的结果。引擎用两道独立的闸门处理这件事。
+        </p>
+        <div class="matrix">
+          <div class="panel">
+            <div class="number">Schema 约束</div>
+            <p>节点引用一个 Schema 名，引擎在 prompt 末尾追加结构说明，用 <code class="inline">extractJson</code> 从输出里抽出 JSON，再用 <code class="inline">validateAgainstSchema</code> 校验。不合格时 <code class="inline">schemaRetryFeedback</code> 把具体问题回喂给模型做有界重试，而不是直接接受脏数据。</p>
+          </div>
+          <div class="panel">
+            <div class="number">共识否决</div>
+            <p>共识节点让多个投票者产出，再由策略裁决。对抗式策略允许验证者否决——只要有否决，结果就不通过，迫使链路重新生成而不是放行一个看似合理但错误的答案。</p>
+          </div>
+        </div>
+        <p style="margin-top:24px;">
+          这两道闸门的共同点是：它们不假设模型一定对。Schema 处理"格式不对"，共识处理"内容可能错"。配合 DAG 的重试，整图在单个模型不稳定时仍然能逼近一个可交付的结果，而不是把第一份输出当成最终答案。
+        </p>
+        <p>
+          所有这些过程都落到 <code class="inline">.ugs-run/&lt;run-id&gt;/</code>：事件流、任务账本、每个节点选了哪个模型、最终 verdict。失败时能精确回答是哪一步、哪个通道、哪个验收条件出了问题——这正是把任务建成图而不是塞进一次调用所换来的可观测性。
+        </p>
+      </div>
+    </section>
+
+    <section id="strategies">
+      <div class="shell">
+        <div class="section-kicker">06 / STRATEGIES</div>
+        <h2>六种动态策略：planner 按任务形状选编排</h2>
+        <p class="section-intro">
+          <code class="inline">/studio</code> 不套固定模板。planner 读任务后从六种策略里选一种或组合，生成对应形状的执行图。下面是每种策略解决的问题。
+        </p>
+        <div class="compare">
+          <table>
+            <thead>
+              <tr>
+                <th>策略</th>
+                <th>图的形状</th>
+                <th>适用任务</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>classify-and-act</td>
+                <td>先分类，再按类别走不同分支。</td>
+                <td>意图不确定的请求，先判断属于哪类问题再决定怎么处理。</td>
+              </tr>
+              <tr>
+                <td>fan-out-and-synthesize</td>
+                <td>并行铺开多个子任务，再汇聚成一个综合结果。</td>
+                <td>可拆成独立子问题的任务，并发收集后由一个收敛节点合并。</td>
+              </tr>
+              <tr>
+                <td>adversarial-verification</td>
+                <td>生成与验证分离，验证者可否决。</td>
+                <td>正确性要求高的改动，用对抗检查替代"相信单次输出"。</td>
+              </tr>
+              <tr>
+                <td>generate-and-filter</td>
+                <td>先多产候选，再按条件过滤。</td>
+                <td>需要从一批方案里挑出合格项，而不是一次生成就用。</td>
+              </tr>
+              <tr>
+                <td>tournament</td>
+                <td>候选两两/分组比较，逐轮淘汰。</td>
+                <td>有多个看似都行的方案，需要择优而非简单合并。</td>
+              </tr>
+              <tr>
+                <td>loop-until-done</td>
+                <td>循环执行直到满足验收条件。</td>
+                <td>结果需要迭代逼近的任务，每轮检查是否达标再决定是否继续。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:24px;">
+          这些策略不是互斥的标签，而是图的构造模式。当并行宽度超过阈值时，引擎会自动插入一个收敛节点把扇出结果归并，避免下游被一堆零散输出淹没。策略选择、模型分配、验收节点最终都体现成 IRGraph 的结构，再交给同一个 <code class="inline">executeWorkflowDag</code> 跑完。
+        </p>
+        <div class="quote" style="margin-top:26px;">
+          核心判断：复杂任务的稳定性来自结构，不来自更长的 prompt。把编排显式化，引擎就能在并行、重试、验收和恢复上提供保证，而这些保证在桌面端和 CLI 上是同一套。
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="shell">
+        <p>UltraGameStudio 运行核心深度技术文。静态 HTML，无需构建步骤。</p>
+        <p>源码参考：<code class="inline">app/src/runtime/{dag,node-dispatch,gateway,run-node,schema,concurrency,dynamicHarness}.ts</code>。契约见各文件顶部 <code class="inline">CONTRACT:</code> 注释。</p>
+        <p class="beian">
+          <span>&copy; 2026 skillshare.center</span>
+          <span class="beian-sep">·</span>
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">粤ICP备2026021463号</a>
+        </p>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

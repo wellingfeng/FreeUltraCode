@@ -27,7 +27,7 @@ function stripRouteLine(text: string): string {
 
 function contextMessageText(message: Message): string {
   const raw =
-    message.role === 'assistant' && message.text.includes('<<FUC_TOOL>>')
+    message.role === 'assistant' && message.text.includes('<<UGS_TOOL>>')
       ? extractToolSentinels(message.text).text
       : message.text;
   return stripRouteLine(raw);

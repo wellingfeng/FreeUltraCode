@@ -4,6 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tauriAvailable } from '@/lib/tauri';
 import AIDock from './AIDock';
 import { defaultBlueprint } from '@/core/defaultBlueprint';
+import {
+  remoteWorkspacePath,
+  saveRemoteRunnerConnection,
+  saveRemoteWorkspace,
+} from '@/lib/remoteWorkspace';
+import { resetSecureStorageForTests } from '@/lib/secureStorage';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
 
@@ -44,7 +50,7 @@ function resetStore(): void {
     chattingSessions: [],
     locale: 'zh-CN',
     promptGroups: samplePromptGroups,
-    composer: { ...defaultComposer, workspace: 'E:\\OpenWorkflows' },
+    composer: { ...defaultComposer, workspace: 'E:\\UltraGameStudio' },
     composerDraft: '',
     composerDrafts: {},
     composerFocusVersion: 0,
@@ -116,10 +122,28 @@ function flushAsync(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
+async function waitForExpect(assertion: () => void): Promise<void> {
+  let lastError: unknown;
+  for (let i = 0; i < 20; i += 1) {
+    try {
+      assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
+      });
+    }
+  }
+  throw lastError;
+}
+
 afterEach(() => {
   tauriMocks.saveClipboardImage.mockReset();
   tauriMocks.previewLocalFile.mockReset();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
+  resetSecureStorageForTests();
   document.body.innerHTML = '';
 });
 
@@ -128,10 +152,10 @@ describe('AIDock pasted clipboard images', () => {
     resetStore();
     expect(tauriAvailable()).toBe(true);
     tauriMocks.saveClipboardImage.mockResolvedValue(
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
     );
     tauriMocks.previewLocalFile.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       fileName: 'shot.png',
       kind: 'image',
       mime: 'image/png',
@@ -161,10 +185,10 @@ describe('AIDock pasted clipboard images', () => {
         bytesBase64: 'AQID',
         mime: 'image/png',
         fileName: 'screenshot.png',
-        cwd: 'E:\\OpenWorkflows',
+        cwd: 'E:\\UltraGameStudio',
       });
       expect(input.value).toBe(
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       );
     } finally {
       await view.cleanup();
@@ -174,10 +198,10 @@ describe('AIDock pasted clipboard images', () => {
   it('deduplicates screenshot images exposed through files and items', async () => {
     resetStore();
     tauriMocks.saveClipboardImage.mockResolvedValue(
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
     );
     tauriMocks.previewLocalFile.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       fileName: 'shot.png',
       kind: 'image',
       mime: 'image/png',
@@ -219,8 +243,133 @@ describe('AIDock pasted clipboard images', () => {
 
       expect(tauriMocks.saveClipboardImage).toHaveBeenCalledTimes(1);
       expect(input.value).toBe(
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('uploads pasted images to the remote project instead of inserting local paths', async () => {
+    resetStore();
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test' },
+      { token: 'runner-token' },
+    );
+    const remotePath = remoteWorkspacePath('rw_paste');
+    saveRemoteWorkspace({
+      id: 'rw_paste',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      adapter: 'codex',
+      projectId: 'proj_paste',
+      repoUrl: 'https://github.com/me/game.git',
+    });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: remotePath },
+    });
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          file: {
+            path: 'remote-project://proj_paste/.ultragamestudio/clipboard-images/shot.png',
+            relativePath: '.ultragamestudio/clipboard-images/shot.png',
+            fileName: 'shot.png',
+            mime: 'image/png',
+            sizeBytes: 3,
+          },
+        }),
+        {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+      const file = new File([new Uint8Array([1, 2, 3])], 'screenshot.png', {
+        type: 'image/png',
+      });
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+      });
+
+      await act(async () => {
+        const preventDefault = dispatchPaste(input, clipboardWithImage(file));
+        expect(preventDefault).toHaveBeenCalled();
+        await flushAsync();
+      });
+
+      expect(tauriMocks.saveClipboardImage).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://runner.test/projects/proj_paste/files',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer runner-token',
+            'content-type': 'application/json',
+          }),
+        }),
+      );
+      expect(input.value).toBe('.ultragamestudio/clipboard-images/shot.png');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('surfaces remote pasted image upload failures', async () => {
+    resetStore();
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test' },
+      { token: 'runner-token' },
+    );
+    const remotePath = remoteWorkspacePath('rw_paste_fail');
+    saveRemoteWorkspace({
+      id: 'rw_paste_fail',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      adapter: 'codex',
+      projectId: 'proj_paste_fail',
+      repoUrl: 'https://github.com/me/game.git',
+    });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: remotePath },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: false, error: 'upload rejected' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+      const file = new File([new Uint8Array([1, 2, 3])], 'screenshot.png', {
+        type: 'image/png',
+      });
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+      });
+
+      await act(async () => {
+        dispatchPaste(input, clipboardWithImage(file));
+        await flushAsync();
+      });
+
+      await waitForExpect(() => {
+        expect(input.value).toBe('');
+        expect(view.container.textContent).toContain(
+          '远程文件上传失败：upload rejected',
+        );
+      });
     } finally {
       await view.cleanup();
     }
@@ -239,7 +388,7 @@ describe('AIDock pasted clipboard images', () => {
       ],
     });
     tauriMocks.previewLocalFile.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\app\\src\\App.tsx',
+      path: 'E:\\UltraGameStudio\\app\\src\\App.tsx',
       fileName: 'App.tsx',
       kind: 'text',
       mime: 'text/typescript',
@@ -253,7 +402,7 @@ describe('AIDock pasted clipboard images', () => {
     try {
       const chip = view.container.querySelector<HTMLButtonElement>('.ai-file-chip');
       expect(chip).not.toBeNull();
-      expect(chip!.textContent).toContain('E:\\OpenWorkflows\\app\\src\\App.tsx');
+      expect(chip!.textContent).toContain('E:\\UltraGameStudio\\app\\src\\App.tsx');
 
       await act(async () => {
         chip!.click();
@@ -262,10 +411,10 @@ describe('AIDock pasted clipboard images', () => {
 
       expect(tauriMocks.previewLocalFile).toHaveBeenCalledWith(
         'app/src/App.tsx',
-        { cwd: 'E:\\OpenWorkflows' },
+        { cwd: 'E:\\UltraGameStudio' },
       );
       expect(view.container.textContent).toContain(
-        'E:\\OpenWorkflows\\app\\src\\App.tsx',
+        'E:\\UltraGameStudio\\app\\src\\App.tsx',
       );
     } finally {
       await view.cleanup();
@@ -276,10 +425,10 @@ describe('AIDock pasted clipboard images', () => {
     resetStore();
     useStore.setState({
       composerDraft:
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png 没什么',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png 没什么',
     });
     tauriMocks.previewLocalFile.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       fileName: 'shot.png',
       kind: 'image',
       mime: 'image/png',
@@ -300,7 +449,7 @@ describe('AIDock pasted clipboard images', () => {
       const chip = strip!.querySelector<HTMLButtonElement>('.ai-file-chip-thumb');
       expect(chip).not.toBeNull();
       expect(chip!.title).toContain(
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       );
 
       await act(async () => {
@@ -309,8 +458,8 @@ describe('AIDock pasted clipboard images', () => {
       });
 
       expect(tauriMocks.previewLocalFile).toHaveBeenCalledWith(
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
-        { cwd: 'E:\\OpenWorkflows' },
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+        { cwd: 'E:\\UltraGameStudio' },
       );
     } finally {
       await view.cleanup();

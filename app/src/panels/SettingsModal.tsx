@@ -33,6 +33,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Settings as SettingsIcon,
   SlashSquare,
   SlidersHorizontal,
@@ -97,11 +98,16 @@ import {
 import { importCcSwitchProviders } from '@/lib/ccSwitchAutoImport';
 import {
   isTauri,
+  installSkillFromText,
+  installSkillFromUrl,
   localModelStatus,
   openExternal,
   setupComfyui,
+  skillInstallTargets,
   type ComfyUiSetupModel,
   type LocalModelRuntimeStatus,
+  type SkillInstallTarget,
+  uninstallSkill,
   validateShellPath,
 } from '@/lib/tauri';
 import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
@@ -321,6 +327,13 @@ import {
   type TranslationProviderId,
   type TranslationSettings,
 } from '@/lib/translationSettings';
+import { isRemoteRunnerProvider } from '@/lib/remoteWorkspace';
+import {
+  isRemoteSettingsProfile,
+  preloadSettingsProfile,
+  settingsProfileIdForWorkspacePath,
+  type SettingsProfileOptions,
+} from '@/lib/generationSettingsStore';
 import {
   ReadonlyField,
   SelectControl,
@@ -330,8 +343,42 @@ import {
   TextField,
 } from '@/panels/settings/controls';
 import CommandsSettings from '@/panels/settings/CommandsSettings';
+import {
+  UI_DESIGN_CHANNELS,
+  loadUiDesignChannelSettings,
+  saveUiDesignChannelSettings,
+  uiDesignChannelBaseUrl,
+  uiDesignChannelById,
+  uiDesignChannelCategoryLabel,
+  uiDesignChannelCommand,
+  uiDesignChannelExportFormat,
+  uiDesignChannelReady,
+  type UiDesignChannelCategory,
+  type UiDesignChannelDefinition,
+  type UiDesignChannelId,
+  type UiDesignChannelSettings,
+} from '@/lib/uiDesignChannels';
+import {
+  createCustomMeshLibraryId,
+  meshLibraryCategoryLabel,
+  meshLibraries,
+  loadMeshLibrarySettings,
+  meshLibraryReady,
+  meshLibraryUsability,
+  meshLibraryUsable,
+  saveMeshLibrarySettings,
+  type CustomMeshLibraryDefinition,
+  type MeshLibraryAccountSettings,
+  type MeshLibraryDefinition,
+  type MeshLibraryId,
+} from '@/lib/meshLibrary';
+import {
+  CAPTURE_PERF_SKILLS,
+  capturePerfCategoryLabel,
+  type CapturePerfSkillDefinition,
+} from '@/lib/capturePerfSkills';
 
-type SettingsTab =
+  type SettingsTab =
   | 'general'
   | 'personalization'
   | 'models'
@@ -341,7 +388,11 @@ type SettingsTab =
   | 'worldModelGeneration'
   | 'speechGeneration'
   | 'threeDGeneration'
+  | 'meshLibrary'
+  | 'spriteGeneration'
+  | 'uiDesign'
   | 'rigging'
+  | 'capturePerf'
   | 'gameExperts'
   | 'consensus'
   | 'commands'
@@ -367,6 +418,12 @@ const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = 
   { id: 'videoGeneration', labelKey: 'settings.tabs.videoGeneration', Icon: Video },
   { id: 'worldModelGeneration', labelKey: 'settings.tabs.worldModelGeneration', Icon: Globe },
   { id: 'speechGeneration', labelKey: 'settings.tabs.speechGeneration', Icon: Volume2 },
+  { id: 'threeDGeneration', labelKey: 'settings.tabs.threeDGeneration', Icon: Box },
+  { id: 'meshLibrary', labelKey: 'settings.tabs.meshLibrary', Icon: Boxes },
+  { id: 'spriteGeneration', labelKey: 'settings.tabs.spriteGeneration', Icon: Boxes },
+  { id: 'uiDesign', labelKey: 'settings.tabs.uiDesign', Icon: Palette },
+  { id: 'rigging', labelKey: 'settings.tabs.rigging', Icon: Bone },
+  { id: 'capturePerf', labelKey: 'settings.tabs.capturePerf', Icon: DownloadCloud },
   { id: 'commands', labelKey: 'settings.tabs.commands', Icon: SlashSquare },
   { id: 'mcp', labelKey: 'settings.tabs.mcp', Icon: Terminal },
   { id: 'lsp', labelKey: 'settings.tabs.lsp', Icon: Languages },
@@ -498,9 +555,30 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const setPersonalInstructions = useStore((s) => s.setPersonalInstructions);
   const gameExpertSettings = useStore((s) => s.gameExpertSettings);
   const setGameExpertSettings = useStore((s) => s.setGameExpertSettings);
+  const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
+  const workspaces = useStore((s) => s.workspaces);
   const [shortcutSettings, setShortcutSettingsState] = useState(
     loadShortcutSettings,
   );
+  const settingsWorkspace = useMemo<WorkspaceSummary | null>(() => {
+    if (activeWorkspaceId) {
+      const match = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
+      if (match) return match;
+    }
+    return workspaces[0] ?? null;
+  }, [activeWorkspaceId, workspaces]);
+  const settingsProfileId = settingsProfileIdForWorkspacePath(
+    settingsWorkspace?.path,
+  );
+  const settingsProfile = useMemo<SettingsProfileOptions>(
+    () => ({ profileId: settingsProfileId }),
+    [settingsProfileId],
+  );
+  const remoteSettingsProfile = isRemoteSettingsProfile(settingsProfileId);
+
+  useEffect(() => {
+    void preloadSettingsProfile(settingsProfileId);
+  }, [settingsProfileId]);
 
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragState = useRef<{
@@ -610,6 +688,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               <p className="mt-1 text-xs leading-relaxed text-fg-faint">
                 {t(locale, 'settings.subtitle')}
               </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+                {remoteSettingsProfile
+                  ? locale === 'zh-CN'
+                    ? `当前云端项目独立设置：${settingsWorkspace?.name ?? settingsWorkspace?.path ?? '未命名项目'}`
+                    : `Current remote project settings: ${settingsWorkspace?.name ?? settingsWorkspace?.path ?? 'Untitled project'}`
+                  : locale === 'zh-CN'
+                    ? '当前为本机共享设置：所有本地项目共用同一套账号和渠道。'
+                    : 'Current local shared settings: local projects share one account/channel profile.'}
+              </p>
             </div>
             <button
               type="button"
@@ -693,28 +780,83 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <ChannelsSettings locale={locale} cliRuntime={cliRuntime} />
               ) : tab === 'imageGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.imageGeneration')}>
-                  <ImageGenerationSettingsPanel locale={locale} />
+                  <ImageGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
                 </ErrorBoundary>
               ) : tab === 'musicGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.musicGeneration')}>
-                  <MusicGenerationSettingsPanel locale={locale} />
+                  <MusicGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
                 </ErrorBoundary>
               ) : tab === 'videoGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.videoGeneration')}>
-                  <VideoGenerationSettingsPanel locale={locale} />
+                  <VideoGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
                 </ErrorBoundary>
               ) : tab === 'worldModelGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.worldModelGeneration')}>
-                  <WorldModelGenerationSettingsPanel locale={locale} />
+                  <WorldModelGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
                 </ErrorBoundary>
               ) : tab === 'speechGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.speechGeneration')}>
-                  <SpeechGenerationSettingsPanel locale={locale} />
+                  <SpeechGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
                 </ErrorBoundary>
               ) : tab === 'threeDGeneration' ? (
-                <ThreeDGenerationSettingsPanel locale={locale} />
+                <ThreeDGenerationSettingsPanel
+                  key={settingsProfileId ?? 'local'}
+                  locale={locale}
+                  settingsProfile={settingsProfile}
+                  remoteProfile={remoteSettingsProfile}
+                />
+              ) : tab === 'meshLibrary' ? (
+                <MeshLibrarySettingsPanel
+                  key={settingsProfileId ?? 'local'}
+                  locale={locale}
+                  settingsProfile={settingsProfile}
+                />
+              ) : tab === 'spriteGeneration' ? (
+                <SpriteGenerationSettingsPanel
+                  key={settingsProfileId ?? 'local'}
+                  locale={locale}
+                  settingsProfile={settingsProfile}
+                />
+              ) : tab === 'uiDesign' ? (
+                <UiDesignChannelSettingsPanel
+                  key={settingsProfileId ?? 'local'}
+                  locale={locale}
+                  settingsProfile={settingsProfile}
+                />
               ) : tab === 'rigging' ? (
-                <RiggingSettingsPanel locale={locale} />
+                <RiggingSettingsPanel
+                  key={settingsProfileId ?? 'local'}
+                  locale={locale}
+                  settingsProfile={settingsProfile}
+                  remoteProfile={remoteSettingsProfile}
+                />
+              ) : tab === 'capturePerf' ? (
+                <CapturePerfSettingsPanel locale={locale} />
               ) : tab === 'gameExperts' ? (
                 <GameExpertSettingsPanel
                   locale={locale}
@@ -1632,7 +1774,7 @@ function GlobalRunControls({
   // (which reflects in-memory store state) and, crucially, keeps the display
   // correct even when the localStorage write fails — e.g. quota full, in which
   // case gatewayConfig.rawSet swallows the error and never dispatches
-  // 'fuc:gateway-config-changed', so an event-only refresh would snap back to
+  // 'ugs:gateway-config-changed', so an event-only refresh would snap back to
   // the stale value. onChannelChange/onModelChange update it optimistically.
   const [runSelection, setRunSelection] = useState<GatewaySelection>(() =>
     getActiveGatewaySelection(),
@@ -1645,20 +1787,21 @@ function GlobalRunControls({
       setRevision((n) => n + 1);
       setRunSelection(getActiveGatewaySelection());
     };
-    window.addEventListener('fuc:gateway-config-changed', refresh);
-    return () => window.removeEventListener('fuc:gateway-config-changed', refresh);
+    window.addEventListener('ugs:gateway-config-changed', refresh);
+    return () => window.removeEventListener('ugs:gateway-config-changed', refresh);
   }, []);
 
   useEffect(() => {
     const refresh = () => setModelListRevision((n) => n + 1);
-    window.addEventListener('fuc:model-list-changed', refresh);
-    return () => window.removeEventListener('fuc:model-list-changed', refresh);
+    window.addEventListener('ugs:model-list-changed', refresh);
+    return () => window.removeEventListener('ugs:model-list-changed', refresh);
   }, []);
 
   const defaultChannelProviders = useMemo(() => {
     void revision;
     const desktop = isTauri();
-    return listProviders()
+    const sorted = listProviders()
+      .filter((provider) => !isRemoteRunnerProvider(provider))
       .map((provider) => {
         const adapter = providerKindToAdapter(provider.kind);
         const runtime = getProviderRuntimeInfo(provider, {
@@ -1677,6 +1820,18 @@ function GlobalRunControls({
         if (rankA !== rankB) return rankA - rankB;
         return a.provider.name.localeCompare(b.provider.name);
       });
+    const seen = new Set<string>();
+    return sorted.filter(({ provider, adapter }) => {
+      const key = [
+        adapter,
+        provider.name.trim().toLowerCase(),
+        provider.baseUrl.trim().replace(/\/+$/, '').toLowerCase(),
+        (provider.model ?? '').trim().toLowerCase(),
+      ].join('\0');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }, [cliRuntime, revision]);
 
   const channelOptions = useMemo(
@@ -2087,7 +2242,7 @@ function ModelsSettings({
     try {
       const saved = await exportJsonFile(
         exportDefaultChannelsConfig(),
-        'openworkflow-default-channels.json',
+        'ultragamestudio-default-channels.json',
         t(locale, 'settings.modelsTitle'),
       );
       if (!saved) return;
@@ -2130,6 +2285,7 @@ function ModelsSettings({
   const providerCards = useMemo(
     () =>
       providers
+        .filter((provider) => !isRemoteRunnerProvider(provider))
         .map((provider) => {
           const adapter = providerKindToAdapter(provider.kind);
           const canUseCliFallback =
@@ -2349,7 +2505,10 @@ function DefaultChannelRow({
   const [baseUrlValue, setBaseUrlValue] = useState(provider.baseUrl);
   const [keyValue, setKeyValue] = useState(provider.apiKey);
   const [modelValue, setModelValue] = useState(provider.model ?? '');
+  const [nameValue, setNameValue] = useState(provider.name);
+  const [editingName, setEditingName] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
   const [modelRefresh, setModelRefresh] = useState<{
@@ -2361,12 +2520,22 @@ function DefaultChannelRow({
     setBaseUrlValue(provider.baseUrl);
     setKeyValue(provider.apiKey);
     setModelValue(provider.model ?? '');
+    setNameValue(provider.name);
+    setEditingName(false);
+    setNameError(null);
     setBaseUrlError(null);
     setDuplicateError(null);
-  }, [provider.id, provider.baseUrl, provider.apiKey, provider.model]);
+  }, [
+    provider.id,
+    provider.name,
+    provider.baseUrl,
+    provider.apiKey,
+    provider.model,
+  ]);
 
   const draftProvider: Provider = {
     ...provider,
+    name: nameValue,
     baseUrl: baseUrlValue,
     apiKey: keyValue,
     model: modelValue.trim() || undefined,
@@ -2384,6 +2553,10 @@ function DefaultChannelRow({
       ...patch,
     };
     const next = trimProviderDraft(nextProvider);
+    if (!next.name) {
+      setNameError(t(locale, 'settings.models.validationNameRequired'));
+      return false;
+    }
     if (!isProviderBaseUrlValid(next.baseUrl)) {
       setBaseUrlError(t(locale, 'settings.models.validationBaseUrl'));
       return false;
@@ -2400,13 +2573,16 @@ function DefaultChannelRow({
     }
 
     setBaseUrlError(null);
+    setNameError(null);
     setDuplicateError(null);
+    setNameValue(next.name);
     setBaseUrlValue(next.baseUrl);
     setKeyValue(next.apiKey);
     setModelValue(next.model ?? '');
 
     if (!providerDraftChanged(next, providerDraft(provider))) return false;
     updateProvider(provider.id, {
+      name: next.name,
       apiKey: next.apiKey,
       baseUrl: next.baseUrl,
       model: next.model,
@@ -2415,6 +2591,19 @@ function DefaultChannelRow({
     });
     onChange();
     return true;
+  };
+
+  const commitName = () => {
+    const nextName = nameValue.trim();
+    if (nextName === provider.name.trim()) {
+      setNameValue(provider.name);
+      setNameError(null);
+      setEditingName(false);
+      return;
+    }
+    if (commitProvider({ name: nameValue })) {
+      setEditingName(false);
+    }
   };
 
   const commitModelList = ({
@@ -2463,10 +2652,63 @@ function DefaultChannelRow({
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <GroupDot className={dotClassName} />
-          <span className="truncate text-sm font-medium text-fg">
-            {provider.name || runtimeAdapterLabel(adapter)}
-          </span>
+          {editingName ? (
+            <input
+              type="text"
+              value={nameValue}
+              onChange={(event) => {
+                setNameValue(event.target.value);
+                setNameError(null);
+                setDuplicateError(null);
+              }}
+              onBlur={commitName}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  setNameValue(provider.name);
+                  setNameError(null);
+                  setEditingName(false);
+                }
+              }}
+              aria-label={t(locale, 'settings.models.providerName')}
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              className={cn(
+                'h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-medium text-fg outline-none transition-colors focus:border-accent',
+                nameError && 'border-rose-500/60',
+              )}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setNameValue(provider.name);
+                setNameError(null);
+                setEditingName(true);
+              }}
+              title={t(locale, 'settings.models.editTitle')}
+              aria-label={`${t(locale, 'settings.models.editTitle')}: ${
+                provider.name || runtimeAdapterLabel(adapter)
+              }`}
+              className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-medium text-fg transition-colors hover:bg-panel hover:text-accent"
+            >
+              <span className="truncate">
+                {provider.name || runtimeAdapterLabel(adapter)}
+              </span>
+              <Pencil
+                size={12}
+                strokeWidth={2.2}
+                className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+              />
+            </button>
+          )}
         </div>
+        {nameError && (
+          <p className="basis-full text-[11px] leading-relaxed text-rose-300">
+            {nameError}
+          </p>
+        )}
         <StatusBadge
           state={draftRuntime.status}
           label={providerStatusLabel(draftRuntime.status, locale)}
@@ -3425,11 +3667,19 @@ function CustomGenerationProviderDialog({
   );
 }
 
-const IMAGE_GEN_ACTIVE_CATEGORY_KEY = 'fuc:imgGenActiveCategory';
+const IMAGE_GEN_ACTIVE_CATEGORY_KEY = 'ugs:imgGenActiveCategory';
 
-function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
+function ImageGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
   const [settings, setSettings] = useState<ImageGenerationSettings>(() =>
-    loadImageGenerationSettings(),
+    loadImageGenerationSettings(settingsProfile),
   );
   // Commercial and free-credit providers live in separate tabs so each
   // category stays self-contained instead of stacking in one long list.
@@ -3456,11 +3706,13 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
 
   const update = (patch: Partial<ImageGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveImageGenerationSettings(next);
+    saveImageGenerationSettings(next, settingsProfile);
     setSettings(next);
   };
 
-  const providers = imageProviders(settings);
+  const providers = imageProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -3505,9 +3757,9 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    const ok = saveImageGenerationSettings(next);
+    const ok = saveImageGenerationSettings(next, settingsProfile);
     if (!ok) return false;
-    setSettings(loadImageGenerationSettings());
+    setSettings(loadImageGenerationSettings(settingsProfile));
     // Keep the user on (and persist) the tab the channel was added to, so it
     // stays visible after the panel remounts.
     setCategory(category);
@@ -3539,8 +3791,8 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels,
       providerModelLists,
     };
-    saveImageGenerationSettings(next);
-    setSettings(loadImageGenerationSettings());
+    saveImageGenerationSettings(next, settingsProfile);
+    setSettings(loadImageGenerationSettings(settingsProfile));
   };
 
   return (
@@ -3553,16 +3805,6 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
           {t(locale, 'settings.imageGeneration.description')}
         </p>
       </div>
-
-      <SettingRow
-        title={t(locale, 'settings.imageGeneration.enabledLabel')}
-        description={t(locale, 'settings.imageGeneration.enabledDesc')}
-      >
-        <SwitchControl
-          checked={settings.enabled}
-          onChange={(enabled) => update({ enabled })}
-        />
-      </SettingRow>
 
       <SettingRow
         title={t(locale, 'settings.imageGeneration.defaultProviderLabel')}
@@ -3639,7 +3881,7 @@ function ImageGenerationSettingsPanel({ locale }: { locale: Locale }) {
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveImageGenerationSettings(next);
+                saveImageGenerationSettings(next, settingsProfile);
                 setSettings(next);
               }}
               onDelete={
@@ -4121,20 +4363,30 @@ function ImageProviderSettingsRow({
   );
 }
 
-function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
+function MusicGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
   const [settings, setSettings] = useState<MusicGenerationSettings>(() =>
-    loadMusicGenerationSettings(),
+    loadMusicGenerationSettings(settingsProfile),
   );
   const [category, setCategory] = useState<MusicProviderCategory>('commercial');
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const update = (patch: Partial<MusicGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveMusicGenerationSettings(next);
+    saveMusicGenerationSettings(next, settingsProfile);
     setSettings(next);
   };
 
-  const providers = musicProviders(settings);
+  const providers = musicProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -4179,8 +4431,8 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    if (!saveMusicGenerationSettings(next)) return false;
-    setSettings(loadMusicGenerationSettings());
+    if (!saveMusicGenerationSettings(next, settingsProfile)) return false;
+    setSettings(loadMusicGenerationSettings(settingsProfile));
     setCustomDialogOpen(false);
     return true;
   };
@@ -4206,8 +4458,8 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels,
       providerModelLists,
     };
-    saveMusicGenerationSettings(next);
-    setSettings(loadMusicGenerationSettings());
+    saveMusicGenerationSettings(next, settingsProfile);
+    setSettings(loadMusicGenerationSettings(settingsProfile));
   };
 
   return (
@@ -4220,16 +4472,6 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
           {t(locale, 'settings.musicGeneration.description')}
         </p>
       </div>
-
-      <SettingRow
-        title={t(locale, 'settings.musicGeneration.enabledLabel')}
-        description={t(locale, 'settings.musicGeneration.enabledDesc')}
-      >
-        <SwitchControl
-          checked={settings.enabled}
-          onChange={(enabled) => update({ enabled })}
-        />
-      </SettingRow>
 
       <SettingRow
         title={t(locale, 'settings.musicGeneration.defaultProviderLabel')}
@@ -4306,7 +4548,7 @@ function MusicGenerationSettingsPanel({ locale }: { locale: Locale }) {
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveMusicGenerationSettings(next);
+                saveMusicGenerationSettings(next, settingsProfile);
                 setSettings(next);
               }}
               onDelete={
@@ -4648,20 +4890,30 @@ function MusicProviderSettingsRow({
   );
 }
 
-function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
+function VideoGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
   const [settings, setSettings] = useState<VideoGenerationSettings>(() =>
-    loadVideoGenerationSettings(),
+    loadVideoGenerationSettings(settingsProfile),
   );
   const [category, setCategory] = useState<VideoProviderCategory>('commercial');
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const update = (patch: Partial<VideoGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveVideoGenerationSettings(next);
+    saveVideoGenerationSettings(next, settingsProfile);
     setSettings(next);
   };
 
-  const providers = videoProviders(settings);
+  const providers = videoProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -4706,8 +4958,8 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModelLists: { ...settings.providerModelLists, [id]: draft.models },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    if (!saveVideoGenerationSettings(next)) return false;
-    setSettings(loadVideoGenerationSettings());
+    if (!saveVideoGenerationSettings(next, settingsProfile)) return false;
+    setSettings(loadVideoGenerationSettings(settingsProfile));
     setCustomDialogOpen(false);
     return true;
   };
@@ -4731,8 +4983,8 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModels,
       providerModelLists,
     };
-    saveVideoGenerationSettings(next);
-    setSettings(loadVideoGenerationSettings());
+    saveVideoGenerationSettings(next, settingsProfile);
+    setSettings(loadVideoGenerationSettings(settingsProfile));
   };
 
   return (
@@ -4745,16 +4997,6 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
           {t(locale, 'settings.videoGeneration.description')}
         </p>
       </div>
-
-      <SettingRow
-        title={t(locale, 'settings.videoGeneration.enabledLabel')}
-        description={t(locale, 'settings.videoGeneration.enabledDesc')}
-      >
-        <SwitchControl
-          checked={settings.enabled}
-          onChange={(enabled) => update({ enabled })}
-        />
-      </SettingRow>
 
       <SettingRow
         title={t(locale, 'settings.videoGeneration.defaultProviderLabel')}
@@ -4831,7 +5073,7 @@ function VideoGenerationSettingsPanel({ locale }: { locale: Locale }) {
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveVideoGenerationSettings(next);
+                saveVideoGenerationSettings(next, settingsProfile);
                 setSettings(next);
               }}
               onDelete={
@@ -4863,18 +5105,28 @@ const videoProviderCategoryOrder: VideoProviderCategory[] = ['commercial', 'free
 // default-provider picker plus per-provider key / endpoint inputs. Mirrors the
 // video panel's persistence pattern but without custom-provider authoring, since
 // the world-model catalog is curated and live-session providers vary widely.
-function WorldModelGenerationSettingsPanel({ locale }: { locale: Locale }) {
+function WorldModelGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
   const [settings, setSettings] = useState<WorldModelGenerationSettings>(() =>
-    loadWorldModelGenerationSettings(),
+    loadWorldModelGenerationSettings(settingsProfile),
   );
 
   const update = (patch: Partial<WorldModelGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveWorldModelGenerationSettings(next);
+    saveWorldModelGenerationSettings(next, settingsProfile);
     setSettings(next);
   };
 
-  const providers = worldModelProviders(settings);
+  const providers = worldModelProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -4902,16 +5154,6 @@ function WorldModelGenerationSettingsPanel({ locale }: { locale: Locale }) {
       </div>
 
       <SettingRow
-        title={t(locale, 'settings.worldModelGeneration.enabledLabel')}
-        description={t(locale, 'settings.worldModelGeneration.enabledDesc')}
-      >
-        <SwitchControl
-          checked={settings.enabled}
-          onChange={(enabled) => update({ enabled })}
-        />
-      </SettingRow>
-
-      <SettingRow
         title={t(locale, 'settings.worldModelGeneration.defaultProviderLabel')}
         description={t(locale, 'settings.worldModelGeneration.defaultProviderDesc')}
       >
@@ -4936,7 +5178,7 @@ function WorldModelGenerationSettingsPanel({ locale }: { locale: Locale }) {
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveWorldModelGenerationSettings(next);
+                saveWorldModelGenerationSettings(next, settingsProfile);
                 setSettings(next);
               }}
             />
@@ -5402,20 +5644,30 @@ function VideoProviderSettingsRow({
   );
 }
 
-function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
+function SpeechGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
   const [settings, setSettings] = useState<SpeechGenerationSettings>(() =>
-    loadSpeechGenerationSettings(),
+    loadSpeechGenerationSettings(settingsProfile),
   );
   const [category, setCategory] = useState<SpeechProviderCategory>('commercial');
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const update = (patch: Partial<SpeechGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveSpeechGenerationSettings(next);
+    saveSpeechGenerationSettings(next, settingsProfile);
     setSettings(next);
   };
 
-  const providers = speechProviders(settings);
+  const providers = speechProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -5464,8 +5716,8 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerVoices: { ...settings.providerVoices },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    if (!saveSpeechGenerationSettings(next)) return false;
-    setSettings(loadSpeechGenerationSettings());
+    if (!saveSpeechGenerationSettings(next, settingsProfile)) return false;
+    setSettings(loadSpeechGenerationSettings(settingsProfile));
     setCustomDialogOpen(false);
     return true;
   };
@@ -5495,8 +5747,8 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
       providerModelLists,
       providerVoices,
     };
-    saveSpeechGenerationSettings(next);
-    setSettings(loadSpeechGenerationSettings());
+    saveSpeechGenerationSettings(next, settingsProfile);
+    setSettings(loadSpeechGenerationSettings(settingsProfile));
   };
 
   return (
@@ -5509,16 +5761,6 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
           {t(locale, 'settings.speechGeneration.description')}
         </p>
       </div>
-
-      <SettingRow
-        title={t(locale, 'settings.speechGeneration.enabledLabel')}
-        description={t(locale, 'settings.speechGeneration.enabledDesc')}
-      >
-        <SwitchControl
-          checked={settings.enabled}
-          onChange={(enabled) => update({ enabled })}
-        />
-      </SettingRow>
 
       <SettingRow
         title={t(locale, 'settings.speechGeneration.defaultProviderLabel')}
@@ -5595,7 +5837,7 @@ function SpeechGenerationSettingsPanel({ locale }: { locale: Locale }) {
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveSpeechGenerationSettings(next);
+                saveSpeechGenerationSettings(next, settingsProfile);
                 setSettings(next);
               }}
               onDelete={
@@ -6010,18 +6252,20 @@ function SpeechProviderSettingsRow({
 export function SpriteGenerationSettingsPanel({
   locale,
   embedded = false,
+  settingsProfile,
 }: {
   locale: Locale;
   embedded?: boolean;
+  settingsProfile?: SettingsProfileOptions;
 }) {
   const [settings, setSettings] = useState<SpriteGenerationSettings>(() =>
-    loadSpriteGenerationSettings(),
+    loadSpriteGenerationSettings(settingsProfile),
   );
 
   const update = (patch: Partial<SpriteGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveSpriteGenerationSettings(next);
-    setSettings(loadSpriteGenerationSettings());
+    saveSpriteGenerationSettings(next, settingsProfile);
+    setSettings(loadSpriteGenerationSettings(settingsProfile));
   };
 
   return (
@@ -6035,18 +6279,6 @@ export function SpriteGenerationSettingsPanel({
             {t(locale, 'settings.spriteGeneration.description')}
           </p>
         </div>
-      )}
-
-      {!embedded && (
-        <SettingRow
-          title={t(locale, 'settings.spriteGeneration.enabledLabel')}
-          description={t(locale, 'settings.spriteGeneration.enabledDesc')}
-        >
-          <SwitchControl
-            checked={settings.enabled}
-            onChange={(enabled) => update({ enabled })}
-          />
-        </SettingRow>
       )}
 
       <div className="grid gap-3 rounded-lg border border-border bg-bg-alt p-4 md:grid-cols-2">
@@ -6300,26 +6532,1170 @@ function SwitchLine({
   );
 }
 
+function uiDesignChannelBadgeClass(category: UiDesignChannelCategory): string {
+  return category === 'free-open'
+    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+    : 'border-sky-500/30 bg-sky-500/10 text-sky-300';
+}
+
+function uiDesignChannelStatus(
+  channel: UiDesignChannelDefinition,
+  settings: UiDesignChannelSettings,
+  locale: Locale,
+): { label: string; className: string } {
+  if (uiDesignChannelReady(channel.id, settings)) {
+    return {
+      label:
+        channel.needsKey || channel.requiresCommand
+          ? locale === 'zh-CN'
+            ? '已配置'
+            : 'Configured'
+          : locale === 'zh-CN'
+            ? '可用'
+            : 'Ready',
+      className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    };
+  }
+  if (channel.needsKey && !settings.channelKeys[channel.id]?.trim()) {
+    return {
+      label: locale === 'zh-CN' ? '待填 Key' : 'Needs key',
+      className: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
+    };
+  }
+  if (channel.requiresCommand && !uiDesignChannelCommand(channel.id, settings)) {
+    return {
+      label: locale === 'zh-CN' ? '待配置路径' : 'Needs path',
+      className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+    };
+  }
+  return {
+    label: locale === 'zh-CN' ? '待配置' : 'Needs setup',
+    className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+  };
+}
+
+function UiDesignChannelSettingsPanel({
+  locale,
+  settingsProfile,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+}) {
+  const [settings, setSettings] = useState<UiDesignChannelSettings>(() =>
+    loadUiDesignChannelSettings(settingsProfile),
+  );
+  const [category, setCategory] = useState<UiDesignChannelCategory>(() =>
+    uiDesignChannelById(
+      loadUiDesignChannelSettings(settingsProfile).preferredChannelId,
+    ).category,
+  );
+
+  const persist = useCallback((next: UiDesignChannelSettings) => {
+    saveUiDesignChannelSettings(next, settingsProfile);
+    setSettings(loadUiDesignChannelSettings(settingsProfile));
+  }, [settingsProfile]);
+
+  const defaultChannel = uiDesignChannelById(settings.preferredChannelId);
+  const activeChannels = UI_DESIGN_CHANNELS.filter(
+    (channel) => channel.category === category,
+  );
+
+  const setDefaultChannel = (channelId: UiDesignChannelId) => {
+    const channel = uiDesignChannelById(channelId);
+    setCategory(channel.category);
+    persist({ ...settings, preferredChannelId: channelId });
+  };
+
+  return (
+    <div className="space-y-5">
+      <header className="space-y-1">
+        <h3 className="text-lg font-semibold text-fg">
+          {locale === 'zh-CN' ? 'UI 渠道' : 'UI channels'}
+        </h3>
+        <p className="text-xs leading-relaxed text-fg-faint">
+          {locale === 'zh-CN'
+            ? '配置游戏 UI 设计任务使用的全局默认设计工具或协作平台。/ui-mode-start 使用这里的设置。'
+            : 'Configure the global default design tool or collaboration channel used by UI design tasks. /ui-mode-start uses these settings.'}
+        </p>
+      </header>
+
+      <SettingRow
+        title={locale === 'zh-CN' ? '默认 UI 渠道' : 'Default UI channel'}
+        description={
+          locale === 'zh-CN'
+            ? '商用与免费开源渠道共用一个全局默认。'
+            : 'Commercial and free/open-source channels share one global default.'
+        }
+      >
+        <div className="w-full min-w-[14rem]">
+          <SelectControl
+            value={settings.preferredChannelId}
+            options={UI_DESIGN_CHANNELS.map((channel) => ({
+              id: channel.id,
+              label: channel.label,
+              hint: uiDesignChannelCategoryLabel(channel.category, locale),
+              group: uiDesignChannelCategoryLabel(channel.category, locale),
+            }))}
+            onChange={(id) => setDefaultChannel(id as UiDesignChannelId)}
+            icon={<Palette size={15} strokeWidth={2.1} />}
+          />
+          <p className="mt-1 text-[11px] text-fg-faint">
+            {locale === 'zh-CN'
+              ? `当前默认：${defaultChannel.label}（${uiDesignChannelCategoryLabel(defaultChannel.category, locale)}）`
+              : `Current default: ${defaultChannel.label} (${uiDesignChannelCategoryLabel(defaultChannel.category, locale)})`}
+          </p>
+        </div>
+      </SettingRow>
+
+      <div>
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className={SETTINGS_INNER_TABLIST_CLASS}
+        >
+          {(['commercial', 'free-open'] as const).map((item) => {
+            const active = category === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setCategory(item)}
+                className={cn(
+                  SETTINGS_INNER_TAB_CLASS,
+                  active
+                    ? '-mb-px border-b-2 border-accent text-fg'
+                    : 'text-fg-faint hover:text-fg',
+                )}
+              >
+                {item === 'commercial'
+                  ? locale === 'zh-CN'
+                    ? '商用渠道'
+                    : 'Commercial'
+                  : locale === 'zh-CN'
+                    ? '免费开源渠道'
+                    : 'Free / open source'}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {uiDesignChannelCategoryLabel(category, locale)}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {category === 'commercial'
+                ? locale === 'zh-CN'
+                  ? '生产协作优先，适合 Figma 文件、Photoshop 视觉资产和可交付 UI 规范。'
+                  : 'Production collaboration first: Figma files, Photoshop visual assets, and deliverable UI specs.'
+                : locale === 'zh-CN'
+                  ? '免费和开源优先，适合 Pencil 原型、Penpot 协作、GIMP/Inkscape 图形资产。'
+                  : 'Free/open-source first: Pencil prototypes, Penpot collaboration, and GIMP/Inkscape assets.'}
+            </p>
+          </div>
+          <StatusBadge state="default" label={String(activeChannels.length)} />
+        </div>
+
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
+          {activeChannels.map((channel) => (
+            <UiDesignChannelCard
+              key={channel.id}
+              channel={channel}
+              isDefault={settings.preferredChannelId === channel.id}
+              settings={settings}
+              locale={locale}
+              onDefault={() => setDefaultChannel(channel.id)}
+              onChange={persist}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function UiDesignChannelCard({
+  channel,
+  isDefault,
+  settings,
+  locale,
+  onDefault,
+  onChange,
+}: {
+  channel: UiDesignChannelDefinition;
+  isDefault: boolean;
+  settings: UiDesignChannelSettings;
+  locale: Locale;
+  onDefault: () => void;
+  onChange: (settings: UiDesignChannelSettings) => void;
+}) {
+  const [showKey, setShowKey] = useState(false);
+  const keyValue = settings.channelKeys[channel.id] ?? '';
+  const baseUrl = settings.channelBaseUrls[channel.id] ?? '';
+  const command = settings.channelCommands[channel.id] ?? '';
+  const exportFormat = uiDesignChannelExportFormat(channel.id, settings);
+  const effectiveBaseUrl = uiDesignChannelBaseUrl(channel.id, settings);
+  const status = uiDesignChannelStatus(channel, settings, locale);
+  const KeyIcon = showKey ? EyeOff : Eye;
+  const externalLinks =
+    channel.downloadLinks && channel.downloadLinks.length > 0
+      ? channel.downloadLinks
+      : channel.credentialUrl
+        ? [
+            {
+              label: channel.needsKey
+                ? locale === 'zh-CN'
+                  ? '获取 Key'
+                  : 'Get key'
+                : locale === 'zh-CN'
+                  ? '打开官网'
+                  : 'Open website',
+              url: channel.credentialUrl,
+            },
+          ]
+        : [];
+
+  const patchChannel = (
+    patch: Partial<{
+      key: string;
+      baseUrl: string;
+      command: string;
+      exportFormat: string;
+    }>,
+  ) => {
+    const next: UiDesignChannelSettings = {
+      ...settings,
+      channelKeys: { ...settings.channelKeys },
+      channelBaseUrls: { ...settings.channelBaseUrls },
+      channelCommands: { ...settings.channelCommands },
+      channelExportFormats: { ...settings.channelExportFormats },
+    };
+    if (patch.key !== undefined) {
+      const value = patch.key.trim();
+      if (value) next.channelKeys[channel.id] = value;
+      else delete next.channelKeys[channel.id];
+    }
+    if (patch.baseUrl !== undefined) {
+      const value = patch.baseUrl.trim();
+      if (value) next.channelBaseUrls[channel.id] = value;
+      else delete next.channelBaseUrls[channel.id];
+    }
+    if (patch.command !== undefined) {
+      const value = patch.command.trim();
+      if (value) next.channelCommands[channel.id] = value;
+      else delete next.channelCommands[channel.id];
+    }
+    if (patch.exportFormat !== undefined) {
+      const value = patch.exportFormat.trim();
+      if (value && channel.exportFormats.includes(value)) {
+        next.channelExportFormats[channel.id] = value;
+      } else {
+        delete next.channelExportFormats[channel.id];
+      }
+    }
+    onChange(next);
+  };
+
+  return (
+    <article className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-fg">{channel.label}</span>
+            <span
+              className={cn(
+                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                uiDesignChannelBadgeClass(channel.category),
+              )}
+            >
+              {uiDesignChannelCategoryLabel(channel.category, locale)}
+            </span>
+            <span
+              className={cn(
+                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                status.className,
+              )}
+            >
+              {status.label}
+            </span>
+            {isDefault ? (
+              <span className="inline-flex shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+                {locale === 'zh-CN' ? '默认' : 'Default'}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
+            {channel.note}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {!isDefault ? (
+            <button
+              type="button"
+              onClick={onDefault}
+              className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+            >
+              <Check size={13} />
+              {locale === 'zh-CN' ? '设为默认' : 'Set as default'}
+            </button>
+          ) : null}
+          {externalLinks.map((link) => (
+            <button
+              key={link.url}
+              type="button"
+              onClick={() => void openExternal(link.url)}
+              className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+            >
+              {channel.downloadLinks && channel.downloadLinks.length > 0 ? (
+                <DownloadCloud size={13} strokeWidth={2.2} />
+              ) : (
+                <ExternalLink size={13} strokeWidth={2.2} />
+              )}
+              {link.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {channel.supportsBaseUrl ? (
+          <label className="block space-y-1">
+            <span className="text-[11px] font-medium text-fg-dim">Base URL</span>
+            <input
+              type="text"
+              value={baseUrl}
+              onChange={(event) => patchChannel({ baseUrl: event.target.value })}
+              onKeyDown={stopSettingsInputKeyPropagation}
+              placeholder={effectiveBaseUrl || channel.endpointPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        ) : null}
+
+        {channel.supportsKey ? (
+          <label className="block space-y-1">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {channel.keyLabel ?? 'API Key'}
+            </span>
+            <div className="relative">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={keyValue}
+                onChange={(event) => patchChannel({ key: event.target.value })}
+                onKeyDown={stopSettingsInputKeyPropagation}
+                placeholder={
+                  channel.keyPlaceholder ??
+                  (locale === 'zh-CN' ? '粘贴 API Key / Token' : 'Paste API key / token')
+                }
+                autoComplete="off"
+                spellCheck={false}
+                className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-14 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+              />
+              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setShowKey((value) => !value)}
+                  title={showKey ? t(locale, 'settings.models.hideKey') : t(locale, 'settings.models.showKey')}
+                  className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
+                >
+                  <KeyIcon size={13} strokeWidth={2} />
+                </button>
+                {keyValue ? (
+                  <button
+                    type="button"
+                    onClick={() => patchChannel({ key: '' })}
+                    title={t(locale, 'settings.models.clear')}
+                    className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
+                  >
+                    <Trash2 size={13} strokeWidth={2} />
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </label>
+        ) : null}
+
+        {channel.supportsCommand ? (
+          <label className="block space-y-1 lg:col-span-2">
+            <span className="text-[11px] font-medium text-fg-dim">
+              {locale === 'zh-CN' ? '本地命令 / 工具路径' : 'Local command / tool path'}
+            </span>
+            <input
+              type="text"
+              value={command}
+              onChange={(event) => patchChannel({ command: event.target.value })}
+              onKeyDown={stopSettingsInputKeyPropagation}
+              placeholder={channel.commandPlaceholder}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        ) : null}
+
+        <label
+          className={cn(
+            'block space-y-1',
+            channel.supportsBaseUrl || channel.supportsKey ? 'lg:col-span-2' : '',
+          )}
+        >
+          <span className="text-[11px] font-medium text-fg-dim">
+            {locale === 'zh-CN' ? '默认导出格式' : 'Default export format'}
+          </span>
+          <select
+            value={exportFormat}
+            onChange={(event) => patchChannel({ exportFormat: event.target.value })}
+            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
+          >
+            {channel.exportFormats.map((format) => (
+              <option key={format} value={format}>
+                {format}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    </article>
+  );
+}
+
+type MeshLibraryInnerTab = 'enabled' | 'repository';
+
+function MeshLibrarySettingsPanel({
+  locale,
+  settingsProfile,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+}) {
+  const [settings, setSettings] = useState<MeshLibraryAccountSettings>(() =>
+    loadMeshLibrarySettings(settingsProfile),
+  );
+  const [innerTab, setInnerTab] = useState<MeshLibraryInnerTab>('enabled');
+  const [query, setQuery] = useState('');
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+
+  const persist = useCallback((next: MeshLibraryAccountSettings) => {
+    saveMeshLibrarySettings(next, settingsProfile);
+    setSettings(loadMeshLibrarySettings(settingsProfile));
+  }, [settingsProfile]);
+
+  const libraries = useMemo(() => meshLibraries(settings), [settings]);
+  const usableLibraries = libraries.filter((library) =>
+    settings.enabledIds.includes(library.id) && meshLibraryUsable(library.id, settings),
+  );
+  const pendingLibraries = libraries.filter(
+    (library) =>
+      settings.enabledIds.includes(library.id) &&
+      !meshLibraryUsable(library.id, settings),
+  );
+  const enabledCount = settings.enabledIds.length;
+  const usableCount = usableLibraries.length;
+  const filteredRepository = libraries.filter((library) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return `${library.label} ${library.note} ${library.category} ${library.searchKind}`
+      .toLowerCase()
+      .includes(q);
+  });
+
+  const toggleLibrary = (id: MeshLibraryId, enabled: boolean) => {
+    const enabledIds = enabled
+      ? Array.from(new Set([...settings.enabledIds, id]))
+      : settings.enabledIds.filter((item) => item !== id);
+    persist({ ...settings, enabledIds });
+  };
+
+  const setKey = (id: MeshLibraryId, value: string) => {
+    const apiKeys = { ...settings.apiKeys };
+    const trimmed = value.trim();
+    if (trimmed) apiKeys[id] = trimmed;
+    else delete apiKeys[id];
+    persist({ ...settings, apiKeys });
+  };
+
+  const addCustomLibrary = (draft: {
+    name: string;
+    homepageUrl: string;
+    token: string;
+  }) => {
+    let id = createCustomMeshLibraryId(draft.name);
+    const used = new Set(libraries.map((library) => library.id));
+    let suffix = 2;
+    while (used.has(id)) {
+      id = `${createCustomMeshLibraryId(draft.name)}-${suffix}` as typeof id;
+      suffix += 1;
+    }
+    const library: CustomMeshLibraryDefinition = {
+      id,
+      label: draft.name.trim() || customMeshLibraryName(draft.homepageUrl, '自定义模型库'),
+      category: 'marketplace',
+      searchKind: 'link-out',
+      needsKey: !!draft.token.trim(),
+      supportsDownload: false,
+      homepageUrl: customMeshHomepageUrl(draft.homepageUrl),
+      credentialUrl: customMeshHomepageUrl(draft.homepageUrl),
+      keyLabel: 'Token / 账号备注',
+      keyPlaceholder: '可选；记录账号、Token 或授权备注',
+      searchUrlTemplate: customMeshSearchUrlTemplate(draft.homepageUrl),
+      note: '自定义在线模型库渠道（深链搜索）。',
+    };
+    const apiKeys = { ...settings.apiKeys };
+    if (draft.token.trim()) apiKeys[id] = draft.token.trim();
+    persist({
+      ...settings,
+      customLibraries: [...settings.customLibraries, library],
+      enabledIds: Array.from(new Set([...settings.enabledIds, id])),
+      apiKeys,
+    });
+    setCustomDialogOpen(false);
+  };
+
+  const deleteCustomLibrary = (id: MeshLibraryId) => {
+    const apiKeys = { ...settings.apiKeys };
+    delete apiKeys[id];
+    persist({
+      ...settings,
+      customLibraries: settings.customLibraries.filter((library) => library.id !== id),
+      enabledIds: settings.enabledIds.filter((item) => item !== id),
+      apiKeys,
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <header className="space-y-1">
+        <h3 className="text-lg font-semibold text-fg">
+          {locale === 'zh-CN' ? '在线模型库' : 'Online model libraries'}
+        </h3>
+        <p className="text-xs leading-relaxed text-fg-faint">
+          {locale === 'zh-CN'
+            ? '配置 /mesh-search 使用的全局在线 3D 模型库。真正可搜索或可下载的库会出现在“已启用”里。'
+            : 'Configure the global online 3D model libraries used by /mesh-search. Libraries that can actually search or download appear under Enabled.'}
+        </p>
+        <p className="text-[11px] text-fg-faint">
+          {locale === 'zh-CN'
+            ? `可用 ${usableCount} 个 · 已开启 ${enabledCount} 个 · 仓库共 ${libraries.length} 个`
+            : `${usableCount} usable · ${enabledCount} enabled · ${libraries.length} in registry`}
+        </p>
+      </header>
+
+      <div
+        role="tablist"
+        aria-orientation="horizontal"
+        className={SETTINGS_INNER_TABLIST_CLASS}
+      >
+        {[
+          { id: 'enabled' as const, label: locale === 'zh-CN' ? '已启用' : 'Enabled', count: usableCount },
+          { id: 'repository' as const, label: locale === 'zh-CN' ? '仓库' : 'Registry', count: libraries.length },
+        ].map((item) => {
+          const active = innerTab === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setInnerTab(item.id)}
+              className={cn(
+                SETTINGS_INNER_TAB_CLASS,
+                active
+                  ? '-mb-px border-b-2 border-accent text-fg'
+                  : 'text-fg-faint hover:text-fg',
+              )}
+            >
+              {item.label}
+              <span
+                className={cn(
+                  'ml-1.5 rounded-full px-1.5 py-0.5 text-[10px]',
+                  active ? 'bg-accent/20 text-accent' : 'bg-bg-alt text-fg-faint',
+                )}
+              >
+                {item.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {innerTab === 'enabled' ? (
+        <MeshLibraryEnabledTab
+          usableLibraries={usableLibraries}
+          pendingLibraries={pendingLibraries}
+          settings={settings}
+          locale={locale}
+          onToggle={toggleLibrary}
+          onKeyChange={setKey}
+          onAddLibrary={() => setCustomDialogOpen(true)}
+          onDeleteCustomLibrary={deleteCustomLibrary}
+          onBrowseRepository={() => setInnerTab('repository')}
+        />
+      ) : (
+        <MeshLibraryRepositoryTab
+          libraries={filteredRepository}
+          settings={settings}
+          locale={locale}
+          query={query}
+          onQueryChange={setQuery}
+          onToggle={toggleLibrary}
+          onKeyChange={setKey}
+          onAddLibrary={() => setCustomDialogOpen(true)}
+          onDeleteCustomLibrary={deleteCustomLibrary}
+        />
+      )}
+
+      <div className="grid gap-2 rounded-lg border border-border bg-bg-alt p-3 sm:grid-cols-2">
+        <label className="flex items-center justify-between gap-2 rounded-md border border-border-soft bg-panel px-3 py-2">
+          <span className="text-xs font-semibold text-fg">
+            {locale === 'zh-CN' ? '自动下载可下载结果' : 'Auto-download downloadable results'}
+          </span>
+          <input
+            type="checkbox"
+            checked={settings.autoDownload}
+            onChange={(event) =>
+              persist({ ...settings, autoDownload: event.currentTarget.checked })
+            }
+            className="h-4 w-4 shrink-0 accent-accent"
+          />
+        </label>
+        <label className="flex items-center justify-between gap-2 rounded-md border border-border-soft bg-panel px-3 py-2">
+          <span className="text-xs font-semibold text-fg">
+            {locale === 'zh-CN' ? '每个库返回上限' : 'Per-library result limit'}
+          </span>
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={settings.perLibraryLimit}
+            onChange={(event) =>
+              persist({
+                ...settings,
+                perLibraryLimit: Number(event.currentTarget.value) || 6,
+              })
+            }
+            className="w-16 rounded-md border border-border bg-panel px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+          />
+        </label>
+      </div>
+
+      {customDialogOpen ? (
+        <CustomMeshLibraryDialog
+          locale={locale}
+          onClose={() => setCustomDialogOpen(false)}
+          onSave={addCustomLibrary}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MeshLibraryCard({
+  library,
+  settings,
+  locale,
+  onToggle,
+  onKeyChange,
+  onDelete,
+}: {
+  library: MeshLibraryDefinition;
+  settings: MeshLibraryAccountSettings;
+  locale: Locale;
+  onToggle: (enabled: boolean) => void;
+  onKeyChange: (value: string) => void;
+  onDelete?: () => void;
+}) {
+  const enabled = settings.enabledIds.includes(library.id);
+  const ready = meshLibraryReady(library.id, settings);
+  const usability = meshLibraryUsability(library.id, settings);
+  const keyValue = settings.apiKeys[library.id] ?? '';
+  const searchKindLabel =
+    library.searchKind === 'public-api'
+      ? locale === 'zh-CN'
+        ? '免费 API'
+        : 'Free API'
+      : library.searchKind === 'api-key'
+        ? locale === 'zh-CN'
+          ? 'API Key 搜索'
+          : 'API-key search'
+        : locale === 'zh-CN'
+          ? '深链搜索页'
+          : 'Deep-link search';
+
+  return (
+    <section className="flex flex-col gap-2.5 rounded-lg border border-border bg-bg-alt p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-fg">{library.label}</span>
+            <span className="shrink-0 rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
+              {meshLibraryCategoryLabel(library.category, locale)}
+            </span>
+          </div>
+          <span className="mt-1 block max-h-12 overflow-hidden text-xs leading-snug text-fg-faint">
+            {library.note}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void openExternal(library.homepageUrl)}
+            title={locale === 'zh-CN' ? '打开来源' : 'Open source'}
+            aria-label={locale === 'zh-CN' ? '打开来源' : 'Open source'}
+            className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-panel text-fg-faint hover:border-accent hover:text-fg"
+          >
+            <ExternalLink size={13} />
+          </button>
+          {onDelete ? (
+            <button
+              type="button"
+              onClick={onDelete}
+              title={locale === 'zh-CN' ? '删除' : 'Delete'}
+              aria-label={locale === 'zh-CN' ? '删除' : 'Delete'}
+              className="flex h-7 w-7 items-center justify-center rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
+            >
+              <Trash2 size={13} />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1">
+        <span className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
+          {searchKindLabel}
+        </span>
+        {usability === 'usable' ? (
+          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+            {locale === 'zh-CN' ? '真正可用' : 'Fully usable'}
+          </span>
+        ) : usability === 'needs-key' ? (
+          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+            {locale === 'zh-CN' ? '待配置 Key' : 'Needs key'}
+          </span>
+        ) : (
+          <span className="rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
+            {locale === 'zh-CN' ? '仅深链浏览' : 'Deep-link only'}
+          </span>
+        )}
+        {library.supportsDownload ? (
+          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+            {locale === 'zh-CN' ? '可直接下载' : 'Direct download'}
+          </span>
+        ) : (
+          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
+            {locale === 'zh-CN' ? '账号内下载' : 'In-account download'}
+          </span>
+        )}
+        {library.needsKey ? (
+          <span
+            className={cn(
+              'rounded border px-1.5 py-0.5 text-[10px]',
+              ready
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                : 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+            )}
+          >
+            {ready
+              ? locale === 'zh-CN'
+                ? '已配置 Key'
+                : 'Key configured'
+              : locale === 'zh-CN'
+                ? '需 API Key'
+                : 'Needs API key'}
+          </span>
+        ) : null}
+      </div>
+
+      {(library.needsKey || library.keyLabel) && (
+        <label className="grid gap-1">
+          <span className="text-[11px] font-semibold text-fg-dim">
+            {library.keyLabel ?? 'API Key'}
+          </span>
+          <input
+            type="password"
+            value={keyValue}
+            placeholder={
+              library.keyPlaceholder ??
+              (locale === 'zh-CN' ? '粘贴 API Key / Token' : 'Paste API key / token')
+            }
+            onChange={(event) => onKeyChange(event.currentTarget.value)}
+            onKeyDown={stopSettingsInputKeyPropagation}
+            className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
+          />
+          {library.credentialUrl ? (
+            <button
+              type="button"
+              onClick={() => void openExternal(library.credentialUrl!)}
+              className="justify-self-start text-[11px] text-accent hover:underline"
+            >
+              {locale === 'zh-CN' ? '获取 / 管理凭据' : 'Get / manage credentials'}
+            </button>
+          ) : null}
+        </label>
+      )}
+
+      <label className="mt-auto flex items-center justify-between gap-2 rounded-md border border-border-soft bg-panel px-2.5 py-2">
+        <span className="text-xs font-semibold text-fg">
+          {locale === 'zh-CN' ? '在 /mesh-search 中启用' : 'Enable in /mesh-search'}
+        </span>
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => onToggle(event.currentTarget.checked)}
+          className="h-4 w-4 shrink-0 accent-accent"
+        />
+      </label>
+    </section>
+  );
+}
+
+function customMeshLibraryName(baseUrl: string, fallback: string): string {
+  try {
+    const url = new URL(baseUrl.trim());
+    return url.hostname.replace(/^www\./iu, '') || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function customMeshHomepageUrl(rawUrl: string): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed.includes('{query}')) return trimmed.replace(/\/+$/, '');
+  try {
+    const url = new URL(trimmed.replace('{query}', ''));
+    return url.origin;
+  } catch {
+    return trimmed.split('{query}', 1)[0]?.replace(/[?&=/_-]+$/u, '') || trimmed;
+  }
+}
+
+function customMeshSearchUrlTemplate(rawUrl: string): string {
+  const trimmed = rawUrl.trim().replace(/\/+$/, '');
+  if (trimmed.includes('{query}')) return trimmed;
+  if (trimmed.includes('?')) return `${trimmed}&q={query}`;
+  if (/\/search$/iu.test(trimmed)) return `${trimmed}?q={query}`;
+  return `${trimmed}/search?q={query}`;
+}
+
+function CustomMeshLibraryDialog({
+  locale,
+  onClose,
+  onSave,
+}: {
+  locale: Locale;
+  onClose: () => void;
+  onSave: (draft: {
+    name: string;
+    homepageUrl: string;
+    token: string;
+  }) => void;
+}) {
+  const [name, setName] = useState('');
+  const [homepageUrl, setHomepageUrl] = useState('');
+  const [token, setToken] = useState('');
+  const canSave = homepageUrl.trim().length > 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 p-4"
+      data-settings-child-modal="true"
+    >
+      <div className="w-full max-w-lg rounded-lg border border-border bg-panel shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <div className="text-sm font-semibold text-fg">
+            {locale === 'zh-CN' ? '添加模型库渠道' : 'Add model library channel'}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded text-fg-faint hover:bg-border-soft hover:text-fg"
+          >
+            <X size={14} />
+          </button>
+        </div>
+        <div className="grid gap-3 p-4">
+          <label className="grid gap-1">
+            <span className="text-[11px] font-semibold text-fg-dim">
+              {locale === 'zh-CN' ? '名称' : 'Name'}
+            </span>
+            <input
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+              onKeyDown={stopSettingsInputKeyPropagation}
+              placeholder={locale === 'zh-CN' ? '新模型库' : 'New model library'}
+              className="rounded-md border border-border bg-bg-alt px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[11px] font-semibold text-fg-dim">URL</span>
+            <input
+              value={homepageUrl}
+              onChange={(event) => setHomepageUrl(event.currentTarget.value)}
+              onKeyDown={stopSettingsInputKeyPropagation}
+              placeholder="https://example.com/search?q={query}"
+              className="rounded-md border border-border bg-bg-alt px-2.5 py-2 font-mono text-sm text-fg focus:border-accent focus:outline-none"
+            />
+            <span className="text-[10px] text-fg-faint">
+              {locale === 'zh-CN'
+                ? '可填官网，也可填包含 {query} 的搜索 URL。'
+                : 'Enter a homepage, or a search URL containing {query}.'}
+            </span>
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[11px] font-semibold text-fg-dim">
+              {locale === 'zh-CN' ? 'Token / 账号备注' : 'Token / account note'}
+            </span>
+            <input
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.currentTarget.value)}
+              onKeyDown={stopSettingsInputKeyPropagation}
+              placeholder={locale === 'zh-CN' ? '可选' : 'Optional'}
+              className="rounded-md border border-border bg-bg-alt px-2.5 py-2 text-sm text-fg focus:border-accent focus:outline-none"
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
+          >
+            {locale === 'zh-CN' ? '取消' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            disabled={!canSave}
+            onClick={() =>
+              onSave({
+                name: name.trim() || customMeshLibraryName(homepageUrl, '自定义模型库'),
+                homepageUrl,
+                token,
+              })
+            }
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-bg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {locale === 'zh-CN' ? '保存' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MeshLibraryEnabledTab({
+  usableLibraries,
+  pendingLibraries,
+  settings,
+  locale,
+  onToggle,
+  onKeyChange,
+  onAddLibrary,
+  onDeleteCustomLibrary,
+  onBrowseRepository,
+}: {
+  usableLibraries: MeshLibraryDefinition[];
+  pendingLibraries: MeshLibraryDefinition[];
+  settings: MeshLibraryAccountSettings;
+  locale: Locale;
+  onToggle: (id: MeshLibraryId, enabled: boolean) => void;
+  onKeyChange: (id: MeshLibraryId, value: string) => void;
+  onAddLibrary: () => void;
+  onDeleteCustomLibrary: (id: MeshLibraryId) => void;
+  onBrowseRepository: () => void;
+}) {
+  if (usableLibraries.length === 0 && pendingLibraries.length === 0) {
+    return (
+      <div className="grid gap-2 rounded-lg border border-border bg-bg-alt px-4 py-8 text-center">
+        <p className="text-xs text-fg-faint">
+          {locale === 'zh-CN'
+            ? '还没有真正可用的模型库。前往“仓库”开启并配置好 API Key 后，可搜索/下载的库会出现在这里。'
+            : 'No genuinely usable model libraries yet. Enable and configure API keys under Registry first.'}
+        </p>
+        <button
+          type="button"
+          onClick={onAddLibrary}
+          className="justify-self-center rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/20"
+        >
+          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
+        </button>
+        <button
+          type="button"
+          onClick={onBrowseRepository}
+          className="justify-self-center rounded-md border border-border bg-panel px-3 py-1.5 text-xs font-semibold text-fg-dim hover:border-accent hover:text-fg"
+        >
+          {locale === 'zh-CN' ? '浏览仓库' : 'Browse registry'}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-3">
+      <div>
+        <button
+          type="button"
+          onClick={onAddLibrary}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        >
+          <Plus size={13} strokeWidth={2.2} />
+          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
+        </button>
+      </div>
+      {usableLibraries.length > 0 ? (
+        <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
+          {usableLibraries.map((library) => (
+            <MeshLibraryCard
+              key={library.id}
+              library={library}
+              settings={settings}
+              locale={locale}
+              onToggle={(enabled) => onToggle(library.id, enabled)}
+              onKeyChange={(value) => onKeyChange(library.id, value)}
+              onDelete={
+                library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {pendingLibraries.length > 0 ? (
+        <section className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+          <div className="text-[11px] font-semibold text-amber-300">
+            {locale === 'zh-CN'
+              ? '已开启但还不能用（需补全 API Key 或只能深链浏览）'
+              : 'Enabled but not fully usable yet'}
+          </div>
+          <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
+            {pendingLibraries.map((library) => (
+              <MeshLibraryCard
+                key={library.id}
+                library={library}
+                settings={settings}
+                locale={locale}
+                onToggle={(enabled) => onToggle(library.id, enabled)}
+                onKeyChange={(value) => onKeyChange(library.id, value)}
+                onDelete={
+                  library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
+                }
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function MeshLibraryRepositoryTab({
+  libraries,
+  settings,
+  locale,
+  query,
+  onQueryChange,
+  onToggle,
+  onKeyChange,
+  onAddLibrary,
+  onDeleteCustomLibrary,
+}: {
+  libraries: MeshLibraryDefinition[];
+  settings: MeshLibraryAccountSettings;
+  locale: Locale;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onToggle: (id: MeshLibraryId, enabled: boolean) => void;
+  onKeyChange: (id: MeshLibraryId, value: string) => void;
+  onAddLibrary: () => void;
+  onDeleteCustomLibrary: (id: MeshLibraryId) => void;
+}) {
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="relative">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-faint"
+          />
+          <input
+            type="text"
+            value={query}
+            onChange={(event) => onQueryChange(event.currentTarget.value)}
+            onKeyDown={stopSettingsInputKeyPropagation}
+            placeholder={
+              locale === 'zh-CN'
+                ? '搜索在线模型库名称、用途...'
+                : 'Search online model library name or purpose...'
+            }
+            className="w-full rounded-lg border border-border bg-bg-alt py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onAddLibrary}
+          className="inline-flex items-center justify-center gap-1.5 rounded border border-border bg-panel px-3 py-2 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        >
+          <Plus size={13} strokeWidth={2.2} />
+          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
+        </button>
+      </div>
+
+      {libraries.length === 0 ? (
+        <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+          {locale === 'zh-CN' ? '没有匹配的模型库。' : 'No matching model libraries.'}
+        </p>
+      ) : (
+        <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
+          {libraries.map((library) => (
+            <MeshLibraryCard
+              key={library.id}
+              library={library}
+              settings={settings}
+              locale={locale}
+              onToggle={(enabled) => onToggle(library.id, enabled)}
+              onKeyChange={(value) => onKeyChange(library.id, value)}
+              onDelete={
+                library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
+              }
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ThreeDGenerationSettingsPanel({
   locale,
   embedded = false,
+  settingsProfile,
+  remoteProfile = false,
 }: {
   locale: Locale;
   embedded?: boolean;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
 }) {
   const [settings, setSettings] = useState<ThreeDGenerationSettings>(() =>
-    loadThreeDGenerationSettings(),
+    loadThreeDGenerationSettings(settingsProfile),
   );
   const [category, setCategory] = useState<ThreeDProviderCategory>('commercial');
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
 
   const update = (patch: Partial<ThreeDGenerationSettings>) => {
     const next = { ...settings, ...patch };
-    saveThreeDGenerationSettings(next);
-    setSettings(loadThreeDGenerationSettings());
+    saveThreeDGenerationSettings(next, settingsProfile);
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
   };
 
-  const providers = threeDProviders(settings);
+  const providers = threeDProviders(settings).filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
   const providerOptions = providers.map((provider) => ({
     id: provider.id,
     label: provider.label,
@@ -6363,8 +7739,8 @@ export function ThreeDGenerationSettingsPanel({
       providerModels: { ...settings.providerModels, [id]: draft.model },
     };
     if (draft.apiKey) next.providerKeys[id] = draft.apiKey;
-    if (!saveThreeDGenerationSettings(next)) return false;
-    setSettings(loadThreeDGenerationSettings());
+    if (!saveThreeDGenerationSettings(next, settingsProfile)) return false;
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
     setCustomDialogOpen(false);
     return true;
   };
@@ -6385,8 +7761,8 @@ export function ThreeDGenerationSettingsPanel({
       providerBaseUrls,
       providerModels,
     };
-    saveThreeDGenerationSettings(next);
-    setSettings(loadThreeDGenerationSettings());
+    saveThreeDGenerationSettings(next, settingsProfile);
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
   };
 
   return (
@@ -6400,18 +7776,6 @@ export function ThreeDGenerationSettingsPanel({
             {t(locale, 'settings.threeDGeneration.description')}
           </p>
         </div>
-      )}
-
-      {!embedded && (
-        <SettingRow
-          title={t(locale, 'settings.threeDGeneration.enabledLabel')}
-          description={t(locale, 'settings.threeDGeneration.enabledDesc')}
-        >
-          <SwitchControl
-            checked={settings.enabled}
-            onChange={(enabled) => update({ enabled })}
-          />
-        </SettingRow>
       )}
 
       <SettingRow
@@ -6489,8 +7853,8 @@ export function ThreeDGenerationSettingsPanel({
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveThreeDGenerationSettings(next);
-                setSettings(loadThreeDGenerationSettings());
+                saveThreeDGenerationSettings(next, settingsProfile);
+                setSettings(loadThreeDGenerationSettings(settingsProfile));
               }}
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
@@ -6767,12 +8131,16 @@ function ThreeDProviderSettingsRow({
 export function RiggingSettingsPanel({
   locale,
   embedded = false,
+  settingsProfile,
+  remoteProfile = false,
 }: {
   locale: Locale;
   embedded?: boolean;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
 }) {
   const [settings, setSettings] = useState<ThreeDGenerationSettings>(() =>
-    loadThreeDGenerationSettings(),
+    loadThreeDGenerationSettings(settingsProfile),
   );
   const [channel, setChannel] = useState<RiggingChannelTab>('commercial');
 
@@ -6781,11 +8149,14 @@ export function RiggingSettingsPanel({
       ...settings,
       rigging: { ...settings.rigging, ...patch },
     };
-    saveThreeDGenerationSettings(next);
-    setSettings(loadThreeDGenerationSettings());
+    saveThreeDGenerationSettings(next, settingsProfile);
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
   };
 
-  const providerOptions = THREE_D_RIGGING_PROVIDERS.map((provider) => ({
+  const riggingProviders = THREE_D_RIGGING_PROVIDERS.filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
+  const providerOptions = riggingProviders.map((provider) => ({
     id: provider.id,
     label: provider.label,
     hint: `${riggingProviderCategoryLabel(provider.category, locale)} · ${riggingProviderStatusLabel(
@@ -6795,7 +8166,7 @@ export function RiggingSettingsPanel({
     )}`,
     group: t(locale, riggingChannelTitleKey(riggingChannelForCategory(provider.category))),
   }));
-  const activeProviders = THREE_D_RIGGING_PROVIDERS.filter(
+  const activeProviders = riggingProviders.filter(
     (provider) => riggingChannelForCategory(provider.category) === channel,
   );
 
@@ -6810,18 +8181,6 @@ export function RiggingSettingsPanel({
             {t(locale, 'settings.rigging.description')}
           </p>
         </div>
-      )}
-
-      {!embedded && (
-        <SettingRow
-          title={t(locale, 'settings.rigging.enabledLabel')}
-          description={t(locale, 'settings.rigging.enabledDesc')}
-        >
-          <SwitchControl
-            checked={settings.rigging.enabled}
-            onChange={(enabled) => update({ enabled })}
-          />
-        </SettingRow>
       )}
 
       <SettingRow
@@ -6896,8 +8255,8 @@ export function RiggingSettingsPanel({
               settings={settings}
               locale={locale}
               onChange={(next) => {
-                saveThreeDGenerationSettings(next);
-                setSettings(loadThreeDGenerationSettings());
+                saveThreeDGenerationSettings(next, settingsProfile);
+                setSettings(loadThreeDGenerationSettings(settingsProfile));
               }}
             />
           ))}
@@ -7193,6 +8552,349 @@ function RiggingProviderSettingsRow({
   );
 }
 
+function CapturePerfSettingsPanel({ locale }: { locale: Locale }) {
+  const [targets, setTargets] = useState<SkillInstallTarget[]>([]);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [status, setStatus] = useState<{
+    tone: 'ok' | 'err';
+    msg: string;
+  } | null>(null);
+  const desktop = isTauri();
+
+  const installTarget = useMemo(
+    () =>
+      targets.find((target) => target.scope === 'global' && target.isDefault) ??
+      targets.find((target) => target.scope === 'global') ??
+      targets.find((target) => target.isDefault) ??
+      targets[0] ??
+      null,
+    [targets],
+  );
+
+  const installedSkills = useMemo(() => {
+    const installed = new Map<string, SkillInstallTarget>();
+    for (const target of targets) {
+      for (const skill of target.skills) {
+        installed.set(skill.toLowerCase(), target);
+      }
+    }
+    return installed;
+  }, [targets]);
+
+  const loadTargets = useCallback(async () => {
+    if (!isTauri()) {
+      setTargets([]);
+      return;
+    }
+    try {
+      setTargets(await skillInstallTargets(null));
+    } catch (err) {
+      setTargets([]);
+      setStatus({
+        tone: 'err',
+        msg:
+          locale === 'zh-CN'
+            ? `读取安装目标失败：${describeError(err)}`
+            : `Failed to read install targets: ${describeError(err)}`,
+      });
+    }
+  }, [locale]);
+
+  useEffect(() => {
+    void loadTargets();
+  }, [loadTargets]);
+
+  const installSkill = useCallback(
+    async (definition: CapturePerfSkillDefinition) => {
+      if (!isTauri()) {
+        setStatus({
+          tone: 'err',
+          msg:
+            locale === 'zh-CN'
+              ? '一键安装需要在桌面应用中运行。'
+              : 'One-click install requires the desktop app.',
+        });
+        return;
+      }
+      if (!installTarget) {
+        setStatus({
+          tone: 'err',
+          msg: locale === 'zh-CN' ? '未找到可用安装目标。' : 'No install target found.',
+        });
+        return;
+      }
+      setBusyId(definition.id);
+      setStatus(null);
+      try {
+        const common = {
+          name: definition.name,
+          slug: definition.slug,
+          targetId: installTarget.id,
+          overwrite: true,
+          sourceUrl: definition.sourceUrl,
+          projectRoot: null,
+        };
+        const installed =
+          definition.installKind === 'remote-skill'
+            ? await installSkillFromUrl({
+                ...common,
+                url: definition.skillUrl ?? definition.sourceUrl,
+              })
+            : await installSkillFromText({
+                ...common,
+                text: definition.skillText ?? '',
+              });
+        await loadTargets();
+        setStatus({
+          tone: 'ok',
+          msg:
+            locale === 'zh-CN'
+              ? `${installed.overwritten ? '已更新' : '已安装'} ${definition.title} · ${definition.version}`
+              : `${installed.overwritten ? 'Updated' : 'Installed'} ${definition.title} · ${definition.version}`,
+        });
+      } catch (err) {
+        setStatus({
+          tone: 'err',
+          msg:
+            locale === 'zh-CN'
+              ? `安装失败：${describeError(err)}`
+              : `Install failed: ${describeError(err)}`,
+        });
+      } finally {
+        setBusyId((current) => (current === definition.id ? null : current));
+      }
+    },
+    [installTarget, loadTargets, locale],
+  );
+
+  const uninstallInstalledSkill = useCallback(
+    async (definition: CapturePerfSkillDefinition) => {
+      const target = installedSkills.get(definition.slug.toLowerCase());
+      if (!target) {
+        setStatus({
+          tone: 'err',
+          msg: locale === 'zh-CN' ? '未找到已安装目录。' : 'Installed folder not found.',
+        });
+        return;
+      }
+      setBusyId(definition.id);
+      setStatus(null);
+      try {
+        const result = await uninstallSkill({
+          targetId: target.id,
+          slug: definition.slug,
+          projectRoot: null,
+        });
+        await loadTargets();
+        setStatus({
+          tone: 'ok',
+          msg:
+            locale === 'zh-CN'
+              ? `${result.removed ? '已卸载' : '已移除记录'} ${definition.title}`
+              : `${result.removed ? 'Uninstalled' : 'Removed record for'} ${definition.title}`,
+        });
+      } catch (err) {
+        setStatus({
+          tone: 'err',
+          msg:
+            locale === 'zh-CN'
+              ? `卸载失败：${describeError(err)}`
+              : `Uninstall failed: ${describeError(err)}`,
+        });
+      } finally {
+        setBusyId((current) => (current === definition.id ? null : current));
+      }
+    },
+    [installedSkills, loadTargets, locale],
+  );
+
+  return (
+    <div className="space-y-5">
+      <header className="space-y-1">
+        <h3 className="text-lg font-semibold text-fg">
+          {locale === 'zh-CN' ? '抓帧性能' : 'Capture / performance'}
+        </h3>
+        <p className="text-xs leading-relaxed text-fg-faint">
+          {locale === 'zh-CN'
+            ? '全局安装 RenderDoc、Nsight Graphics、Unreal Insights、Unity Profiler、Perfetto 和 Android 内存分析 Skill。'
+            : 'Globally install RenderDoc, Nsight Graphics, Unreal Insights, Unity Profiler, Perfetto, and Android memory analysis Skills.'}
+        </p>
+      </header>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-bg-alt px-4 py-3 text-xs text-fg-faint">
+        <div className="min-w-0">
+          {locale === 'zh-CN' ? '安装目标：' : 'Install target: '}
+          <span className="text-fg">
+            {installTarget
+              ? `${installTarget.scope === 'global' ? (locale === 'zh-CN' ? '全局' : 'Global') : (locale === 'zh-CN' ? '项目' : 'Project')} · ${installTarget.label}`
+              : desktop
+                ? locale === 'zh-CN'
+                  ? '未找到'
+                  : 'Not found'
+                : locale === 'zh-CN'
+                  ? '桌面版可安装'
+                  : 'Desktop app required'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadTargets()}
+          disabled={!desktop}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
+        >
+          <RefreshCw size={13} />
+          {locale === 'zh-CN' ? '重新检测' : 'Refresh'}
+        </button>
+      </div>
+
+      {status ? (
+        <div
+          className={cn(
+            'rounded-md border px-3 py-2 text-[11px] leading-relaxed',
+            status.tone === 'ok'
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
+              : 'border-red-500/30 bg-red-500/10 text-red-200',
+          )}
+        >
+          {status.msg}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        {CAPTURE_PERF_SKILLS.map((definition) => (
+          <CapturePerfSkillCard
+            key={definition.id}
+            definition={definition}
+            locale={locale}
+            desktop={desktop}
+            installedTarget={installedSkills.get(definition.slug.toLowerCase())}
+            installing={busyId === definition.id}
+            onInstall={() => void installSkill(definition)}
+            onUninstall={() => void uninstallInstalledSkill(definition)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CapturePerfSkillCard({
+  definition,
+  locale,
+  desktop,
+  installedTarget,
+  installing,
+  onInstall,
+  onUninstall,
+}: {
+  definition: CapturePerfSkillDefinition;
+  locale: Locale;
+  desktop: boolean;
+  installedTarget?: SkillInstallTarget;
+  installing: boolean;
+  onInstall: () => void;
+  onUninstall: () => void;
+}) {
+  const installed = installedTarget != null;
+  return (
+    <div className="flex min-h-[13rem] flex-col rounded-lg border border-border bg-bg-alt p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+              {capturePerfCategoryLabel(definition.category)}
+            </span>
+            <span className="rounded border border-border bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
+              {/^\d/.test(definition.version)
+                ? `v${definition.version}`
+                : definition.version}
+            </span>
+            {installed ? (
+              <span className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                <Check size={11} />
+                {locale === 'zh-CN' ? '已安装' : 'Installed'}
+              </span>
+            ) : null}
+          </div>
+          <h4 className="mt-2 text-sm font-semibold text-fg">{definition.title}</h4>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {definition.summary}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {definition.tags.map((tag) => (
+          <span
+            key={tag}
+            className="rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint"
+          >
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      {definition.command ? (
+        <div className="mt-3 truncate rounded border border-border-soft bg-panel px-2 py-1.5 font-mono text-[11px] text-fg-dim">
+          {definition.command}
+        </div>
+      ) : null}
+
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
+        <button
+          type="button"
+          onClick={() => void openExternal(definition.sourceUrl)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
+        >
+          <ExternalLink size={13} />
+          {locale === 'zh-CN' ? '打开来源' : 'Open source'}
+        </button>
+        <div className="flex flex-wrap gap-2">
+          {installed ? (
+            <button
+              type="button"
+              onClick={onUninstall}
+              disabled={installing || !desktop}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim hover:border-red-400 hover:text-red-200 disabled:opacity-50"
+              title={installedTarget?.label}
+            >
+              {installing ? (
+                <RefreshCw size={13} className="animate-spin" />
+              ) : (
+                <Trash2 size={13} />
+              )}
+              {locale === 'zh-CN' ? '卸载' : 'Uninstall'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onInstall}
+            disabled={installing || !desktop}
+            className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-2.5 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-panel disabled:text-fg-faint"
+          >
+            {installing ? (
+              <RefreshCw size={13} className="animate-spin" />
+            ) : (
+              <DownloadCloud size={13} />
+            )}
+            {installing
+              ? locale === 'zh-CN'
+                ? '安装中...'
+                : 'Installing...'
+              : installed
+                ? locale === 'zh-CN'
+                  ? '更新'
+                  : 'Update'
+                : locale === 'zh-CN'
+                  ? '一键安装'
+                  : 'Install'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SHORTCUT_ACTION_META: Record<
   ShortcutActionId,
   { titleKey: TranslationKey; descriptionKey: TranslationKey }
@@ -7440,7 +9142,7 @@ function FreeChannelsSettings({ locale }: { locale: Locale }) {
     try {
       const saved = await exportJsonFile(
         exportFreeChannelsConfig(),
-        'openworkflow-free-channels.json',
+        'ultragamestudio-free-channels.json',
         t(locale, 'settings.freeChannels.title'),
       );
       if (!saved) return;
@@ -9205,7 +10907,7 @@ function AboutSettings({ locale }: { locale: Locale }) {
             <Sparkles size={20} strokeWidth={2.2} />
           </span>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-fg">FreeUltraCode</div>
+            <div className="text-sm font-semibold text-fg">UltraGameStudio</div>
             <span className="mt-1 inline-block rounded-md border border-border bg-panel-2 px-2 py-0.5 font-mono text-[11px] text-fg-dim">
               {t(locale, 'settings.aboutVersion')} v{APP_VERSION}
             </span>

@@ -1,7 +1,7 @@
 /**
  * Capture the current chat conversation as a long screenshot (PNG).
  *
- * The conversation stream (the `fuc-ai-return-stream` scroll container in
+ * The conversation stream (the `ugs-ai-return-stream` scroll container in
  * AIDock) is rasterized at its *full* scrollHeight — not just the visible
  * viewport — so the resulting image is one continuous "long screenshot" of the
  * whole session. Browser <canvas> has a per-axis pixel ceiling (~32k on most
@@ -9,7 +9,7 @@
  * instead of being silently clipped.
  *
  * Saving: inside the Tauri desktop shell images are written automatically under
- * the active workspace's `.freeultracode/session-captures` folder (or a temp fallback when
+ * the active workspace's `.ultragamestudio/session-captures` folder (or a temp fallback when
  * no workspace is selected). In a plain browser the image is offered as a normal
  * download. Multi-page captures save each page as `<base>-1.png`,
  * `<base>-2.png`, … so the pieces can be viewed/stitched in order.
@@ -22,6 +22,7 @@
 import {
   fetchCaptureImageDataUrl,
   saveSessionCapture,
+  type SessionCaptureSaveRequest,
   tauriAvailable,
 } from '@/lib/tauri';
 import { convertColorTokens, sanitizeClonedColors } from '@/lib/sanitizeOklab';
@@ -44,9 +45,34 @@ const MAX_PAGE_HEIGHT = 12000;
 export const CAPTURE_SCALE = 2;
 
 const IMAGE_READY_TIMEOUT_MS = 8000;
+const CAPTURE_IMAGE_FETCH_TIMEOUT_MS = 10000;
+const HTML2CANVAS_TIMEOUT_MS = 30000;
+const CANVAS_ENCODE_TIMEOUT_MS = 15000;
+const SESSION_CAPTURE_SAVE_TIMEOUT_MS = 20000;
 const CAPTURE_EDGE_PADDING = 24;
 const MIN_CAPTURE_WIDTH = 360;
-const CAPTURE_EXCLUDE_SELECTOR = '[data-fuc-capture-exclude="true"]';
+const CAPTURE_EXCLUDE_SELECTOR = '[data-ugs-capture-exclude="true"]';
+
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  code: string,
+): Promise<T> {
+  let timer: number | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = window.setTimeout(() => reject(new Error(code)), ms);
+    promise.then(
+      (value) => {
+        if (timer !== undefined) window.clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        if (timer !== undefined) window.clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 export interface CaptureResult {
   /** Number of page images produced. */
@@ -68,8 +94,10 @@ export interface CaptureResult {
 export interface CaptureOptions {
   /** Optional file base name (no extension). */
   baseName?: string;
-  /** Active workspace path; desktop saves under `<cwd>/.freeultracode/session-captures`. */
+  /** Active workspace path; desktop saves under `<cwd>/.ultragamestudio/session-captures`. */
   cwd?: string;
+  /** Optional remote/network save implementation. */
+  save?: (request: SessionCaptureSaveRequest) => Promise<string>;
 }
 
 export interface CaptureCrop {
@@ -167,13 +195,21 @@ async function imageDataUrlForCapture(src: string): Promise<string | null> {
 
   if (tauriAvailable()) {
     try {
-      return await fetchCaptureImageDataUrl(trimmed);
+      return await withTimeout(
+        fetchCaptureImageDataUrl(trimmed),
+        CAPTURE_IMAGE_FETCH_TIMEOUT_MS,
+        'CAPTURE_IMAGE_FETCH_TIMEOUT',
+      );
     } catch {
       // Fall back to browser fetch for providers that already expose CORS.
     }
   }
 
-  return browserFetchImageDataUrl(trimmed);
+  return withTimeout(
+    browserFetchImageDataUrl(trimmed),
+    CAPTURE_IMAGE_FETCH_TIMEOUT_MS,
+    'CAPTURE_IMAGE_FETCH_TIMEOUT',
+  );
 }
 
 async function waitForImageReady(img: HTMLImageElement): Promise<void> {
@@ -569,27 +605,35 @@ export async function captureSlice(
   background: string,
   crop: CaptureCrop = { x: 0, width: el.scrollWidth },
 ): Promise<HTMLCanvasElement> {
-  const html2canvas = await loadHtml2Canvas();
-  const canvas = await html2canvas(el, {
-    backgroundColor: background,
-    scale: CAPTURE_SCALE,
-    useCORS: true,
-    logging: false,
-    width: el.scrollWidth,
-    height,
-    y,
-    scrollX: 0,
-    scrollY: 0,
-    windowWidth: el.scrollWidth,
-    windowHeight: el.scrollHeight,
-    // The app's theme uses color-mix(in oklab, …) extensively; html2canvas's
-    // 1.4.1 color parser can't read the resulting oklab() computed values and
-    // would abort. Rewrite the cloned DOM to sRGB before it rasterizes.
-    onclone: (doc) => {
-      sanitizeClonedColors(doc);
-      setClonedImagesEager(doc);
-    },
-  });
+  const html2canvas = await withTimeout(
+    loadHtml2Canvas(),
+    HTML2CANVAS_TIMEOUT_MS,
+    'HTML2CANVAS_LOAD_TIMEOUT',
+  );
+  const canvas = await withTimeout(
+    html2canvas(el, {
+      backgroundColor: background,
+      scale: CAPTURE_SCALE,
+      useCORS: true,
+      logging: false,
+      width: el.scrollWidth,
+      height,
+      y,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: el.scrollWidth,
+      windowHeight: el.scrollHeight,
+      // The app's theme uses color-mix(in oklab, …) extensively; html2canvas's
+      // 1.4.1 color parser can't read the resulting oklab() computed values and
+      // would abort. Rewrite the cloned DOM to sRGB before it rasterizes.
+      onclone: (doc) => {
+        sanitizeClonedColors(doc);
+        setClonedImagesEager(doc);
+      },
+    }),
+    HTML2CANVAS_TIMEOUT_MS,
+    'HTML2CANVAS_CAPTURE_TIMEOUT',
+  );
   return cropCanvasHorizontally(canvas, crop, background);
 }
 
@@ -630,18 +674,22 @@ export async function withExpandedContainer<T>(
 
 /** Convert a canvas to PNG bytes. */
 function canvasToBytes(canvas: HTMLCanvasElement): Promise<Uint8Array<ArrayBuffer>> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('CANVAS_ENCODE_FAILED'));
-        return;
-      }
-      blob
-        .arrayBuffer()
-        .then((buf) => resolve(new Uint8Array(buf)))
-        .catch(reject);
-    }, 'image/png');
-  });
+  return withTimeout(
+    new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('CANVAS_ENCODE_FAILED'));
+          return;
+        }
+        blob
+          .arrayBuffer()
+          .then((buf) => resolve(new Uint8Array(buf)))
+          .catch(reject);
+      }, 'image/png');
+    }),
+    CANVAS_ENCODE_TIMEOUT_MS,
+    'CANVAS_ENCODE_TIMEOUT',
+  );
 }
 
 /** Default file base name, e.g. `session-2026-06-07-1432`. */
@@ -666,9 +714,9 @@ export function captureBytesToBase64(bytes: Uint8Array): string {
 
 function normalizeCaptureOptions(
   input?: string | CaptureOptions,
-): Required<Pick<CaptureOptions, 'baseName'>> & Pick<CaptureOptions, 'cwd'> {
-  if (typeof input === 'string') return { baseName: input, cwd: undefined };
-  return { baseName: input?.baseName ?? '', cwd: input?.cwd };
+): Required<Pick<CaptureOptions, 'baseName'>> & Pick<CaptureOptions, 'cwd' | 'save'> {
+  if (typeof input === 'string') return { baseName: input, cwd: undefined, save: undefined };
+  return { baseName: input?.baseName ?? '', cwd: input?.cwd, save: input?.save };
 }
 
 /**
@@ -735,7 +783,7 @@ export async function captureConversation(
   const totalHeight = Math.max(target.scrollHeight, target.clientHeight);
   if (totalHeight <= 0) throw new Error('EMPTY_CONVERSATION');
 
-  const { baseName, cwd } = normalizeCaptureOptions(options);
+  const { baseName, cwd, save } = normalizeCaptureOptions(options);
   const background = resolveBackground(target);
 
   const pages: Uint8Array<ArrayBuffer>[] = [];
@@ -767,7 +815,7 @@ export async function captureConversation(
   const fileName = (index: number) =>
     stitched ? `${base}-${index + 1}.png` : `${base}.png`;
 
-  if (!tauriAvailable()) {
+  if (!save && !tauriAvailable()) {
     pages.forEach((bytes, i) => browserDownloadPng(fileName(i), bytes));
     return {
       pages: pages.length,
@@ -780,12 +828,16 @@ export async function captureConversation(
 
   const written: string[] = [];
   for (let i = 0; i < pages.length; i++) {
-    const path = await saveSessionCapture({
-      bytesBase64: captureBytesToBase64(pages[i]),
-      mime: 'image/png',
-      fileName: fileName(i),
-      cwd: cwd ?? null,
-    });
+    const path = await withTimeout(
+      (save ?? saveSessionCapture)({
+        bytesBase64: captureBytesToBase64(pages[i]),
+        mime: 'image/png',
+        fileName: fileName(i),
+        cwd: cwd ?? null,
+      }),
+      SESSION_CAPTURE_SAVE_TIMEOUT_MS,
+      'SESSION_CAPTURE_SAVE_TIMEOUT',
+    );
     written.push(path);
   }
 

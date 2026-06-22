@@ -48,34 +48,34 @@ const globalCss = readFileSync('src/styles/global.css', 'utf8');
 
 // The full primitive-token contract each preset CSS block must define.
 const REQUIRED_TOKENS = [
-  '--fuc-color-bg',
-  '--fuc-color-bg-alt',
-  '--fuc-color-panel',
-  '--fuc-color-panel-2',
-  '--fuc-color-border',
-  '--fuc-color-border-soft',
-  '--fuc-color-text',
-  '--fuc-color-text-muted',
-  '--fuc-color-text-faint',
-  '--fuc-color-accent',
-  '--fuc-color-accent-2',
-  '--fuc-color-accent-3',
-  '--fuc-color-accent-4',
-  '--fuc-status-ai-edit',
-  '--fuc-status-ai-edit-contrast',
-  '--fuc-status-running',
-  '--fuc-status-running-contrast',
-  '--fuc-status-success',
-  '--fuc-status-success-contrast',
-  '--fuc-status-error',
-  '--fuc-status-error-contrast',
-  '--fuc-status-interrupted',
-  '--fuc-status-interrupted-contrast',
+  '--ugs-color-bg',
+  '--ugs-color-bg-alt',
+  '--ugs-color-panel',
+  '--ugs-color-panel-2',
+  '--ugs-color-border',
+  '--ugs-color-border-soft',
+  '--ugs-color-text',
+  '--ugs-color-text-muted',
+  '--ugs-color-text-faint',
+  '--ugs-color-accent',
+  '--ugs-color-accent-2',
+  '--ugs-color-accent-3',
+  '--ugs-color-accent-4',
+  '--ugs-status-ai-edit',
+  '--ugs-status-ai-edit-contrast',
+  '--ugs-status-running',
+  '--ugs-status-running-contrast',
+  '--ugs-status-success',
+  '--ugs-status-success-contrast',
+  '--ugs-status-error',
+  '--ugs-status-error-contrast',
+  '--ugs-status-interrupted',
+  '--ugs-status-interrupted-contrast',
 ] as const;
 
-/** Extract the body of `html.fuc-style-<id> { ... }` from global.css. */
+/** Extract the body of `html.ugs-style-<id> { ... }` from global.css. */
 function presetCssBlock(id: string): string {
-  const marker = `html.fuc-style-${id} {`;
+  const marker = `html.ugs-style-${id} {`;
   const start = globalCss.indexOf(marker);
   if (start === -1) return '';
   const open = globalCss.indexOf('{', start);
@@ -83,9 +83,9 @@ function presetCssBlock(id: string): string {
   return globalCss.slice(open + 1, close);
 }
 
-/** Extract the body of `html.fuc-stream-scheme-<id> { ... }` from global.css. */
+/** Extract the body of `html.ugs-stream-scheme-<id> { ... }` from global.css. */
 function streamCssBlock(id: string): string {
-  const marker = `html.fuc-stream-scheme-${id} {`;
+  const marker = `html.ugs-stream-scheme-${id} {`;
   const start = globalCss.indexOf(marker);
   if (start === -1) return '';
   const open = globalCss.indexOf('{', start);
@@ -97,10 +97,10 @@ afterEach(() => {
   const root = document.documentElement;
   root.className = '';
   root.removeAttribute('style');
-  delete root.dataset.fucStyle;
-  delete root.dataset.fucStreamScheme;
-  delete root.dataset.fucFontFamily;
-  delete root.dataset.fucFontSize;
+  delete root.dataset.ugsStyle;
+  delete root.dataset.ugsStreamScheme;
+  delete root.dataset.ugsFontFamily;
+  delete root.dataset.ugsFontSize;
 });
 
 describe('appearance presets', () => {
@@ -296,20 +296,20 @@ describe('appearance presets', () => {
         streamSchemeId: DEFAULT_STREAM_SCHEME_ID,
       });
       const root = document.documentElement;
-      expect(root.dataset.fucStyle).toBe(id);
-      expect(root.dataset.fucStreamScheme).toBe(expectedStreamSchemeId);
-      expect(root.classList.contains(`fuc-style-${id}`)).toBe(true);
+      expect(root.dataset.ugsStyle).toBe(id);
+      expect(root.dataset.ugsStreamScheme).toBe(expectedStreamSchemeId);
+      expect(root.classList.contains(`ugs-style-${id}`)).toBe(true);
       expect(
-        root.classList.contains(`fuc-stream-scheme-${expectedStreamSchemeId}`),
+        root.classList.contains(`ugs-stream-scheme-${expectedStreamSchemeId}`),
       ).toBe(true);
       // Only the active preset class is present.
       for (const other of BUILTIN_STYLE_PRESETS) {
         if (other === id) continue;
-        expect(root.classList.contains(`fuc-style-${other}`)).toBe(false);
+        expect(root.classList.contains(`ugs-style-${other}`)).toBe(false);
       }
       for (const other of BUILTIN_STREAM_SCHEMES) {
         if (other === expectedStreamSchemeId) continue;
-        expect(root.classList.contains(`fuc-stream-scheme-${other}`)).toBe(false);
+        expect(root.classList.contains(`ugs-stream-scheme-${other}`)).toBe(false);
       }
     },
   );
@@ -325,19 +325,19 @@ describe('appearance presets', () => {
         streamSchemeId: id,
       });
       const root = document.documentElement;
-      expect(root.dataset.fucStyle).toBe(expectedStylePresetId);
-      expect(root.dataset.fucStreamScheme).toBe(id);
-      expect(root.classList.contains(`fuc-style-${expectedStylePresetId}`)).toBe(
+      expect(root.dataset.ugsStyle).toBe(expectedStylePresetId);
+      expect(root.dataset.ugsStreamScheme).toBe(id);
+      expect(root.classList.contains(`ugs-style-${expectedStylePresetId}`)).toBe(
         true,
       );
-      expect(root.classList.contains(`fuc-stream-scheme-${id}`)).toBe(true);
+      expect(root.classList.contains(`ugs-stream-scheme-${id}`)).toBe(true);
       for (const other of BUILTIN_STYLE_PRESETS) {
         if (other === expectedStylePresetId) continue;
-        expect(root.classList.contains(`fuc-style-${other}`)).toBe(false);
+        expect(root.classList.contains(`ugs-style-${other}`)).toBe(false);
       }
       for (const other of BUILTIN_STREAM_SCHEMES) {
         if (other === id) continue;
-        expect(root.classList.contains(`fuc-stream-scheme-${other}`)).toBe(false);
+        expect(root.classList.contains(`ugs-stream-scheme-${other}`)).toBe(false);
       }
     },
   );
@@ -401,11 +401,11 @@ describe('appearance presets', () => {
       fontSizePx: 18,
     });
     const root = document.documentElement;
-    expect(root.dataset.fucFontFamily).toBe('cjk');
-    expect(root.dataset.fucFontSize).toBe('18');
-    expect(root.style.getPropertyValue('--fuc-font-family')).toContain(
+    expect(root.dataset.ugsFontFamily).toBe('cjk');
+    expect(root.dataset.ugsFontSize).toBe('18');
+    expect(root.style.getPropertyValue('--ugs-font-family')).toContain(
       'Microsoft YaHei',
     );
-    expect(root.style.getPropertyValue('--fuc-font-size')).toBe('18px');
+    expect(root.style.getPropertyValue('--ugs-font-size')).toBe('18px');
   });
 });

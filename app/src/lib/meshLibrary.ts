@@ -2,7 +2,7 @@
 //
 // CONTRACT: This module owns the *data* layer and network search for online 3D
 // model libraries (Sketchfab, Poly Haven, Poly Pizza, Fab, Unity Asset Store,
-// ...). The Project Settings "在线模型库" tab configures which libraries are enabled
+// ...). The global Settings "在线模型库" tab configures which libraries are enabled
 // and stores per-library account API keys; the AIDock /mesh-search command and
 // the store's startMeshSearchTurn consume searchMeshLibraries() to render
 // results (thumbnails / previews / downloads) into the conversation.
@@ -15,7 +15,11 @@
 //                   search page with the query so the user can browse there
 //                   (Fab, Unity Asset Store, CGTrader, TurboSquid, Free3D, ...).
 
-import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+import {
+  readSettingsRaw,
+  type SettingsProfileOptions,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
 
 export type BuiltInMeshLibraryId =
   | 'polyhaven'
@@ -129,7 +133,7 @@ export interface MeshSearchQueryResolution {
 
 export type MeshSearchEnglishTranslator = (query: string) => Promise<string>;
 
-const STORAGE_KEY = 'freeultracode.meshLibrary.v1';
+const STORAGE_KEY = 'ultragamestudio.meshLibrary.v1';
 const SETTINGS_REL_PATH = 'settings/meshLibrary.v1.json';
 
 export const MESH_LIBRARY_CATEGORY_LABELS: Record<MeshLibraryCategory, string> = {
@@ -444,24 +448,29 @@ export function normalizeMeshLibrarySettings(value: unknown): MeshLibraryAccount
   };
 }
 
-export function loadMeshLibrarySettings(): MeshLibraryAccountSettings {
+export function loadMeshLibrarySettings(
+  options: SettingsProfileOptions = {},
+): MeshLibraryAccountSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeMeshLibrarySettings(raw ? JSON.parse(raw) : null);
   } catch {
     return { ...DEFAULT_MESH_LIBRARY_SETTINGS };
   }
 }
 
-export function saveMeshLibrarySettings(settings: MeshLibraryAccountSettings): void {
+export function saveMeshLibrarySettings(
+  settings: MeshLibraryAccountSettings,
+  options: SettingsProfileOptions = {},
+): void {
   const payload = JSON.stringify(normalizeMeshLibrarySettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[meshLibrary] failed to persist settings');
     return;
   }
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('fuc:mesh-library-settings-changed'));
+    window.dispatchEvent(new Event('ugs:mesh-library-settings-changed'));
   }
 }
 

@@ -5,9 +5,9 @@ import {
   Search,
 } from 'lucide-react';
 import {
+  GAME_PROJECT_COMMAND_NAMES,
   PROJECT_COMMAND_NAMES,
   buildGameSkillSuggestions,
-  isProjectCommandName,
   type SlashSuggestion,
 } from '@/lib/slashCommands';
 import {
@@ -15,18 +15,35 @@ import {
   type Locale,
 } from '@/lib/i18n';
 
+const SETTINGS_COMMAND_NAMES = [
+  ...PROJECT_COMMAND_NAMES,
+  ...GAME_PROJECT_COMMAND_NAMES.filter(
+    (name) =>
+      !PROJECT_COMMAND_NAMES.some(
+        (existing) => existing.toLowerCase() === name.toLowerCase(),
+      ),
+  ),
+];
+
+const SETTINGS_COMMAND_NAME_SET: ReadonlySet<string> = new Set(
+  SETTINGS_COMMAND_NAMES.map((name) => name.toLowerCase()),
+);
+
 export default function CommandsSettings({ locale }: { locale: Locale }) {
   const [query, setQuery] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Curated, project-specific commands only; generic prompt shortcuts and
-  // backend-discovered CLI/skill commands still live in the inline `/` menu.
+  // Curated built-in commands from the former global and project command tabs.
+  // Generic prompt shortcuts and backend-discovered CLI/skill commands still
+  // live in the inline `/` menu.
   const commands = useMemo(() => {
     const order = new Map(
-      PROJECT_COMMAND_NAMES.map((name, index) => [name.toLowerCase(), index]),
+      SETTINGS_COMMAND_NAMES.map((name, index) => [name.toLowerCase(), index]),
     );
     return buildGameSkillSuggestions(locale)
-      .filter((item) => isProjectCommandName(item.name))
+      .filter((item) =>
+        SETTINGS_COMMAND_NAME_SET.has(item.name.trim().toLowerCase()),
+      )
       .sort(
         (a, b) =>
           (order.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER) -

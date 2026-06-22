@@ -1,5 +1,5 @@
-const STORAGE_KEY = 'freeultracode.manifestMode.v1';
-const CHANGE_EVENT = 'freeultracode:manifest-mode-changed';
+const STORAGE_KEY = 'ultragamestudio.manifestMode.v1';
+const CHANGE_EVENT = 'ultragamestudio:manifest-mode-changed';
 
 function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;

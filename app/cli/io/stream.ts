@@ -83,14 +83,14 @@ export function toolSubject(input: unknown): string {
 }
 
 // Inline tool-event sentinel protocol (mirrors src/components/ai/lib/toolEvent.ts).
-const TOOL_OPEN = '<<FUC_TOOL>>';
-const TOOL_CLOSE = '<<FUC_TOOL_END>>';
+const TOOL_OPEN = '<<UGS_TOOL>>';
+const TOOL_CLOSE = '<<UGS_TOOL_END>>';
 
 /** Serialise a tool-event patch into an inline sentinel block for the stream. */
 export function encodeToolPatch(patch: Record<string, unknown>): string {
   // Escape `<`/`>` in the payload (JSON.parse restores them) so a tool result
   // that itself contains the literal sentinel markers can't produce a stray
-  // `<<FUC_TOOL_END>>` that would prematurely close the block.
+  // `<<UGS_TOOL_END>>` that would prematurely close the block.
   const payload = JSON.stringify(patch).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   return `\n${TOOL_OPEN}${payload}${TOOL_CLOSE}\n`;
 }

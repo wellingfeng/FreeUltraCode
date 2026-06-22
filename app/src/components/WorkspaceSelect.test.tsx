@@ -53,7 +53,7 @@ describe('WorkspaceSelect', () => {
       history: [
         'E:\\Game',
         'e:/Game/',
-        'E:\\FreeUltraCode',
+        'E:\\UltraGameStudio',
         'E:\\Game\\',
       ],
     });
@@ -72,7 +72,7 @@ describe('WorkspaceSelect', () => {
       expect(options).toHaveLength(2);
       expect(options.map((item) => item.textContent?.trim())).toEqual([
         '●Game',
-        '●FreeUltraCode',
+        '●UltraGameStudio',
       ]);
     } finally {
       await view.cleanup();
@@ -84,7 +84,7 @@ describe('WorkspaceSelect', () => {
     const onRemove = vi.fn();
     const view = await renderWorkspaceSelect({
       value: 'E:\\Game',
-      history: ['E:\\Game', 'E:\\FreeUltraCode'],
+      history: ['E:\\Game', 'E:\\UltraGameStudio'],
       onSelect,
       onRemove,
     });
@@ -106,7 +106,7 @@ describe('WorkspaceSelect', () => {
         removeButtons[1]?.click();
       });
 
-      expect(onRemove).toHaveBeenCalledWith('E:\\FreeUltraCode');
+      expect(onRemove).toHaveBeenCalledWith('E:\\UltraGameStudio');
       expect(onSelect).not.toHaveBeenCalled();
     } finally {
       await view.cleanup();

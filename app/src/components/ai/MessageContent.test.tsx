@@ -36,11 +36,11 @@ describe('MessageContent integration', () => {
   ].join('\n');
 
   it('preserves Windows clipboard-image paths through markdown so preview works', () => {
-    // CommonMark would collapse the `\.freeultracode` escape and corrupt the path, leaving
+    // CommonMark would collapse the `\.ultragamestudio` escape and corrupt the path, leaving
     // the file chip pointing at a non-existent file (so clicking it cannot
     // preview). The protect pass keeps the original separators intact.
     const B = String.fromCharCode(92);
-    const winPath = `E:${B}OpenWorkflow${B}.freeultracode${B}clipboard-images${B}pasted-1780825313768-e964bfa29a1d4c87-0.png`;
+    const winPath = `E:${B}UltraGameStudio${B}.ultragamestudio${B}clipboard-images${B}pasted-1780825313768-e964bfa29a1d4c87-0.png`;
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
         text: `已保存截图 ${winPath} 完成。`,
@@ -49,9 +49,9 @@ describe('MessageContent integration', () => {
       }),
     );
     expect(html).toMatch(/ai-file-chip-thumb/);
-    // The `.freeultracode` separator must survive: no `OpenWorkflow.freeultracode` collapse.
-    expect(html).not.toMatch(/OpenWorkflow\.freeultracode/);
-    expect(html).toMatch(/OpenWorkflow\\\.freeultracode\\clipboard-images/);
+    // The `.ultragamestudio` separator must survive: no `UltraGameStudio.ultragamestudio` collapse.
+    expect(html).not.toMatch(/UltraGameStudio\.ultragamestudio/);
+    expect(html).toMatch(/UltraGameStudio\\\.ultragamestudio\\clipboard-images/);
   });
 
   it('renders highlighted code, table, and file chip', () => {
@@ -84,6 +84,51 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/language-hlsl/);
     expect(html).toMatch(/hljs-type/);
     expect(html).toMatch(/hljs-built_in|hljs-title/);
+  });
+
+  it('renders loose diff code as one folded block instead of scattered markdown lists', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: [
+          '-        });',
+          '-        controller.close();',
+          '-      },',
+          '+        await waitFor(',
+          '+          () => expect(done).toBe(true),',
+        ].join('\n'),
+        streaming: false,
+      }),
+    );
+
+    // One code block, recognized as a diff and folded behind a toggle (its body
+    // is hidden until the user expands it) rather than parsed as markdown lists.
+    expect(html.match(/class="ai-code group\/code/g)).toHaveLength(1);
+    expect(html).toMatch(/ai-code__folded/);
+    expect(html).not.toMatch(/controller\.close/);
+    expect(html).not.toMatch(/<ul/);
+  });
+
+  it('unwraps markdown wrappers that contain nested fenced code', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: [
+          '```markdown',
+          '```ts',
+          'const a = 1;',
+          '```',
+          '',
+          '```css',
+          '.a { color: red; }',
+          '```',
+          '```',
+        ].join('\n'),
+        streaming: false,
+      }),
+    );
+
+    expect(html.match(/class="ai-code group\/code/g)).toHaveLength(2);
+    expect(html).toMatch(/language-ts/);
+    expect(html).toMatch(/language-css/);
   });
 
   it('renders a reasoning block separately from the answer', () => {
@@ -211,7 +256,7 @@ describe('MessageContent integration', () => {
   it('renders downloaded local 3D model links as viewports', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
-        text: '[预览 3D 模型 1](file:///E:/OpenWorkflows/.freeultracode/model-assets/model.glb)',
+        text: '[预览 3D 模型 1](file:///E:/UltraGameStudio/.ultragamestudio/model-assets/model.glb)',
         streaming: false,
       }),
     );
@@ -237,7 +282,7 @@ describe('MessageContent integration', () => {
   it('falls back to a file chip for unsupported local 3D model formats', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
-        text: '[预览 3D 模型 5](file:///E:/OpenWorkflows/.freeultracode/model-assets/model.zip)',
+        text: '[预览 3D 模型 5](file:///E:/UltraGameStudio/.ultragamestudio/model-assets/model.zip)',
         streaming: false,
         onOpenFile: () => {},
       }),
@@ -255,7 +300,7 @@ describe('MessageContent integration', () => {
         text:
           '✓ 3D 模型生成完成\n' +
           '骨骼：已按可绑骨资产请求骨骼绑定和 Idle、Walk、Run 预览动画\n\n' +
-          '[预览 3D 模型 1](file:///E:/OpenWorkflows/.freeultracode/model-assets/model.glb)',
+          '[预览 3D 模型 1](file:///E:/UltraGameStudio/.ultragamestudio/model-assets/model.glb)',
       }),
     );
 
@@ -283,17 +328,17 @@ describe('MessageContent integration', () => {
       createElement(MessageContent, {
         text: 'Open `src/store/useStore.ts:42`.',
         streaming: false,
-        cwd: 'E:\\OpenWorkflow',
+        cwd: 'E:\\UltraGameStudio',
         onOpenFile: () => {},
       }),
     );
-    expect(html).toMatch(/E:\\OpenWorkflow\\src\\store\\useStore\.ts/);
+    expect(html).toMatch(/E:\\UltraGameStudio\\src\\store\\useStore\.ts/);
     expect(html).toMatch(/:42/);
   });
 
   it('renders backticked Windows capture paths with spaces as interactive file chips', () => {
     const B = String.fromCharCode(92);
-    const path = `E:${B}Open Workflow${B}.freeultracode${B}session-captures${B}session-2026-06-07-1432.png`;
+    const path = `E:${B}UltraGameStudio${B}.ultragamestudio${B}session-captures${B}session-2026-06-07-1432.png`;
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
         text: `保存到（点击路径可预览）：\n- \`${path}\``,
@@ -303,7 +348,7 @@ describe('MessageContent integration', () => {
     );
 
     expect(html).toMatch(/ai-file-chip-thumb/);
-    expect(html).toMatch(/Open Workflow/);
+    expect(html).toMatch(/UltraGameStudio/);
     expect(html).toMatch(/session-captures/);
   });
 

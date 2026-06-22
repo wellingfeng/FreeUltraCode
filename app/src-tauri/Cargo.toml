@@ -1,10 +1,10 @@
 [package]
 name = "app"
-version = "0.4.8"
-description = "FreeUltraCode - Visual AI Workflow Editor"
-authors = ["FreeUltraCode"]
+version = "0.4.9"
+description = "UltraGameStudio - AI coding studio for game development"
+authors = ["UltraGameStudio"]
 license = ""
-repository = "https://github.com/wellingfeng/FreeUltraCode"
+repository = "https://github.com/wellingfeng/UltraGameStudio"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -14,9 +14,9 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-# Name the standalone executable FreeUltraCode.exe (instead of app.exe).
+# Name the standalone executable UltraGameStudio.exe (instead of app.exe).
 [[bin]]
-name = "FreeUltraCode"
+name = "UltraGameStudio"
 path = "src/main.rs"
 
 [build-dependencies]

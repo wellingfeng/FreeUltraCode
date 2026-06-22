@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FreeUltraCode Packager (macOS / Linux) — counterpart to run.sh.
+# UltraGameStudio Packager (macOS / Linux) — counterpart to run.sh.
 # Builds DISTRIBUTABLE installers/bundles with Tauri (NOT just a launchable
 # binary), then collects them into ./release for shipping.
 #
@@ -23,7 +23,7 @@ APP_DIR="$SCRIPT_DIR/app"
 TAURI_DIR="$APP_DIR/src-tauri"
 BUNDLE_DIR="$TAURI_DIR/target/release/bundle"
 RELEASE_DIR="$SCRIPT_DIR/release"
-EXE="$TAURI_DIR/target/release/FreeUltraCode"
+EXE="$TAURI_DIR/target/release/UltraGameStudio"
 
 c_ok()   { printf '\033[32m[OK]\033[0m %s\n' "$*"; }
 c_info() { printf '\033[36m[..]\033[0m %s\n' "$*"; }
@@ -36,7 +36,7 @@ conf_value() {
   sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" \
     "$TAURI_DIR/tauri.conf.json" | head -n 1
 }
-PRODUCT="$(conf_value productName)"; PRODUCT="${PRODUCT:-FreeUltraCode}"
+PRODUCT="$(conf_value productName)"; PRODUCT="${PRODUCT:-UltraGameStudio}"
 VERSION="$(conf_value version)";     VERSION="${VERSION:-0.0.0}"
 
 OS="$(uname -s)"
@@ -60,7 +60,7 @@ case "${1:-}" in
 esac
 
 echo "============================================================"
-echo "  FreeUltraCode Packager  (mode: $MODE)"
+echo "  UltraGameStudio Packager  (mode: $MODE)"
 echo "  $PRODUCT v$VERSION  on  $OS"
 echo "============================================================"
 

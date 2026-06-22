@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="app/doc/images/freeultracode-mark.svg" alt="FreeUltraCode game development mark" width="560">
+  <img src="app/doc/images/ultragamestudio-mark.svg" alt="UltraGameStudio game development mark" width="560">
 </p>
 
-<h1 align="center">FreeUltraCode</h1>
+<h1 align="center">UltraGameStudio</h1>
 
 <h3 align="center">The AI coding agent built for game development.</h3>
 
 <p align="center">
   In a game engine, code is only a small part of the work. The rest is assets and
   pipeline — materials, blueprints, terrain, sky, UI, skeletal animation, packaging,
-  performance. FreeUltraCode is a Claude Code / Codex / Gemini style agent rebuilt
+  performance. UltraGameStudio is a Claude Code / Codex / Gemini style agent rebuilt
   around that reality: it understands game-engine concepts, generates the full range
   of game assets (images, 3D models, 2D sprite animation, atlases, audio, rigging,
   video), and routes routine work through free or low-cost channels so premium quota
@@ -59,42 +59,42 @@
 <table>
 <tr>
 <td width="180"><a href="http://apinode.pro/"><img src="app/doc/images/sponsor-apinode.svg" alt="API NODE" width="150"></a></td>
-<td>Thanks to <strong>API NODE</strong> for sponsoring this project! API NODE is an AI API gateway that provides stable, cost-effective relay access to Claude Code, Codex, Gemini, and other leading models through a single endpoint — a great fit for routing FreeUltraCode requests through one reliable provider. Register via <a href="http://apinode.pro/">this link</a>.</td>
+<td>Thanks to <strong>API NODE</strong> for sponsoring this project! API NODE is an AI API gateway that provides stable, cost-effective relay access to Claude Code, Codex, Gemini, and other leading models through a single endpoint — a great fit for routing UltraGameStudio requests through one reliable provider. Register via <a href="http://apinode.pro/">this link</a>.</td>
 </tr>
 </table>
 
 <p align="center">
   <strong>One-click Unreal Engine UMG interface</strong><br>
-  <img src="app/doc/images/game/JMsXEKE.png" alt="FreeUltraCode generates an Unreal Engine UMG interface in one click" width="960">
+  <img src="app/doc/images/game/JMsXEKE.png" alt="UltraGameStudio generates an Unreal Engine UMG interface in one click" width="960">
 </p>
 
 <p align="center">
   <strong>One-click 3D model generation</strong><br>
-  <img src="app/doc/images/game/noYfqPt.png" alt="FreeUltraCode generates a 3D model in one click" width="960">
+  <img src="app/doc/images/game/noYfqPt.png" alt="UltraGameStudio generates a 3D model in one click" width="960">
   <br><br>
-  <img src="app/doc/images/20260615-214236.jpg" alt="FreeUltraCode generated 3D model preview" width="960">
+  <img src="app/doc/images/20260615-214236.jpg" alt="UltraGameStudio generated 3D model preview" width="960">
 </p>
 
 <p align="center">
   <strong>Image, sprite, mesh, audio, rigging, and video — all managed through one coding agent</strong><br>
-  <img src="app/doc/images/game/gmclmLS.png" alt="FreeUltraCode unified game asset generation" width="960">
+  <img src="app/doc/images/game/gmclmLS.png" alt="UltraGameStudio unified game asset generation" width="960">
   <br><br>
-  <img src="app/doc/images/game/jXgMffC.png" alt="FreeUltraCode game asset workflow" width="960">
+  <img src="app/doc/images/game/jXgMffC.png" alt="UltraGameStudio game asset workflow" width="960">
 </p>
 
 <p align="center">
   <strong>Game-asset generation in the same session as your code</strong><br>
-  <img src="app/doc/images/生图/session-2026-06-07-2351.png" alt="FreeUltraCode generates an asset, then switches back to coding in one chat session" width="720">
+  <img src="app/doc/images/生图/session-2026-06-07-2351.png" alt="UltraGameStudio generates an asset, then switches back to coding in one chat session" width="720">
 </p>
 
 > [!IMPORTANT]
-> **Community · 加入社区** — join the FreeUltraCode Discord or QQ group for setup help, model routing ideas, and contributor coordination. Discord: <https://discord.gg/2C9ptSEFG> · QQ Group: `149523963`
+> **Community · 加入社区** — join the UltraGameStudio Discord or QQ group for setup help, model routing ideas, and contributor coordination. Discord: <https://discord.gg/2C9ptSEFG> · QQ Group: `149523963`
 
-## Why FreeUltraCode
+## Why UltraGameStudio
 
 AI is now good enough to write most of the code on its own. In practice the programmer's role is shifting toward describing intent, verifying output, and orchestrating agents. But a game is not just code. A game engine is full of materials, blueprints, terrain, sky, UI, skeletal animation, packaging, and performance tuning — and most general coding agents have no idea what any of that means.
 
-FreeUltraCode takes a Claude Code / Codex / Gemini style agent and customizes it deeply for game development:
+UltraGameStudio takes a Claude Code / Codex / Gemini style agent and customizes it deeply for game development:
 
 - **Speaks game-engine language.** The agent is primed with game-development concepts so it can reason about materials, blueprints, terrain, lighting, UI (UMG and others), skeletal animation, build/packaging, and performance optimization — not just generic source files.
 - **Generates every asset type a game needs.** Images, 3D models, 2D sprite animation, sprite atlases, audio, skeletal rigging, and video are all produced from the same chat surface and managed through one coding-agent workflow.
@@ -129,7 +129,7 @@ The agent first polishes your prompt, sends it to the configured provider, and s
 
 ### Game-Dev Expert Roster
 
-FreeUltraCode ships a roster of 40+ game-development specialists that the agent can draw on automatically based on the task:
+UltraGameStudio ships a roster of 40+ game-development specialists that the agent can draw on automatically based on the task:
 
 - **Engine specialists** for Unity, Unreal, Godot (GDScript / C# / GDExtension / shaders), and Web.
 - **Programming** roles: technical director, lead/engine/gameplay/AI/network/tools/UI programmers.
@@ -149,7 +149,7 @@ Configure the active engine, council mode, and which experts are enabled in **Se
 
 <p align="center">
   <strong>Free channel routing</strong><br>
-  <img src="app/doc/images/hero-free-channels.png" alt="FreeUltraCode free channel routing screenshot" width="960">
+  <img src="app/doc/images/hero-free-channels.png" alt="UltraGameStudio free channel routing screenshot" width="960">
 </p>
 
 Current default coding-oriented models:
@@ -163,14 +163,14 @@ Current default coding-oriented models:
 | Kilo Gateway | `poolside/laguna-xs.2:free` |
 | LLM7 | `codestral-latest` |
 
-### Dynamic Workflow (/ultracode)
+### Dynamic Workflow (/studio)
 
-For complex multi-step coding tasks, `/ultracode <task>` generates a purpose-built execution harness on the fly and runs it immediately — no visual canvas needed.
+For complex multi-step coding tasks, `/studio <task>` generates a purpose-built execution harness on the fly and runs it immediately — no visual canvas needed.
 
 - Describe the task in natural language. The planner builds a harness with parallel subagents, adversarial verification, and acceptance gates.
 - Six internal strategies are chosen automatically: classify-and-act, fan-out-and-synthesize, adversarial-verification, generate-and-filter, tournament, and loop-until-done.
-- Every run is fully logged under `.fuc-run/<run-id>/` with a task ledger, events, verdict, and final result.
-- Run from the desktop app or the CLI: `fuc ultracode "<task>" --json --interactive --cwd <workspace>`.
+- Every run is fully logged under `.ugs-run/<run-id>/` with a task ledger, events, verdict, and final result.
+- Run from the desktop app or the CLI: `ugs studio "<task>" --json --interactive --cwd <workspace>`.
 - Zero config — reuses local `claude` CLI login credentials.
 
 #### Free Auto — Multi-Channel Auto-Switching
@@ -184,10 +184,10 @@ The **Auto** channel (`freecc:auto` in the Channel menu) routes each request thr
 
 #### Multi-Provider Chain: DeepSeek → CodeX
 
-When using `/ultracode`, the harness can chain multiple providers across plan steps automatically. A typical pattern: let DeepSeek produce responsive drafts with low cost, then let CodeX pick up and refine the output for final quality.
+When using `/studio`, the harness can chain multiple providers across plan steps automatically. A typical pattern: let DeepSeek produce responsive drafts with low cost, then let CodeX pick up and refine the output for final quality.
 
 - The **Dynamic Harness plan** supports per-step `model` overrides — assign DeepSeek to brainstorming/classification steps and CodeX/Gemini to implementation/verification steps.
-- **cc-switch compatibility**: FreeUltraCode reads `cc-switch` CLI config so any provider already configured for Claude Code routing is immediately available for ultracode steps.
+- **cc-switch compatibility**: UltraGameStudio reads `cc-switch` CLI config so any provider already configured for Claude Code routing is immediately available for studio steps.
 - **Fan-out-and-synthesize** strategy parallelizes DeepSeek workers across independent subtasks, then a consensus gate (CodeX) synthesizes and verifies the results.
 
 #### Speed-Aware Channel Selection
@@ -199,12 +199,12 @@ The free proxy auto channel prioritizes channels based on real-world availabilit
 - **Connection-time budget**: Each channel attempt is subject to the upstream's timeout; the auto router cycles through candidates without blocking on a single slow upstream.
 - **Natural ordering by responsiveness**: Channels that succeed leave the cooldown registry empty and are naturally tried first; channels with errors are deferred to the end of the candidate list.
 
-These features work together so `/ultracode` harness runs stay resilient even when individual free providers are slow, rate-limited, or temporarily unavailable.
+These features work together so `/studio` harness runs stay resilient even when individual free providers are slow, rate-limited, or temporarily unavailable.
 
 ### Local-First Workspace
 
 - Sessions, favorites, scheduled prompts, API keys, and workspace history are stored locally.
-- No hosted FreeUltraCode server is required.
+- No hosted UltraGameStudio server is required.
 - The desktop app can use local CLI credentials and local model runtimes already available on your machine.
 
 ## Quick Start
@@ -264,7 +264,7 @@ build.bat       # Windows: package the NSIS installer
   <img src="app/doc/images/注册免费渠道/3-新建token.png" alt="Create a provider API key" width="960">
 </p>
 
-4. Paste the key back into FreeUltraCode and click **Save and Use**. After saving, the warning mark disappears from that channel.
+4. Paste the key back into UltraGameStudio and click **Save and Use**. After saving, the warning mark disappears from that channel.
 
 <p align="center">
   <img src="app/doc/images/注册免费渠道/4-配置好了.png" alt="Configured free channel without warning mark" width="960">
@@ -290,7 +290,7 @@ Asset modes turn the chat composer into an asset-generation surface while keepin
    ```
 
 3. While the mode is on, ordinary messages generate assets instead of running coding edits. The bottom **Channel** selector switches to asset providers, and the model selector appears when model selection is enabled.
-4. Describe the asset you want. FreeUltraCode first asks the coding model to polish the prompt, then sends it to the configured provider. The result appears in the chat stream with the prompt and provider details.
+4. Describe the asset you want. UltraGameStudio first asks the coding model to polish the prompt, then sends it to the configured provider. The result appears in the chat stream with the prompt and provider details.
 5. Send `/image-mode-end` to return to the normal coding channel and model. If you only need one asset without staying in a mode, send a one-shot command such as `/image`, `/img`, `/draw`, `/生图`, `/sprite`, `/music`, or `/video` followed by the prompt.
 
 ## How It Works
@@ -343,6 +343,8 @@ app/
       free_proxy.rs    Rust reverse proxy + Anthropic/OpenAI translation
       lib.rs           Tauri commands, filesystem/history bridge
   doc/                 Tutorials, localized READMEs, screenshots
+backend/              Remote execution backend for cloud Runner jobs
+packages/protocol/    Shared remote API types, status constants, Runner HTTP/SSE SDK
 docs/                  Research notes, static docs, assets
 pencil/                Pencil design files
 ```
@@ -369,8 +371,8 @@ npm run package    # Production Tauri build
 
 - Discord: <https://discord.gg/2C9ptSEFG>
 - QQ Group: `149523963`
-- Issues: <https://github.com/wellingfeng/FreeUltraCode/issues>
-- Repository: <https://github.com/wellingfeng/FreeUltraCode>
+- Issues: <https://github.com/wellingfeng/UltraGameStudio/issues>
+- Repository: <https://github.com/wellingfeng/UltraGameStudio>
 
 Pull requests should describe the behavior change, list verification commands, link related issues, and include screenshots or short recordings for UI changes.
 

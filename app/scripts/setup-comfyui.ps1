@@ -1,5 +1,5 @@
 param(
-  # Target install root. Defaults to the FreeUltraCode managed tools dir passed by the backend.
+  # Target install root. Defaults to the UltraGameStudio managed tools dir passed by the backend.
   [string]$InstallRoot = "",
   # Optional model profile id to download (see $ModelProfiles). Empty = recommended.
   [string]$Model = "",
@@ -87,7 +87,7 @@ function Download-File([string]$Url, [string]$Dest) {
 }
 
 if (-not $InstallRoot) {
-  $InstallRoot = Join-Path $env:LOCALAPPDATA "FreeUltraCode\tools\comfyui"
+  $InstallRoot = Join-Path $env:LOCALAPPDATA "UltraGameStudio\tools\comfyui"
 }
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 
@@ -147,6 +147,6 @@ if (-not $NoLaunch) {
 }
 
 Write-Host ""
-Write-Host "完成。在 FreeUltraCode 中："
+Write-Host "完成。在 UltraGameStudio 中："
 Write-Host "  1. 设置 -> 生图渠道 -> ComfyUI (本地/远程)，确认 base URL 为 http://127.0.0.1:8188"
 Write-Host "  2. 发送 /comfyui-mode-start 即可在信息流里生成并编辑节点图。"

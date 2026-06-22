@@ -62,7 +62,7 @@ function useImageThumbnail(
   const [state, setState] = useState<ThumbState>({ status: 'loading' });
 
   useEffect(() => {
-    if (!path) {
+    if (!path || path.startsWith('remote://') || cwd?.startsWith('remote://')) {
       setState({ status: 'error' });
       return;
     }

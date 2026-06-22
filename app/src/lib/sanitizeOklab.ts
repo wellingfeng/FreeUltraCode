@@ -1,7 +1,7 @@
 /**
  * html2canvas 1.4.1 ships a CSS color parser that predates CSS Color 4/5 — it
  * throws "Attempting to parse an unsupported color function" the moment it meets
- * an `oklab()`, `oklch()`, `color()` or `color-mix()` value. OpenWorkflow's theme
+ * an `oklab()`, `oklch()`, `color()` or `color-mix()` value. UltraGameStudio's theme
  * leans on `color-mix(in oklab, …)` throughout `global.css` (and a few inline
  * component styles), and modern Chromium serializes those into computed values
  * the library can't read, so any capture aborts immediately.

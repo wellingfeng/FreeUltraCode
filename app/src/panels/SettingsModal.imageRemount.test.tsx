@@ -223,7 +223,7 @@ describe('image channel survives modal remount', () => {
       key: string,
       value: string,
     ) {
-      if (key === 'fuc_model_list_cache_v1') {
+      if (key === 'ugs_model_list_cache_v1') {
         throw new DOMException('model cache unavailable', 'QuotaExceededError');
       }
       return originalSetItem.call(this, key, value);
@@ -290,7 +290,7 @@ describe('image channel survives modal remount', () => {
       key: string,
       value: string,
     ) {
-      if (key === 'fuc_model_list_cache_v1') {
+      if (key === 'ugs_model_list_cache_v1') {
         throw new DOMException('model cache unavailable', 'QuotaExceededError');
       }
       return originalSetItem.call(this, key, value);

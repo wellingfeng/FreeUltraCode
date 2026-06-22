@@ -23,13 +23,23 @@ import {
 import StatusIndicator, { type StatusTone } from '@/components/StatusIndicator';
 import WorkspaceListSelect from '@/components/WorkspaceListSelect';
 import RemoteWorkspaceDialog from '@/components/RemoteWorkspaceDialog';
+import RemoteWorkspaceStatusBadge, {
+  remoteWorkspaceConnectionDotClassName,
+  remoteWorkspaceConnectionLabel,
+} from '@/components/RemoteWorkspaceStatusBadge';
 import { cn } from '@/lib/cn';
 import { pickFolder } from '@/lib/folderPicker';
 import {
   getRemoteWorkspace,
+  isRemoteWorkspacePath,
   remoteWorkspaceIdFromPath,
   type RemoteWorkspaceConfig,
 } from '@/lib/remoteWorkspace';
+import {
+  REMOTE_WORKSPACE_STATUS_CHECK_INTERVAL_MS,
+  checkRemoteWorkspaceConnection,
+  type RemoteWorkspaceConnectionState,
+} from '@/lib/remoteWorkspaceStatus';
 import {
   uniqueWorkspaceHistory,
   workspacePathKey,
@@ -60,7 +70,12 @@ import {
 } from '@/lib/tauri';
 import { useResizableWidth } from '@/lib/useResizableWidth';
 import { t } from '@/lib/i18n';
-import { getAssets, subscribeAssets, mergeCachedAssetsFromDisk } from '@/lib/downloadRegistry';
+import {
+  assetMatchesWorkspace,
+  getAssets,
+  subscribeAssets,
+  mergeCachedAssetsFromDisk,
+} from '@/lib/downloadRegistry';
 import SettingsModal from './SettingsModal';
 import ProjectSettingsModal from './ProjectSettingsModal';
 import ScheduledTaskDialog from './ScheduledTaskDialog';
@@ -316,7 +331,11 @@ function ScheduledTaskMarker({
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({
+  projectScoped = false,
+}: {
+  projectScoped?: boolean;
+}) {
   const locale = useStore((s) => s.locale);
   const sessions = useStore((s) => s.sessions);
   const historyReady = useStore((s) => s.historyReady);
@@ -329,6 +348,7 @@ export default function Sidebar() {
   // selection that does NOT change when the user opens a session in another
   // workspace. Fall back to the active workspace before history init populates it.
   const selectedWorkspaceId = selectedWorkspaceIdRaw ?? activeWorkspaceId;
+  const scopedWorkspaceId = projectScoped ? selectedWorkspaceId : null;
   const activeSessionId = useStore((s) => s.activeSessionId);
   const runningSessions = useStore((s) => s.runningSessions);
   const runningSessionProgress = useStore((s) => s.runningSessionProgress);
@@ -355,6 +375,9 @@ export default function Sidebar() {
   const [projectScanCache, setProjectScanCache] = useState<
     Record<string, ProjectScanCacheEntry>
   >({});
+  const [remoteConnectionStates, setRemoteConnectionStates] = useState<
+    Record<string, RemoteWorkspaceConnectionState>
+  >({});
   const [workspaceLimits, setWorkspaceLimits] = useState<Record<string, number>>({});
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<
     Record<string, boolean>
@@ -362,10 +385,27 @@ export default function Sidebar() {
   const [flatLimit, setFlatLimit] = useState(WORKFLOW_HISTORY_PAGE_SIZE);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('history');
-  const assetTotalCount = assets.length;
-  const assetActiveCount = assets.filter(
+  const scopedAssets = useMemo(
+    () =>
+      assets.filter((asset) =>
+        assetMatchesWorkspace(asset, activeWorkspaceId),
+      ),
+    [activeWorkspaceId, assets],
+  );
+  const assetTotalCount = scopedAssets.length;
+  const assetActiveCount = scopedAssets.filter(
     (asset) => asset.status === 'pending',
   ).length;
+  const remoteWorkspaceTargets = useMemo(
+    () =>
+      workspaces
+        .filter((workspace) => isRemoteWorkspacePath(workspace.path))
+        .map((workspace) => ({
+          workspaceId: workspace.id,
+          path: workspace.path,
+        })),
+    [workspaces],
+  );
 
   // Keep the asset-center badge fresh even when its modal is closed. The
   // registry is otherwise only hydrated from disk when DownloadsModal mounts,
@@ -395,6 +435,66 @@ export default function Sidebar() {
       window.clearInterval(timer);
     };
   }, [assetBadgeCwd]);
+
+  useEffect(() => {
+    if (remoteWorkspaceTargets.length === 0) {
+      setRemoteConnectionStates({});
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    const targetIds = new Set(
+      remoteWorkspaceTargets.map((target) => target.workspaceId),
+    );
+
+    setRemoteConnectionStates((prev) => {
+      const next: Record<string, RemoteWorkspaceConnectionState> = {};
+      for (const target of remoteWorkspaceTargets) {
+        next[target.workspaceId] =
+          prev[target.workspaceId] ?? {
+            status: 'checking',
+            checkedAt: Date.now(),
+          };
+      }
+      return next;
+    });
+
+    const refresh = () => {
+      for (const target of remoteWorkspaceTargets) {
+        void checkRemoteWorkspaceConnection(target.path, controller.signal)
+          .then((result) => {
+            if (cancelled || !targetIds.has(target.workspaceId)) return;
+            setRemoteConnectionStates((prev) => ({
+              ...prev,
+              [target.workspaceId]: result,
+            }));
+          })
+          .catch((err) => {
+            if (cancelled || !targetIds.has(target.workspaceId)) return;
+            setRemoteConnectionStates((prev) => ({
+              ...prev,
+              [target.workspaceId]: {
+                status: 'failed',
+                detail: err instanceof Error ? err.message : String(err),
+                checkedAt: Date.now(),
+              },
+            }));
+          });
+      }
+    };
+
+    refresh();
+    const timer = window.setInterval(
+      refresh,
+      REMOTE_WORKSPACE_STATUS_CHECK_INTERVAL_MS,
+    );
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [remoteWorkspaceTargets]);
 
   // ── Context menu for session actions ─────────────────────────────────────
   type MenuState =
@@ -795,6 +895,7 @@ export default function Sidebar() {
     const targets = workspaces.filter((workspace) => {
       const path = workspace.path?.trim();
       if (!path) return false;
+      if (isRemoteWorkspacePath(path)) return false;
       return projectScanCache[workspace.id]?.path !== path;
     });
     if (targets.length === 0) return;
@@ -861,14 +962,14 @@ export default function Sidebar() {
     setWorkspace(path);
   }, [locale, setWorkspace]);
 
-  // Open the remote-workspace dialog. With a path, edits that existing remote
-  // workspace; without one, creates a new remote workspace.
+  // Open the cloud-project dialog. With a path, edits that existing remote
+  // project; without one, creates a new remote project.
   const handleOpenRemoteDialog = useCallback((existingPath?: string) => {
     const id = existingPath ? remoteWorkspaceIdFromPath(existingPath) : '';
     setRemoteDialog({ existing: id ? getRemoteWorkspace(id) : null });
   }, []);
 
-  // After saving a remote workspace, register/select it like any workspace; its
+  // After saving a remote project, register/select it like any workspace; its
   // synthetic remote://<id> path flows through the normal selection path.
   const handleRemoteSaved = useCallback(
     (remotePath: string, config: RemoteWorkspaceConfig) => {
@@ -932,19 +1033,26 @@ export default function Sidebar() {
     [aiEditingSessions, chattingSessions, runningSessions, waitingInputSessions],
   );
 
+  const scopedWorkspaces = useMemo(
+    () =>
+      scopedWorkspaceId
+        ? workspaces.filter((workspace) => workspace.id === scopedWorkspaceId)
+        : workspaces,
+    [scopedWorkspaceId, workspaces],
+  );
+
   const totalTreeSessions = useMemo(
     () =>
-      workspaces.reduce(
-        (count, workspace) =>
-          count + (sessionTree[workspace.id]?.length ?? 0),
+      scopedWorkspaces.reduce(
+        (count, workspace) => count + (sessionTree[workspace.id]?.length ?? 0),
         0,
       ),
-    [sessionTree, workspaces],
+    [scopedWorkspaces, sessionTree],
   );
 
   const totalFavoriteTreeSessions = useMemo(
     () =>
-      workspaces.reduce(
+      scopedWorkspaces.reduce(
         (count, workspace) =>
           count +
           (sessionTree[workspace.id]?.filter((session) =>
@@ -952,7 +1060,7 @@ export default function Sidebar() {
           ).length ?? 0),
         0,
       ),
-    [sessionTree, workspaces],
+    [scopedWorkspaces, sessionTree],
   );
 
   const tabFlatSessions = useMemo(
@@ -966,9 +1074,9 @@ export default function Sidebar() {
   );
 
   const hasHistory =
-    workspaces.length > 0 ? totalTreeSessions > 0 : sessions.length > 0;
+    scopedWorkspaces.length > 0 ? totalTreeSessions > 0 : sessions.length > 0;
   const hasFavorites =
-    workspaces.length > 0
+    scopedWorkspaces.length > 0
       ? totalFavoriteTreeSessions > 0
       : sessions.some((session) => sessionVisibleInTab(session, 'favorites'));
   const hasActiveTabSessions =
@@ -989,7 +1097,7 @@ export default function Sidebar() {
 
   const filteredWorkspaces = useMemo(
     () =>
-      workspaces
+      scopedWorkspaces
         .map((workspace) => {
           const tabSessions = sortHistorySessions(
             (sessionTree[workspace.id] ?? []).filter((session) =>
@@ -1028,9 +1136,9 @@ export default function Sidebar() {
       activeTab,
       selectedWorkspaceId,
       normalizedQuery,
+      scopedWorkspaces,
       sessionTree,
       sidebarLiveState,
-      workspaces,
     ],
   );
 
@@ -1045,7 +1153,7 @@ export default function Sidebar() {
   );
 
   const totalMatchedSessions =
-    workspaces.length > 0
+    scopedWorkspaces.length > 0
       ? filteredWorkspaces.reduce(
           (count, group) => count + group.sessions.length,
           0,
@@ -1054,7 +1162,7 @@ export default function Sidebar() {
 
   const firstSearchMatch = useMemo(() => {
     if (!isSearching) return null;
-    if (workspaces.length > 0) {
+    if (scopedWorkspaces.length > 0) {
       const firstGroup = filteredWorkspaces.find(
         (group) => group.sessions.length > 0,
       );
@@ -1068,7 +1176,12 @@ export default function Sidebar() {
     return firstSession
       ? { sessionId: firstSession.id, workspaceId: undefined }
       : null;
-  }, [filteredFlatSessions, filteredWorkspaces, isSearching, workspaces.length]);
+  }, [
+    filteredFlatSessions,
+    filteredWorkspaces,
+    isSearching,
+    scopedWorkspaces.length,
+  ]);
 
   const handleSearchKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1091,7 +1204,7 @@ export default function Sidebar() {
   );
 
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'freeultracode.sidebarWidth.v1',
+    storageKey: 'ultragamestudio.sidebarWidth.v1',
     defaultWidth: 240,
     min: 180,
     max: 480,
@@ -1123,23 +1236,25 @@ export default function Sidebar() {
       <div className="flex items-center gap-2 border-b border-border-soft px-4 py-3.5">
         <span className="text-accent-2">◆</span>
         <span className="text-sm font-semibold tracking-tight text-fg">
-          FreeUltraCode
+          UltraGameStudio
         </span>
       </div>
 
-      {/* Workspace switcher */}
-      <div className="border-b border-border-soft px-3 py-2.5">
-        <WorkspaceListSelect
-          workspaces={workspaces}
-          activeWorkspaceId={selectedWorkspaceId}
-          locale={locale}
-          onSelect={setWorkspace}
-          onBrowseLocal={() => {
-            void handleBrowseLocalWorkspace();
-          }}
-          onAddRemote={handleOpenRemoteDialog}
-        />
-      </div>
+      {!projectScoped && (
+        <div className="border-b border-border-soft px-3 py-2.5">
+          <WorkspaceListSelect
+            workspaces={workspaces}
+            activeWorkspaceId={selectedWorkspaceId}
+            locale={locale}
+            onSelect={setWorkspace}
+            onBrowseLocal={() => {
+              void handleBrowseLocalWorkspace();
+            }}
+            onAddRemote={handleOpenRemoteDialog}
+            remoteConnectionStates={remoteConnectionStates}
+          />
+        </div>
+      )}
 
       {/* Primary actions */}
       <div className="flex flex-col gap-1 px-3 pt-3 pb-2.5">
@@ -1280,7 +1395,7 @@ export default function Sidebar() {
                 {t(locale, 'sidebar.searchClear')}
               </button>
             </div>
-          ) : workspaces.length > 0 ? (
+          ) : scopedWorkspaces.length > 0 ? (
             <ul className="flex flex-col gap-2">
               {filteredWorkspaces.map(({ workspace, sessions: list, tabSessions }) => {
                 const fullList = tabSessions;
@@ -1299,6 +1414,22 @@ export default function Sidebar() {
                 const showWorkspaceLoadMore =
                   !isSearching && fullList.length > currentLimit;
                 const workspaceActive = workspace.id === activeWorkspaceId;
+                const isRemoteWorkspace = isRemoteWorkspacePath(workspace.path);
+                const remoteConnectionState = isRemoteWorkspace
+                  ? remoteConnectionStates[workspace.id]
+                  : undefined;
+                const remoteConnectionStatus =
+                  remoteConnectionState?.status ?? 'checking';
+                const remoteConnectionLabel = isRemoteWorkspace
+                  ? remoteWorkspaceConnectionLabel(
+                      locale,
+                      remoteConnectionStatus,
+                    )
+                  : '';
+                const remoteConnectionTitle =
+                  remoteConnectionState?.detail && remoteConnectionLabel
+                    ? `${remoteConnectionLabel}：${remoteConnectionState.detail}`
+                    : remoteConnectionLabel;
                 const projectScan = projectScanCache[workspace.id]?.scan;
                 const projectState = projectHealth(workspace, projectScan);
                 const headerPaths = workspaceHeaderPaths(workspace);
@@ -1348,14 +1479,33 @@ export default function Sidebar() {
                           <span
                             className={cn(
                               'h-2 w-2 shrink-0 rounded-full',
-                              projectStatusClassName(projectState.tone),
+                              isRemoteWorkspace
+                                ? remoteWorkspaceConnectionDotClassName(
+                                    remoteConnectionStatus,
+                                  )
+                                : projectStatusClassName(projectState.tone),
                             )}
-                            title={`${projectState.label}：${projectState.detail}`}
-                            aria-label={projectState.label}
+                            title={
+                              isRemoteWorkspace
+                                ? remoteConnectionTitle
+                                : `${projectState.label}：${projectState.detail}`
+                            }
+                            aria-label={
+                              isRemoteWorkspace
+                                ? remoteConnectionLabel
+                                : projectState.label
+                            }
                           />
                           <span className="min-w-0 flex-1 truncate" title={workspace.name}>
                             {workspace.name}
                           </span>
+                          {isRemoteWorkspace && (
+                            <RemoteWorkspaceStatusBadge
+                              state={remoteConnectionState}
+                              locale={locale}
+                              className="max-w-[5.75rem]"
+                            />
+                          )}
                         </div>
                         {visibleHeaderPaths.length > 0 && (
                           <div className="mt-0.5 flex min-w-0 flex-col gap-0.5 pl-8 font-mono text-[9px] leading-3 text-fg-faint">
@@ -1443,7 +1593,7 @@ export default function Sidebar() {
                                     active,
                                   )}
                                 >
-                                  <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
+                                  <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--ugs-status-slot-size)] items-center gap-1.5">
                                     <input
                                       autoFocus
                                       aria-label={t(locale, 'sidebar.renameSession')}
@@ -1529,7 +1679,7 @@ export default function Sidebar() {
                                   }
                                   className={historySessionRowClassName(active)}
                                 >
-                                  <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
+                                  <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--ugs-status-slot-size)] items-center gap-1.5">
                                     <span className="flex min-w-0 flex-1 items-center gap-1">
                                       <FavoriteMarker
                                         favorite={session.favorite === true}
@@ -1630,7 +1780,7 @@ export default function Sidebar() {
                         }
                         className={historySessionEditRowClassName(active)}
                       >
-                        <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
+                        <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--ugs-status-slot-size)] items-center gap-1.5">
                           <input
                             autoFocus
                             aria-label={t(locale, 'sidebar.renameSession')}
@@ -1705,7 +1855,7 @@ export default function Sidebar() {
                         }
                         className={historySessionRowClassName(active)}
                       >
-                        <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--fuc-status-slot-size)] items-center gap-1.5">
+                        <span className="grid w-full grid-cols-[minmax(0,1fr)_var(--ugs-status-slot-size)] items-center gap-1.5">
                           <span className="flex min-w-0 flex-1 items-center gap-1">
                             <FavoriteMarker
                               favorite={session.favorite === true}
@@ -1840,7 +1990,10 @@ export default function Sidebar() {
           y={workspaceMenu.y}
           locale={locale}
           onOpenDirectory={handleOpenWorkspaceDirectory}
-          openDirectoryDisabled={!workspaceMenu.workspace.path?.trim()}
+          openDirectoryDisabled={
+            !workspaceMenu.workspace.path?.trim() ||
+            isRemoteWorkspacePath(workspaceMenu.workspace.path)
+          }
           onOpenSettings={handleOpenWorkspaceSettings}
           onRemoveHistory={handleRemoveWorkspaceHistory}
           removeDisabledReason={workspaceMenuDeleteDisabledReason}

@@ -24,17 +24,17 @@ import {
  * non-browser contexts and never throws.
  */
 
-const COMPOSER_KEY = 'freeultracode.composer.v1';
-const DOCK_HEIGHT_KEY = 'freeultracode.dockHeight.v1';
-const PROMPT_GROUPS_KEY = 'freeultracode.promptGroups.v1';
-const LOCALE_KEY = 'freeultracode.locale.v1';
-const PROMPT_AUTO_TRANSLATE_KEY = 'freeultracode.promptAutoTranslate.v1';
-const PERSONAL_INSTRUCTIONS_KEY = 'freeultracode.personalInstructions.v1';
+const COMPOSER_KEY = 'ultragamestudio.composer.v1';
+const DOCK_HEIGHT_KEY = 'ultragamestudio.dockHeight.v1';
+const PROMPT_GROUPS_KEY = 'ultragamestudio.promptGroups.v1';
+const LOCALE_KEY = 'ultragamestudio.locale.v1';
+const PROMPT_AUTO_TRANSLATE_KEY = 'ultragamestudio.promptAutoTranslate.v1';
+const PERSONAL_INSTRUCTIONS_KEY = 'ultragamestudio.personalInstructions.v1';
 const PERSONAL_INSTRUCTIONS_BY_MODEL_KEY =
-  'freeultracode.personalInstructionsByModel.v1';
-const GAME_EXPERT_SETTINGS_KEY = 'freeultracode.gameExperts.v1';
+  'ultragamestudio.personalInstructionsByModel.v1';
+const GAME_EXPERT_SETTINGS_KEY = 'ultragamestudio.gameExperts.v1';
 /** Tracks which PROMPT_DEFAULTS_VERSION the persisted library was migrated to. */
-const PROMPT_GROUPS_VERSION_KEY = 'freeultracode.promptGroups.version.v1';
+const PROMPT_GROUPS_VERSION_KEY = 'ultragamestudio.promptGroups.version.v1';
 
 export interface PersistedComposer {
   composer: ComposerSettings;

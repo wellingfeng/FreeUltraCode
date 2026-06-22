@@ -152,7 +152,7 @@ export default function WorldModelBlock({ code }: WorldModelBlockProps) {
 
 /**
  * Full-screen interactive panel that takes over the message stream (mounted into
- * #fuc-stream-surface, matching ComfyEditorOverlay). Hosts the actual playable
+ * #ugs-stream-surface, matching ComfyEditorOverlay). Hosts the actual playable
  * surface: a sandboxed live-session iframe, the 3D viewer, or the world video.
  */
 function WorldModelOverlay({
@@ -182,7 +182,7 @@ function WorldModelOverlay({
 
   const [surface, setSurface] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    setSurface(document.getElementById('fuc-stream-surface'));
+    setSurface(document.getElementById('ugs-stream-surface'));
   }, []);
 
   const launchExternal = () => {

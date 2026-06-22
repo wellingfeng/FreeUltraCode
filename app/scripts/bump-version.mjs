@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Bump the FreeUltraCode version across every place it is declared and
+ * Bump the UltraGameStudio version across every place it is declared and
  * regenerate the update manifest (app/version.txt).
  *
  * Touches:
@@ -15,13 +15,13 @@
  *   node scripts/bump-version.mjs patch|minor|major
  *
  * Prints the new version on the last line as "VERSION=<x.y.z>" so callers
- * (e.g. the fuc-release skill) can capture it.
+ * (e.g. the ugs-release skill) can capture it.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-const REPO = 'wellingfeng/FreeUltraCode';
+const REPO = 'wellingfeng/UltraGameStudio';
 const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, '..'); // app/
 
@@ -83,13 +83,13 @@ writeFileSync(cargoPath, cargo);
 // version.txt manifest
 const manifest = {
   version: next,
-  url: `https://github.com/${REPO}/releases/download/v${next}/FreeUltraCode_${next}_x64-setup.exe`,
-  notes: `FreeUltraCode v${next}`,
+  url: `https://github.com/${REPO}/releases/download/v${next}/UltraGameStudio_${next}_x64-setup.exe`,
+  notes: `UltraGameStudio v${next}`,
   pubDate: new Date().toISOString().slice(0, 10),
 };
 writeFileSync(versionTxtPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 console.log(`bumped ${current} -> ${next}`);
 console.log('  updated: package.json, package-lock.json, tauri.conf.json, Cargo.toml, version.txt');
-console.log(`  installer asset: FreeUltraCode_${next}_x64-setup.exe`);
+console.log(`  installer asset: UltraGameStudio_${next}_x64-setup.exe`);
 console.log(`VERSION=${next}`);

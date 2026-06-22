@@ -1,15 +1,16 @@
 /**
  * CONTRACT: client-side model + SDK for "remote workspaces" (Route B).
  *
- * A remote workspace points FreeUltraCode at a self-hosted Runner
- * (see `runner/` at the repo root) so the user types instructions locally but
- * the actual development job runs on their own cloud server.
+ * A remote workspace points UltraGameStudio at a project owned by a self-hosted
+ * Runner backend (see `backend/` at the repo root). The client stores project metadata,
+ * while the server owns the real workspace path/container for that project.
  *
  * Persistence split:
- *   - Non-secret config (id, label, server URL, repo/branch/adapter/model)
+ *   - Non-secret config (id, label, server URL, project/repo/branch/model)
  *     lives in localStorage under {@link REMOTE_WORKSPACE_STORAGE_KEY}.
  *   - Secrets (the Runner access token, optional model API key, optional git
- *     token) live in the OS keychain via secureStorage, keyed by workspace id.
+ *     token for project sync) live in the OS keychain via secureStorage, keyed
+ *     by workspace id.
  *
  * The remote workspace is surfaced in the existing workspace switcher; its
  * synthetic path is `remote://<id>` so the rest of the app can keep treating
@@ -17,28 +18,83 @@
  */
 
 import {
+  listProviders,
+  upsertProviders,
+  type Provider,
+  type ProviderKind,
+} from '@/lib/apiConfig';
+import {
+  addCachedModels,
+  providerModelCacheKey,
+} from '@/lib/modelLists';
+import {
+  REMOTE_RUNNER_CONNECTION_SECRET,
+  REMOTE_WORKSPACE_SECRET,
   readSecureRecord,
   setSecureRecordValue,
   writeSecureRecord,
 } from '@/lib/secureStorage';
+import {
+  RunnerClient as ProtocolRunnerClient,
+  normalizeRemoteServerUrl,
+} from '@ugs/protocol';
+import type {
+  RemoteAdapter,
+  RemoteRunnerFileUpload,
+  RemoteRunnerFileUploadInput,
+  RemoteRunnerFilePreview,
+  RemoteRunnerAccount,
+  RemoteRunnerProject,
+  WorkspaceDirectoryListing,
+  WorkspaceTreeEntry,
+} from '@ugs/protocol';
 
-export const REMOTE_WORKSPACE_STORAGE_KEY = 'freeultracode.remoteWorkspaces.v1';
-/** Secret bucket (keychain) holding per-workspace tokens/keys. */
-export const REMOTE_WORKSPACE_SECRET = 'remoteWorkspaces.secrets.v1';
+export type {
+  CreateRemoteJobInput,
+  RemoteAdapter,
+  RemoteJob,
+  RemoteJobArtifacts,
+  RemoteJobLogLine,
+  RemoteJobMessage,
+  RemoteJobStatus,
+  RemoteRunnerAccount,
+  RemoteRunnerAccountInput,
+  RemoteRunnerFileUpload,
+  RemoteRunnerFileUploadInput,
+  RemoteRunnerFileUploadNamespace,
+  RemoteRunnerFilePreview,
+  RemoteRunnerLedger,
+  RemoteRunnerProject,
+  RemoteRunnerProjectInput,
+  RemoteRunnerUsage,
+  RemoteRunnerUsageTotals,
+  RunnerHealth,
+  WorkspaceDirectoryListing,
+  WorkspaceTreeEntry,
+} from '@ugs/protocol';
+
+export const REMOTE_WORKSPACE_STORAGE_KEY = 'ultragamestudio.remoteWorkspaces.v1';
+export const REMOTE_RUNNER_CONNECTION_STORAGE_KEY =
+  'ultragamestudio.remoteRunnerConnection.v1';
+/** Secret buckets (keychain) holding per-workspace tokens/keys. */
+export { REMOTE_RUNNER_CONNECTION_SECRET, REMOTE_WORKSPACE_SECRET } from '@/lib/secureStorage';
 /** Synthetic path scheme so remote workspaces flow through path-typed APIs. */
 export const REMOTE_WORKSPACE_PREFIX = 'remote://';
-
-export type RemoteAdapter = 'claude' | 'codex' | 'gemini';
+export const REMOTE_PROVIDER_PREFIX = 'remote-runner:';
+export const REMOTE_WORKSPACE_FILES_UPDATED_EVENT =
+  'ultragamestudio:remote-workspace-files-updated';
 
 /** Non-secret, persisted remote-workspace configuration. */
 export interface RemoteWorkspaceConfig {
   id: string;
   label: string;
-  /** Base URL of the Runner, e.g. https://my-server:8787 (no trailing slash). */
+  /** Legacy/fallback Runner URL. New project UI uses the global cloud service connection. */
   serverUrl: string;
-  /** Optional default repository to clone for jobs. */
+  /** Server-side project id. Jobs send this id instead of a server path. */
+  projectId?: string;
+  /** Repository bound to the server-side project. */
   repoUrl?: string;
-  /** Optional default branch. */
+  /** Default project branch. */
   branch?: string;
   /** Default agent adapter. */
   adapter: RemoteAdapter;
@@ -54,7 +110,7 @@ export interface RemoteWorkspaceConfig {
 
 /** Secrets are stored separately and never serialized into localStorage. */
 export interface RemoteWorkspaceSecrets {
-  /** Runner bearer token (required to talk to the server). */
+  /** Legacy per-project Runner token. New flows use the global cloud service token. */
   token: string;
   /** Optional model API key sent per job when useOwnModelKey is true. */
   apiKey?: string;
@@ -62,6 +118,28 @@ export interface RemoteWorkspaceSecrets {
   baseUrl?: string;
   /** Optional git token for clone/push of private repos. */
   gitToken?: string;
+}
+
+export interface RemoteRunnerConnection {
+  serverUrl: string;
+  updatedAt: number;
+}
+
+export interface RemoteRunnerConnectionSecrets {
+  token: string;
+}
+
+export interface ResolvedRemoteRunnerConnection {
+  serverUrl: string;
+  token: string;
+  source: 'global' | 'workspace';
+}
+
+export interface RemoteWorkspaceFilesUpdatedDetail {
+  workspaceId: string;
+  workspacePath: string;
+  projectId?: string | null;
+  jobId?: string;
 }
 
 const SECRET_FIELDS = ['token', 'apiKey', 'baseUrl', 'gitToken'] as const;
@@ -83,6 +161,85 @@ export function remoteWorkspaceIdFromPath(path: string): string {
     : '';
 }
 
+export function notifyRemoteWorkspaceFilesUpdated(
+  detail: RemoteWorkspaceFilesUpdatedDetail,
+): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent(REMOTE_WORKSPACE_FILES_UPDATED_EVENT, { detail }),
+  );
+}
+
+function remoteWorkspaceEntryPath(rootPath: string, relativePath: string): string {
+  const root = rootPath.replace(/[\\/]+$/g, '');
+  const rel = relativePath.replace(/^\/+|\/+$/g, '');
+  return rel ? `${root}/${rel}` : root;
+}
+
+function remoteWorkspaceRelativePath(rootPath: string, path: string): string {
+  const root = rootPath.replace(/[\\/]+$/g, '').replace(/\\/g, '/');
+  const normalized = path.trim().replace(/\\/g, '/');
+  if (normalized === root) return '';
+  if (root && normalized.startsWith(`${root}/`)) {
+    return normalized.slice(root.length + 1).replace(/^\/+|\/+$/g, '');
+  }
+  return normalized.replace(/^\/+|\/+$/g, '');
+}
+
+export interface RemoteProviderRef {
+  workspaceId: string;
+  accountId: string;
+}
+
+function encodeProviderPart(value: string): string {
+  return encodeURIComponent(value);
+}
+
+function decodeProviderPart(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return '';
+  }
+}
+
+export function remoteProviderId(
+  workspaceId: string,
+  accountId: string,
+): string {
+  return `${REMOTE_PROVIDER_PREFIX}${encodeProviderPart(workspaceId)}:${encodeProviderPart(accountId)}`;
+}
+
+export function parseRemoteProviderId(
+  providerId: string | null | undefined,
+): RemoteProviderRef | null {
+  if (!providerId?.startsWith(REMOTE_PROVIDER_PREFIX)) return null;
+  const rest = providerId.slice(REMOTE_PROVIDER_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep === -1) return null;
+  const workspaceId = decodeProviderPart(rest.slice(0, sep));
+  const accountId = decodeProviderPart(rest.slice(sep + 1));
+  if (!workspaceId || !accountId) return null;
+  return { workspaceId, accountId };
+}
+
+export function isRemoteRunnerProvider(
+  provider: Pick<Provider, 'id' | 'apiKey'>,
+): boolean {
+  return (
+    !!parseRemoteProviderId(provider.id) ||
+    provider.apiKey.trim() === 'remote-runner'
+  );
+}
+
+export function remoteRunnerProviderMatchesWorkspace(
+  provider: Pick<Provider, 'id'>,
+  remoteWorkspaceId: string,
+): boolean {
+  const remote = parseRemoteProviderId(provider.id);
+  return !!remote && remote.workspaceId === remoteWorkspaceId;
+}
+
 function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;
 }
@@ -100,7 +257,7 @@ function genId(): string {
 }
 
 function normalizeServerUrl(raw: string): string {
-  return raw.trim().replace(/\/+$/, '');
+  return normalizeRemoteServerUrl(raw);
 }
 
 /** Read all configured remote workspaces (non-secret data only). */
@@ -163,6 +320,7 @@ export function saveRemoteWorkspace(
     id: existing?.id ?? input.id ?? genId(),
     label: input.label.trim() || 'Remote',
     serverUrl: normalizeServerUrl(input.serverUrl),
+    projectId: input.projectId?.trim() || existing?.projectId,
     repoUrl: input.repoUrl?.trim() || undefined,
     branch: input.branch?.trim() || undefined,
     adapter: input.adapter ?? existing?.adapter ?? 'claude',
@@ -185,6 +343,7 @@ export function saveRemoteWorkspace(
 export function deleteRemoteWorkspace(id: string): void {
   persistAll(loadRemoteWorkspaces().filter((w) => w.id !== id));
   clearRemoteSecrets(id);
+  removeRemoteWorkspaceProviders(id);
 }
 
 // ---------- Secrets (keychain) ----------
@@ -218,6 +377,81 @@ export function writeRemoteSecrets(
   }
 }
 
+export function readRemoteRunnerConnection(): RemoteRunnerConnection | null {
+  if (!hasStorage()) return null;
+  try {
+    const raw = window.localStorage.getItem(REMOTE_RUNNER_CONNECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const v = parsed as Record<string, unknown>;
+    if (typeof v.serverUrl !== 'string' || !v.serverUrl.trim()) return null;
+    return {
+      serverUrl: normalizeServerUrl(v.serverUrl),
+      updatedAt:
+        typeof v.updatedAt === 'number' && Number.isFinite(v.updatedAt)
+          ? v.updatedAt
+          : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function readRemoteRunnerConnectionSecrets(): RemoteRunnerConnectionSecrets {
+  const record = readSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET);
+  return { token: record.token ?? '' };
+}
+
+export function saveRemoteRunnerConnection(
+  input: { serverUrl: string },
+  secrets: RemoteRunnerConnectionSecrets,
+): RemoteRunnerConnection {
+  const connection: RemoteRunnerConnection = {
+    serverUrl: normalizeServerUrl(input.serverUrl),
+    updatedAt: Date.now(),
+  };
+  if (hasStorage()) {
+    try {
+      window.localStorage.setItem(
+        REMOTE_RUNNER_CONNECTION_STORAGE_KEY,
+        JSON.stringify(connection),
+      );
+    } catch {
+      /* non-fatal */
+    }
+  }
+  writeSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET, {
+    token: secrets.token ?? '',
+  });
+  return connection;
+}
+
+export function resolveRemoteRunnerConnection(
+  workspace?: RemoteWorkspaceConfig | null,
+): ResolvedRemoteRunnerConnection | null {
+  const global = readRemoteRunnerConnection();
+  const globalToken = readRemoteRunnerConnectionSecrets().token;
+  if (global?.serverUrl && globalToken) {
+    return {
+      serverUrl: global.serverUrl,
+      token: globalToken,
+      source: 'global',
+    };
+  }
+  if (workspace?.serverUrl) {
+    const legacyToken = readRemoteSecrets(workspace.id).token;
+    if (legacyToken) {
+      return {
+        serverUrl: workspace.serverUrl,
+        token: legacyToken,
+        source: 'workspace',
+      };
+    }
+  }
+  return null;
+}
+
 function clearRemoteSecrets(id: string): void {
   const record = readSecureRecord(REMOTE_WORKSPACE_SECRET);
   let changed = false;
@@ -233,205 +467,327 @@ function clearRemoteSecrets(id: string): void {
 
 // ---------- Runner client SDK ----------
 
-export interface RunnerHealth {
-  ok: boolean;
-  service?: string;
-  version?: string;
-  authRequired?: boolean;
-  adapters?: string[];
-  maxConcurrency?: number;
-}
-
-export type RemoteJobStatus =
-  | 'queued'
-  | 'cloning'
-  | 'running'
-  | 'diffing'
-  | 'pushing'
-  | 'done'
-  | 'error';
-
-export interface RemoteJobLogLine {
-  at: number;
-  phase?: string;
-  stream?: 'stdout' | 'stderr';
-  text?: string;
-}
-
-export interface RemoteJobResult {
-  exitCode: number;
-  patch?: string;
-  pushed?: boolean;
-  pushBranch?: string;
-}
-
-export interface RemoteJob {
-  id: string;
-  status: RemoteJobStatus;
-  createdAt: number;
-  updatedAt: number;
-  repoUrl: string | null;
-  branch: string | null;
-  adapter: string;
-  model: string | null;
-  prompt: string;
-  pushBranch: string | null;
-  logs: RemoteJobLogLine[];
-  result: RemoteJobResult | null;
-  error: string | null;
-}
-
-export interface CreateRemoteJobInput {
-  prompt: string;
-  repoUrl?: string;
-  branch?: string;
-  adapter?: RemoteAdapter;
-  model?: string;
-  pushBranch?: string;
-  apiKey?: string;
-  baseUrl?: string;
-  gitToken?: string;
-}
-
-/** Thin client bound to one remote workspace's server + token. */
-export class RunnerClient {
-  readonly serverUrl: string;
-  private readonly token: string;
-
-  constructor(serverUrl: string, token: string) {
-    this.serverUrl = normalizeServerUrl(serverUrl);
-    this.token = token;
-  }
-
+export class RunnerClient extends ProtocolRunnerClient {
   /** Build a client straight from a saved workspace id. */
   static fromWorkspace(id: string): RunnerClient | null {
     const config = getRemoteWorkspace(id);
     if (!config) return null;
-    const secrets = readRemoteSecrets(id);
-    return new RunnerClient(config.serverUrl, secrets.token);
-  }
-
-  private headers(json = false): Record<string, string> {
-    const h: Record<string, string> = {};
-    if (this.token) h.Authorization = `Bearer ${this.token}`;
-    if (json) h['content-type'] = 'application/json';
-    return h;
-  }
-
-  /** Probe `/health`. Unauthenticated, so this also validates reachability. */
-  async health(signal?: AbortSignal): Promise<RunnerHealth> {
-    try {
-      const res = await fetch(`${this.serverUrl}/health`, {
-        headers: this.headers(),
-        signal,
-      });
-      if (!res.ok) return { ok: false };
-      return (await res.json()) as RunnerHealth;
-    } catch {
-      return { ok: false };
-    }
-  }
-
-  async createJob(input: CreateRemoteJobInput): Promise<RemoteJob> {
-    const res = await fetch(`${this.serverUrl}/jobs`, {
-      method: 'POST',
-      headers: this.headers(true),
-      body: JSON.stringify(input),
-    });
-    const data = (await res.json()) as { ok: boolean; job?: RemoteJob; error?: string };
-    if (!res.ok || !data.ok || !data.job) {
-      throw new Error(data.error ?? `runner returned ${res.status}`);
-    }
-    return data.job;
-  }
-
-  async getJob(id: string): Promise<RemoteJob> {
-    const res = await fetch(`${this.serverUrl}/jobs/${encodeURIComponent(id)}`, {
-      headers: this.headers(),
-    });
-    const data = (await res.json()) as { ok: boolean; job?: RemoteJob; error?: string };
-    if (!res.ok || !data.ok || !data.job) {
-      throw new Error(data.error ?? `runner returned ${res.status}`);
-    }
-    return data.job;
-  }
-
-  async cancelJob(id: string): Promise<boolean> {
-    const res = await fetch(
-      `${this.serverUrl}/jobs/${encodeURIComponent(id)}/cancel`,
-      { method: 'POST', headers: this.headers() },
-    );
-    return res.ok;
-  }
-
-  /**
-   * Subscribe to a job's live log/status/result stream (SSE). Returns an
-   * unsubscribe function. Uses fetch + ReadableStream so the Authorization
-   * header can be sent (native EventSource cannot set headers).
-   */
-  streamJob(
-    id: string,
-    handlers: {
-      onLog?: (line: RemoteJobLogLine) => void;
-      onStatus?: (status: RemoteJobStatus) => void;
-      onResult?: (job: RemoteJob) => void;
-      onError?: (err: Error) => void;
-    },
-  ): () => void {
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const res = await fetch(
-          `${this.serverUrl}/jobs/${encodeURIComponent(id)}/stream`,
-          { headers: this.headers(), signal: controller.signal },
-        );
-        if (!res.ok || !res.body) {
-          handlers.onError?.(new Error(`stream returned ${res.status}`));
-          return;
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        for (;;) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const events = buffer.split('\n\n');
-          buffer = events.pop() ?? '';
-          for (const chunk of events) dispatchSse(chunk, handlers);
-        }
-      } catch (err) {
-        if (!controller.signal.aborted) {
-          handlers.onError?.(err instanceof Error ? err : new Error(String(err)));
-        }
-      }
-    })();
-    return () => controller.abort();
+    const connection = resolveRemoteRunnerConnection(config);
+    if (!connection) return null;
+    return new RunnerClient(connection.serverUrl, connection.token);
   }
 }
 
-function dispatchSse(
-  chunk: string,
-  handlers: {
-    onLog?: (line: RemoteJobLogLine) => void;
-    onStatus?: (status: RemoteJobStatus) => void;
-    onResult?: (job: RemoteJob) => void;
-  },
-): void {
-  let event = 'message';
-  const dataLines: string[] = [];
-  for (const line of chunk.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim();
-    else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+function normalizedRemoteRepoUrl(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\/+$/g, '');
+}
+
+function remoteRunnerErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isRemoteProjectNotFoundError(err: unknown): boolean {
+  const msg = remoteRunnerErrorMessage(err).trim().toLowerCase();
+  return msg === 'not found' || msg === 'project not found';
+}
+
+function findRemoteWorkspaceProject(
+  projects: RemoteRunnerProject[],
+  config: RemoteWorkspaceConfig,
+): RemoteRunnerProject | null {
+  const projectId = config.projectId?.trim();
+  if (projectId) {
+    const byId = projects.find((project) => project.id === projectId);
+    if (byId) return byId;
   }
-  if (dataLines.length === 0) return;
-  let payload: unknown;
+
+  const repoUrl = normalizedRemoteRepoUrl(config.repoUrl);
+  if (repoUrl) {
+    const byRepo = projects.find(
+      (project) => normalizedRemoteRepoUrl(project.repoUrl) === repoUrl,
+    );
+    if (byRepo) return byRepo;
+  }
+
+  const label = config.label.trim();
+  if (label) {
+    const byLabel = projects.filter((project) => project.label.trim() === label);
+    if (byLabel.length === 1) return byLabel[0] ?? null;
+  }
+
+  return null;
+}
+
+function bindRemoteWorkspaceProject(
+  config: RemoteWorkspaceConfig,
+  project: RemoteRunnerProject,
+): RemoteWorkspaceConfig {
+  const next = {
+    id: config.id,
+    label: config.label || project.label,
+    serverUrl: config.serverUrl,
+    projectId: project.id,
+    repoUrl: project.repoUrl,
+    branch: project.branch ?? config.branch,
+    pushBranch: project.pushBranch ?? config.pushBranch,
+    adapter: (project.adapter as RemoteAdapter | undefined) ?? config.adapter,
+    model: project.model ?? config.model,
+    useOwnModelKey: config.useOwnModelKey,
+  };
+  if (
+    config.projectId === next.projectId &&
+    config.repoUrl === next.repoUrl &&
+    config.branch === next.branch &&
+    config.pushBranch === next.pushBranch &&
+    config.adapter === next.adapter &&
+    config.model === next.model
+  ) {
+    return config;
+  }
+  return saveRemoteWorkspace(next);
+}
+
+export async function ensureRemoteWorkspaceProject(
+  config: RemoteWorkspaceConfig,
+  client: RunnerClient,
+): Promise<RemoteWorkspaceConfig> {
+  if (config.projectId) {
+    try {
+      const project = await client.getProject(config.projectId);
+      return bindRemoteWorkspaceProject(config, project);
+    } catch (err) {
+      if (!isRemoteProjectNotFoundError(err)) throw err;
+    }
+  }
+
+  const projects = await client.projects().catch(() => []);
+  const matched = findRemoteWorkspaceProject(projects, config);
+  if (matched) return bindRemoteWorkspaceProject(config, matched);
+
+  if (config.repoUrl?.trim()) {
+    const secrets = readRemoteSecrets(config.id);
+    const project = await client.saveProject({
+      label: config.label,
+      repoUrl: config.repoUrl,
+      branch: config.branch,
+      pushBranch: config.pushBranch,
+      adapter: config.adapter,
+      model: config.model,
+      gitToken: secrets.gitToken,
+    });
+    return bindRemoteWorkspaceProject(config, project);
+  }
+
+  throw new Error('云端项目未绑定后端 projectId。请在云端项目设置中重新保存。');
+}
+
+export async function listRemoteWorkspaceDirectory(
+  rootPath: string,
+  relativePath = '',
+): Promise<WorkspaceDirectoryListing> {
+  const workspaceId = remoteWorkspaceIdFromPath(rootPath);
+  let config = getRemoteWorkspace(workspaceId);
+  if (!config) throw new Error('云端项目不存在。');
+  const connection = resolveRemoteRunnerConnection(config);
+  if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
+  const client = new RunnerClient(connection.serverUrl, connection.token);
+  let listing: WorkspaceDirectoryListing;
+
+  if (config.projectId) {
+    try {
+      listing = await client.listProjectDirectory(config.projectId, relativePath);
+    } catch (err) {
+      if (!isRemoteProjectNotFoundError(err)) throw err;
+      config = await ensureRemoteWorkspaceProject(config, client);
+      if (!config.projectId) {
+        throw new Error('云端项目在后端不存在或已被删除。请在云端项目设置中重新保存。');
+      }
+      listing = await client.listProjectDirectory(config.projectId, relativePath);
+    }
+  } else {
+    config = await ensureRemoteWorkspaceProject(config, client);
+    if (!config.projectId) throw new Error('云端项目未绑定后端 projectId。请在云端项目设置中重新保存。');
+    listing = await client.listProjectDirectory(config.projectId, relativePath);
+  }
+
+  return {
+    ...listing,
+    rootPath,
+    entries: listing.entries.map(
+      (entry): WorkspaceTreeEntry => ({
+        ...entry,
+        path: remoteWorkspaceEntryPath(rootPath, entry.relativePath),
+      }),
+    ),
+  };
+}
+
+export async function uploadRemoteWorkspaceFile(
+  rootPath: string,
+  input: RemoteRunnerFileUploadInput,
+): Promise<RemoteRunnerFileUpload> {
+  const workspaceId = remoteWorkspaceIdFromPath(rootPath);
+  let config = getRemoteWorkspace(workspaceId);
+  if (!config) throw new Error('云端项目不存在。');
+  const connection = resolveRemoteRunnerConnection(config);
+  if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
+  const client = new RunnerClient(connection.serverUrl, connection.token);
+
+  if (!config.projectId) {
+    config = await ensureRemoteWorkspaceProject(config, client);
+  }
+  if (!config.projectId) throw new Error('云端项目未绑定后端 projectId。请在云端项目设置中重新保存。');
+
+  let uploaded: RemoteRunnerFileUpload;
   try {
-    payload = JSON.parse(dataLines.join('\n'));
-  } catch {
-    return;
+    uploaded = await client.uploadProjectFile(config.projectId, input);
+  } catch (err) {
+    if (!isRemoteProjectNotFoundError(err)) throw err;
+    config = await ensureRemoteWorkspaceProject(config, client);
+    if (!config.projectId) {
+      throw new Error('云端项目在后端不存在或已被删除。请在云端项目设置中重新保存。');
+    }
+    uploaded = await client.uploadProjectFile(config.projectId, input);
   }
-  if (event === 'log') handlers.onLog?.(payload as RemoteJobLogLine);
-  else if (event === 'status') handlers.onStatus?.(payload as RemoteJobStatus);
-  else if (event === 'result') handlers.onResult?.(payload as RemoteJob);
+  return {
+    ...uploaded,
+    path: remoteWorkspaceEntryPath(rootPath, uploaded.relativePath),
+  };
+}
+
+export async function previewRemoteWorkspaceFile(
+  rootPath: string,
+  path: string,
+): Promise<RemoteRunnerFilePreview> {
+  const workspaceId = remoteWorkspaceIdFromPath(rootPath);
+  let config = getRemoteWorkspace(workspaceId);
+  if (!config) throw new Error('云端项目不存在。');
+  const connection = resolveRemoteRunnerConnection(config);
+  if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
+  const client = new RunnerClient(connection.serverUrl, connection.token);
+
+  if (!config.projectId) {
+    config = await ensureRemoteWorkspaceProject(config, client);
+  }
+  if (!config.projectId) throw new Error('云端项目未绑定后端 projectId。请在云端项目设置中重新保存。');
+
+  const relativePath = remoteWorkspaceRelativePath(rootPath, path);
+  let file: RemoteRunnerFilePreview;
+  try {
+    file = await client.previewProjectFile(config.projectId, relativePath);
+  } catch (err) {
+    if (!isRemoteProjectNotFoundError(err)) throw err;
+    config = await ensureRemoteWorkspaceProject(config, client);
+    if (!config.projectId) {
+      throw new Error('云端项目在后端不存在或已被删除。请在云端项目设置中重新保存。');
+    }
+    file = await client.previewProjectFile(config.projectId, relativePath);
+  }
+  return {
+    ...file,
+    path: remoteWorkspaceEntryPath(rootPath, relativePath),
+  };
+}
+
+function remoteAdapterToProviderKind(adapter: string): ProviderKind {
+  if (adapter === 'codex') return 'codex';
+  if (adapter === 'gemini') return 'gemini';
+  return 'anthropic';
+}
+
+function remoteAccountModels(account: RemoteRunnerAccount): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of [account.model, ...(account.models ?? [])]) {
+    const model = raw?.trim();
+    if (!model) continue;
+    const key = model.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(model);
+  }
+  return out;
+}
+
+function remoteWorkspaceProviderPrefix(workspaceId: string): string {
+  return `${REMOTE_PROVIDER_PREFIX}${encodeProviderPart(workspaceId)}:`;
+}
+
+function remoteAccountProvider(
+  workspace: RemoteWorkspaceConfig,
+  account: RemoteRunnerAccount,
+): Provider {
+  const models = remoteAccountModels(account);
+  return {
+    id: remoteProviderId(workspace.id, account.id),
+    kind: remoteAdapterToProviderKind(account.adapter),
+    name: `${workspace.label} · ${account.label}`,
+    apiKey: 'remote-runner',
+    baseUrl: workspace.serverUrl,
+    transport: 'cli',
+    model: models[0],
+    models: models.length > 0 ? models : undefined,
+  };
+}
+
+function removeRemoteWorkspaceProviders(workspaceId: string): void {
+  const prefix = remoteWorkspaceProviderPrefix(workspaceId);
+  const removeIds = listProviders()
+    .map((provider) => provider.id)
+    .filter((id) => id.startsWith(prefix));
+  if (removeIds.length > 0) upsertProviders([], { removeIds });
+}
+
+export function syncRemoteWorkspaceAccounts(
+  workspace: RemoteWorkspaceConfig,
+  accounts: RemoteRunnerAccount[],
+  opts: { makeActiveAccountId?: string } = {},
+): Provider[] {
+  const enabled = accounts.filter((account) => {
+    if (account.enabled === false) return false;
+    const accountProjectId = account.projectId?.trim();
+    if (!accountProjectId) return true;
+    return !!workspace.projectId && accountProjectId === workspace.projectId;
+  });
+  const providers = enabled.map((account) => remoteAccountProvider(workspace, account));
+  const activeProviderId = opts.makeActiveAccountId
+    ? remoteProviderId(workspace.id, opts.makeActiveAccountId)
+    : undefined;
+  const nextIds = new Set(providers.map((provider) => provider.id));
+  const prefix = remoteWorkspaceProviderPrefix(workspace.id);
+  const removeIds = listProviders()
+    .map((provider) => provider.id)
+    .filter((id) => id.startsWith(prefix) && !nextIds.has(id));
+
+  upsertProviders(providers, {
+    removeIds,
+    makeActiveId: activeProviderId,
+  });
+  for (const provider of providers) {
+    addCachedModels(providerModelCacheKey(provider), provider.models ?? []);
+  }
+  return providers;
+}
+
+export async function refreshRemoteWorkspaceAccounts(
+  workspace: RemoteWorkspaceConfig,
+  token?: string,
+  opts: { makeActiveAccountId?: string } = {},
+): Promise<Provider[]> {
+  const connection = token
+    ? { serverUrl: workspace.serverUrl, token }
+    : resolveRemoteRunnerConnection(workspace);
+  if (!connection?.token) return [];
+  const client = new RunnerClient(connection.serverUrl, connection.token);
+  let accounts: RemoteRunnerAccount[];
+  try {
+    accounts = await client.accounts(workspace.projectId);
+  } catch {
+    const usage = await client.usage();
+    accounts = usage.accounts.filter((account) => {
+      const accountProjectId = account.projectId?.trim();
+      return !accountProjectId || accountProjectId === workspace.projectId;
+    });
+  }
+  return syncRemoteWorkspaceAccounts(workspace, accounts, opts);
 }

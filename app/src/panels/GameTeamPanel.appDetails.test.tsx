@@ -56,8 +56,8 @@ class ResizeObserverStub {
 function resetStore(): void {
   const workspace = {
     id: 'ws_game_team_app_details',
-    path: 'E:\\FreeUltraCode',
-    name: 'FreeUltraCode',
+    path: 'E:\\UltraGameStudio',
+    name: 'UltraGameStudio',
     updatedAt: 1,
     sessionCount: 1,
     lastActiveSessionId: 's_game_team_app_details',
@@ -155,7 +155,7 @@ describe('game team details app wiring', () => {
         );
       });
 
-      expect(view.container.textContent).toContain('岗位属性和 Skill');
+      expect(view.container.textContent).toContain('岗位视角和 Skill');
       expect(view.container.textContent).toContain('制作人');
       expect(view.container.textContent).toContain('发起新游戏项目');
       expect(view.container.textContent).toContain('修改项目目标');

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Cloud, FolderPlus, Layers } from 'lucide-react';
+import RemoteWorkspaceStatusBadge from '@/components/RemoteWorkspaceStatusBadge';
 import { cn } from '@/lib/cn';
 import { t } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n';
 import { isRemoteWorkspacePath } from '@/lib/remoteWorkspace';
+import type { RemoteWorkspaceConnectionState } from '@/lib/remoteWorkspaceStatus';
 import { workspacePathKey } from '@/lib/workspaceHistory';
 import type { WorkspaceSummary } from '@/store/history/types';
 
@@ -13,8 +15,8 @@ import type { WorkspaceSummary } from '@/store/history/types';
  * Lists every known workspace and lets the user jump to one (which activates
  * that workspace's first session). A "浏览本地…" action opens the native folder
  * picker to add a new workspace; selecting an already-known folder just
- * switches to it via {@link onBrowseLocal}. "添加远程工作区…" opens the remote
- * Runner configuration dialog via {@link onAddRemote}.
+ * switches to it via {@link onBrowseLocal}. "添加云端项目…" opens the remote
+ * Runner project dialog via {@link onAddRemote}.
  */
 export interface WorkspaceListSelectProps {
   workspaces: WorkspaceSummary[];
@@ -24,8 +26,9 @@ export interface WorkspaceListSelectProps {
   onSelect: (path: string) => void;
   /** Open the folder picker to add (or re-select) a workspace. */
   onBrowseLocal: () => void;
-  /** Open the remote-workspace dialog (create, or edit an existing one). */
+  /** Open the cloud-project dialog (create, or edit an existing one). */
   onAddRemote?: (existingPath?: string) => void;
+  remoteConnectionStates?: Record<string, RemoteWorkspaceConnectionState>;
   disabled?: boolean;
 }
 
@@ -36,6 +39,7 @@ export default function WorkspaceListSelect({
   onSelect,
   onBrowseLocal,
   onAddRemote,
+  remoteConnectionStates = {},
   disabled = false,
 }: WorkspaceListSelectProps) {
   const [open, setOpen] = useState(false);
@@ -59,6 +63,7 @@ export default function WorkspaceListSelect({
   const active = workspaces.find((w) => w.id === activeWorkspaceId) ?? null;
   const label = active?.name ?? t(locale, 'workspaceList.title');
   const activeKey = active?.path ? workspacePathKey(active.path) : '';
+  const activeIsRemote = isRemoteWorkspacePath(active?.path ?? '');
 
   return (
     <div ref={rootRef} className="relative">
@@ -79,6 +84,13 @@ export default function WorkspaceListSelect({
       >
         <Layers size={13} className="shrink-0 text-fg-faint" />
         <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+        {active && activeIsRemote && (
+          <RemoteWorkspaceStatusBadge
+            state={remoteConnectionStates[active.id]}
+            locale={locale}
+            className="max-w-[5.75rem]"
+          />
+        )}
         <ChevronDown size={12} className="shrink-0 text-fg-faint" />
       </button>
 
@@ -173,9 +185,10 @@ export default function WorkspaceListSelect({
                         )}
                       </span>
                       {isRemote && (
-                        <span className="shrink-0 rounded border border-accent-2/40 px-1 py-0.5 text-[9px] leading-none text-accent-2">
-                          {t(locale, 'workspaceList.remoteBadge')}
-                        </span>
+                        <RemoteWorkspaceStatusBadge
+                          state={remoteConnectionStates[workspace.id]}
+                          locale={locale}
+                        />
                       )}
                       {isActive && (
                         <span className="shrink-0 rounded border border-border-soft px-1 py-0.5 text-[9px] leading-none text-fg-faint">

@@ -1,4 +1,7 @@
 import type { IRGraph } from '@/core/ir';
+import type {
+  WorkspaceDirectoryListing,
+} from '@ugs/protocol';
 import { runShellPayload } from '@/lib/shellConfig';
 import {
   markAssetDone,
@@ -115,7 +118,7 @@ export interface SkillUninstallResult {
   removed: boolean;
 }
 
-export interface UltracodeRunOptions {
+export interface StudioRunOptions {
   cwd?: string;
   extraWorkspacePaths?: string[];
   adapter?: string;
@@ -136,7 +139,7 @@ export interface UltracodeRunOptions {
   onProgress?: (text: string) => void;
 }
 
-export interface UltracodeRunResult {
+export interface StudioRunResult {
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -169,23 +172,10 @@ export interface LocalFilePreview {
   base64?: string | null;
 }
 
-export interface WorkspaceTreeEntry {
-  name: string;
-  path: string;
-  relativePath: string;
-  kind: 'directory' | 'file';
-  hidden: boolean;
-  sizeBytes?: number | null;
-  modifiedAtMs?: number | null;
-}
-
-export interface WorkspaceDirectoryListing {
-  rootPath: string;
-  relativePath: string;
-  entries: WorkspaceTreeEntry[];
-  truncated: boolean;
-  totalEntries: number;
-}
+export type {
+  WorkspaceDirectoryListing,
+  WorkspaceTreeEntry,
+} from '@ugs/protocol';
 
 /**
  * Result of preparing an isolated working directory for a "worktree"-mode
@@ -470,6 +460,13 @@ export interface ClipboardImageSaveRequest {
   mime: string;
   fileName?: string | null;
   cwd?: string | null;
+}
+
+export interface LocalFileUploadPayload {
+  bytesBase64: string;
+  fileName: string;
+  mime?: string | null;
+  sizeBytes: number;
 }
 
 export interface SessionCaptureSaveRequest {
@@ -1083,7 +1080,7 @@ export async function openExternal(url: string): Promise<void> {
 }
 
 /** Default workspace folder name created when no workspace is selected. */
-export const DEFAULT_WORKSPACE_DIR_NAME = 'FreeUltraCode';
+export const DEFAULT_WORKSPACE_DIR_NAME = 'UltraGameStudio';
 
 /** Detect the current platform from the browser/runtime (best-effort). */
 function currentPlatform(): CliPlatform {
@@ -1099,8 +1096,8 @@ function currentPlatform(): CliPlatform {
  * directory on disk (Tauri only). Used when the user starts a new session
  * without having selected any workspace folder.
  *
- * - Windows: `C:\FreeUltraCode`
- * - macOS / Linux: `<home>/FreeUltraCode`
+ * - Windows: `C:\UltraGameStudio`
+ * - macOS / Linux: `<home>/UltraGameStudio`
  *
  * Returns the absolute path, or null when running outside the desktop shell
  * or when the directory could not be created.
@@ -1523,6 +1520,31 @@ export interface WorkspaceVcsScanProgress {
   message?: string | null;
 }
 
+export type LegacyBrandMigrationPhase =
+  | 'checking'
+  | 'scanning'
+  | 'copying'
+  | 'archiving'
+  | 'done'
+  | 'skipped'
+  | 'error'
+  | string;
+
+export interface LegacyBrandMigrationProgress {
+  phase: LegacyBrandMigrationPhase;
+  rootsTotal: number;
+  rootsDone: number;
+  filesTotal: number;
+  filesDone: number;
+  dirsTotal: number;
+  dirsDone: number;
+  copiedFiles: number;
+  skippedFiles: number;
+  archivedRoots: number;
+  currentPath?: string | null;
+  message?: string | null;
+}
+
 /** Subscribe to background VCS scan progress events. */
 export async function onWorkspaceVcsScanProgress(
   cb: (progress: WorkspaceVcsScanProgress) => void,
@@ -1533,6 +1555,43 @@ export async function onWorkspaceVcsScanProgress(
     'workspace-vcs-scan-progress',
     (event) => cb(event.payload),
   );
+}
+
+/** Run the one-time FreeUltraCode -> UltraGameStudio storage migration. */
+export async function migrateLegacyBrandStorage(
+  onProgress?: (progress: LegacyBrandMigrationProgress) => void,
+): Promise<LegacyBrandMigrationProgress> {
+  const fallback: LegacyBrandMigrationProgress = {
+    phase: 'skipped',
+    rootsTotal: 0,
+    rootsDone: 0,
+    filesTotal: 0,
+    filesDone: 0,
+    dirsTotal: 0,
+    dirsDone: 0,
+    copiedFiles: 0,
+    skippedFiles: 0,
+    archivedRoots: 0,
+    message: '非桌面环境，跳过旧版配置迁移',
+  };
+  if (!tauriAvailable()) return fallback;
+
+  const listen = await getListen();
+  const unlisten = await listen<LegacyBrandMigrationProgress>(
+    'legacy-brand-migration-progress',
+    (event) => onProgress?.(event.payload),
+  );
+
+  try {
+    const invoke = await getInvoke();
+    const result = await invoke<LegacyBrandMigrationProgress>(
+      'migrate_legacy_brand_storage',
+    );
+    onProgress?.(result);
+    return result;
+  } finally {
+    unlisten();
+  }
 }
 
 /** Read a local file for the in-app right-side preview drawer. Desktop-only. */
@@ -1564,6 +1623,17 @@ export async function saveClipboardImage(
     fileName: request.fileName ?? null,
     cwd: request.cwd ?? null,
   });
+}
+
+/** Read a user-selected local file so it can be uploaded to a remote workspace. */
+export async function readLocalFileForUpload(
+  path: string,
+): Promise<LocalFileUploadPayload> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<LocalFileUploadPayload>('read_local_file_for_upload', { path });
 }
 
 /** Persist a generated session screenshot/GIF and return its local preview path. */
@@ -1698,7 +1768,7 @@ export async function saveGeneratedAsset(params: {
   });
 }
 
-/** List durable files in the workspace `.freeultracode` asset cache. */
+/** List durable files in the workspace `.ultragamestudio` asset cache. */
 export async function listCachedAssets(cwd?: string | null): Promise<CachedAssetFile[]> {
   if (!tauriAvailable()) return [];
   const invoke = await getInvoke();
@@ -1736,16 +1806,16 @@ export async function runWorkflow(
   });
 }
 
-/** Execute `/ultracode <task>` through the bundled CLI dynamic harness. */
-export async function runUltracode(
+/** Execute `/studio <task>` through the bundled CLI dynamic harness. */
+export async function runStudio(
   task: string,
-  opts: UltracodeRunOptions = {},
-): Promise<UltracodeRunResult> {
+  opts: StudioRunOptions = {},
+): Promise<StudioRunResult> {
   if (!tauriAvailable()) {
     throw new Error('NO_BACKEND');
   }
   __cliSeq += 1;
-  const runId = opts.runId ?? `ultracode_${Date.now()}_${__cliSeq}`;
+  const runId = opts.runId ?? `studio_${Date.now()}_${__cliSeq}`;
 
   let unlisten: UnlistenFn | undefined;
   const progressBatcher = opts.onProgress
@@ -1765,7 +1835,7 @@ export async function runUltracode(
 
   try {
     const invoke = await getInvoke();
-    return await invoke<UltracodeRunResult>('run_ultracode', {
+    return await invoke<StudioRunResult>('run_studio', {
       task,
       cwd: opts.cwd ?? null,
       extraWorkspacePaths: opts.extraWorkspacePaths ?? [],

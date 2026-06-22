@@ -7,9 +7,9 @@
  * every model: when a node needs the user to choose between options or type
  * something, it emits a delimited JSON block and ends its turn:
  *
- *     <<FUC_ASK>>
+ *     <<UGS_ASK>>
  *     { "type": "select", "prompt": "选择部署环境", "options": ["staging","prod"] }
- *     <<FUC_ASK_END>>
+ *     <<UGS_ASK_END>>
  *
  * The run loop parses that block, renders an interactive widget in the AI-return
  * dock, waits for the user's answer, appends the answer to the node prompt, and
@@ -55,8 +55,8 @@ export interface InteractionAnswer {
   confirmed?: boolean;
 }
 
-const ASK_OPEN = '<<FUC_ASK>>';
-const ASK_CLOSE = '<<FUC_ASK_END>>';
+const ASK_OPEN = '<<UGS_ASK>>';
+const ASK_CLOSE = '<<UGS_ASK_END>>';
 
 /**
  * Instruction block appended to every executable node prompt. Kept terse and
@@ -124,7 +124,7 @@ function firstJsonObject(text: string): string | null {
 
 /**
  * Parse a node's output for an interaction request. Keyed strictly on the
- * `<<FUC_ASK>>` sentinel — a unique token we inject and instruct every model to
+ * `<<UGS_ASK>>` sentinel — a unique token we inject and instruct every model to
  * use — so normal output that happens to contain JSON (e.g. a code-generating
  * node) never false-positives and wrongly pauses the run. Returns null when no
  * valid request is present.

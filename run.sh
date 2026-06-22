@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FreeUltraCode Runner (macOS / Linux) — counterpart to run.bat.
+# UltraGameStudio Runner (macOS / Linux) — counterpart to run.bat.
 # Builds the NATIVE desktop app with Tauri and launches it (same as run.bat),
 # rather than opening a web page.
 #
@@ -17,8 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$SCRIPT_DIR/app"
 TAURI_DIR="$APP_DIR/src-tauri"
 # macOS/Linux native binary built by Tauri (no .exe suffix). Named via [[bin]] in Cargo.toml.
-EXE="$TAURI_DIR/target/release/FreeUltraCode"
-STAMP="$SCRIPT_DIR/.fuc-run/build-fingerprint.txt"
+EXE="$TAURI_DIR/target/release/UltraGameStudio"
+STAMP="$SCRIPT_DIR/.ugs-run/build-fingerprint.txt"
 PORT=5173
 
 c_ok()   { printf '\033[32m[OK]\033[0m %s\n' "$*"; }
@@ -38,7 +38,7 @@ case "${1:-}" in
 esac
 
 echo "============================================================"
-echo "  FreeUltraCode Runner  (mode: $MODE)"
+echo "  UltraGameStudio Runner  (mode: $MODE)"
 echo "============================================================"
 
 # ---- Node.js / npm ----
@@ -239,8 +239,8 @@ fi
 # Stop a running instance before rebuilding (mirrors stop-running-exe.ps1).
 stop_running_app() {
   command -v pkill >/dev/null 2>&1 || return 0
-  if pkill -x FreeUltraCode >/dev/null 2>&1; then
-    c_info "closing running FreeUltraCode before rebuild ..."
+  if pkill -x UltraGameStudio >/dev/null 2>&1; then
+    c_info "closing running UltraGameStudio before rebuild ..."
     sleep 1
   fi
 }
@@ -262,7 +262,7 @@ hint_cargo_mirror() {
 # Build the native release binary via the official Tauri flow, skipping the
 # bundler for speed. `--no-bundle` compiles just the launchable binary (Tauri
 # still runs beforeBuildCommand `npm run build` to produce the frontend).
-# This is the macOS/Linux equivalent of FreeUltraCode.exe on Windows.
+# This is the macOS/Linux equivalent of UltraGameStudio.exe on Windows.
 build_native() {
   stop_running_app
   hint_cargo_mirror
@@ -278,10 +278,10 @@ build_native() {
 
 launch_native() {
   [ -f "$EXE" ] || { c_err "binary not found: $EXE"; exit 1; }
-  c_info "launching FreeUltraCode ..."
+  c_info "launching UltraGameStudio ..."
   # Detach so closing the terminal won't kill the app window.
   ( "$EXE" >/dev/null 2>&1 & )
-  c_ok "FreeUltraCode launched in its own window. You can close this terminal."
+  c_ok "UltraGameStudio launched in its own window. You can close this terminal."
 }
 
 [ "$NEED_BUILD" = "1" ] && build_native

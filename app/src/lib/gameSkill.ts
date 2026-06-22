@@ -1,14 +1,20 @@
-// GameSkill catalog: the single OOP source of truth for FreeUltraCode's own
-// slash commands. Every app-introduced command is a `GameSkill` (or a subclass
-// of it), so the standard six-part protocol
-// (触发词 / 允许工具 / 步骤 / 输出格式 / 停止条件 / 验证方式) is authored and
-// managed in one place. `slashCommands.ts` derives the runtime SLASH_COMMANDS
-// data layer from this registry.
+// GameSkill catalog authoring helper for UltraGameStudio's own slash commands.
+// Every app-introduced command is authored as a `GameSkill` (or a subclass of
+// it), then projected to the versioned CapabilityManifest layer. The standard
+// six-part protocol (触发词 / 允许工具 / 步骤 / 输出格式 / 停止条件 / 验证方式) stays
+// close to the command definition, while downstream surfaces consume manifests.
 //
 // CONTRACT: Generic prompt shortcuts (/help, /plan, /diagnose, /review,
 // /explain, /test) are NOT GameSkills — they are generic CLI semantics, not
-// introduced by this app — and stay defined directly in `slashCommands.ts`.
+// introduced by this app — and stay defined in `capabilityCatalog.ts`.
 import type { Locale } from '@/lib/i18n';
+import type {
+  CapabilityGating,
+  CapabilityKind,
+  CapabilityManifest,
+  CapabilityResource,
+  CapabilitySurface,
+} from '@/lib/capabilityManifest';
 
 export type LocalizedText = Partial<Record<Locale, string>>;
 
@@ -52,34 +58,61 @@ export interface GameSkillCommand {
 export interface GameSkillConfig {
   name: string;
   category: GameSkillCategory;
+  version?: string;
+  kind?: CapabilityKind;
   label: LocalizedText;
   detail: LocalizedText;
   insertText?: LocalizedText;
   protocol: GameSkillProtocol;
+  inputs?: string[];
+  outputs?: string[];
+  requiredSettings?: string[];
+  resources?: CapabilityResource[];
+  rollback?: string;
+  surfaces?: CapabilitySurface[];
+  gating?: CapabilityGating;
 }
 
 const EMPTY_TEXT: LocalizedText = { 'zh-CN': '', 'en-US': '' };
 
 /**
- * Base class for every FreeUltraCode-introduced slash command. Holds the
+ * Base class for every UltraGameStudio-introduced slash command. Holds the
  * localized presentation fields plus the standard six-part protocol, and
  * projects itself into the runtime SLASH_COMMANDS shape via `toCommand()`.
  */
 export class GameSkill {
   readonly name: string;
   readonly category: GameSkillCategory;
+  readonly version: string;
+  readonly kind: CapabilityKind;
   readonly label: LocalizedText;
   readonly detail: LocalizedText;
   readonly insertText: LocalizedText;
   readonly protocol: GameSkillProtocol;
+  readonly inputs: string[];
+  readonly outputs: string[];
+  readonly requiredSettings: string[];
+  readonly resources: CapabilityResource[];
+  readonly rollback: string;
+  readonly surfaces: CapabilitySurface[];
+  readonly gating?: CapabilityGating;
 
   constructor(config: GameSkillConfig) {
     this.name = config.name;
     this.category = config.category;
+    this.version = config.version ?? '1.0.0';
+    this.kind = config.kind ?? 'skill';
     this.label = config.label;
     this.detail = config.detail;
     this.insertText = config.insertText ?? EMPTY_TEXT;
     this.protocol = config.protocol;
+    this.inputs = config.inputs ?? [];
+    this.outputs = config.outputs ?? [];
+    this.requiredSettings = config.requiredSettings ?? [];
+    this.resources = config.resources ?? [];
+    this.rollback = config.rollback ?? '重新运行能力或按最终报告中的恢复步骤处理。';
+    this.surfaces = config.surfaces ?? ['slashMenu', 'gameSkillMenu'];
+    this.gating = config.gating;
   }
 
   /** Project into the runtime slash-command data shape. */
@@ -89,6 +122,40 @@ export class GameSkill {
       label: this.label,
       detail: this.detail,
       text: this.insertText,
+    };
+  }
+
+  /** Project into the versioned CapabilityManifest data shape. */
+  toManifest(): CapabilityManifest {
+    const aliases = this.protocol.triggers
+      .split(/[、,，]/)
+      .map((trigger) => trigger.trim())
+      .filter((trigger) => trigger.length > 0 && trigger !== this.name);
+    return {
+      id: this.name.replace(/^\//, ''),
+      version: this.version,
+      kind: this.kind,
+      category: this.category,
+      command: this.toCommand(),
+      triggers: {
+        slash: [this.name],
+        aliases,
+      },
+      inputs: {
+        description: this.inputs.length > 0 ? this.inputs.join('、') : this.protocol.triggers,
+        required: this.inputs,
+      },
+      outputs: {
+        description: this.outputs.length > 0 ? this.outputs.join('、') : this.protocol.outputFormat,
+        artifacts: this.outputs,
+      },
+      requiredSettings: this.requiredSettings,
+      resources: this.resources,
+      verification: this.protocol.verification,
+      rollback: this.rollback,
+      surfaces: this.surfaces,
+      gating: this.gating,
+      protocol: this.protocol,
     };
   }
 }

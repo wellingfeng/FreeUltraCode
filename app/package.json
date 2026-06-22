@@ -1,11 +1,11 @@
 {
-  "name": "freeultracode-app",
+  "name": "ultragamestudio-app",
   "private": true,
-  "version": "0.4.8",
+  "version": "0.4.9",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "fuc": "./cli/dist/fuc.mjs"
+    "ugs": "./cli/dist/ugs.mjs"
   },
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,7 @@
     "lint": "eslint . --ext ts,tsx",
     "test": "vitest run --environment jsdom",
     "cli:build": "node cli/build.mjs",
-    "cli:dev": "node --experimental-strip-types cli/bin/fuc.ts",
+    "cli:dev": "node --experimental-strip-types cli/bin/ugs.ts",
     "tauri": "tauri",
     "desktop": "tauri dev",
     "check:built-in-workflows": "node scripts/check-built-in-workflows.mjs",

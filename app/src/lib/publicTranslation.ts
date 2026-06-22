@@ -11,7 +11,7 @@ const MYMEMORY_TRANSLATE_URL = 'https://api.mymemory.translated.net/get';
 const BAIDU_TRANSLATE_URL = 'https://fanyi-api.baidu.com/api/trans/vip/translate';
 const TRANSLATE_TIMEOUT_MS = 15_000;
 const MAX_QUERY_CHARS = 4_500;
-const TOKEN_PREFIX = 'FUCXLT';
+const TOKEN_PREFIX = 'UGSXLT';
 
 const GOOGLE_LANG_BY_LOCALE: Record<Locale, string> = {
   'zh-CN': 'zh-CN',

@@ -34,7 +34,7 @@ describe('sessionChangesCacheKey', () => {
   });
 
   it('scopes cache entries by root path', () => {
-    expect(sessionChangesCacheKey('ws1', 's1', 'E:\\OpenWorkflows')).not.toBe(
+    expect(sessionChangesCacheKey('ws1', 's1', 'E:\\UltraGameStudio')).not.toBe(
       sessionChangesCacheKey('ws1', 's1', 'E:\\MoonEngine'),
     );
   });

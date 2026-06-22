@@ -9,25 +9,29 @@ export const PROVIDER_API_KEYS_SECRET = 'providers.apiKeys.v1';
 export const GATEWAY_CHANNEL_API_KEYS_SECRET = 'gateway.channelApiKeys.v1';
 export const FREE_CHANNEL_API_KEYS_SECRET = 'freeChannels.apiKeys.v1';
 export const FREE_PROXY_TOKEN_SECRET = 'freeProxy.token.v1';
+export const REMOTE_WORKSPACE_SECRET = 'remoteWorkspaces.secrets.v1';
+export const REMOTE_RUNNER_CONNECTION_SECRET = 'remoteRunner.connection.v1';
 
 const SECRET_NAMES = [
   PROVIDER_API_KEYS_SECRET,
   GATEWAY_CHANNEL_API_KEYS_SECRET,
   FREE_CHANNEL_API_KEYS_SECRET,
   FREE_PROXY_TOKEN_SECRET,
+  REMOTE_WORKSPACE_SECRET,
+  REMOTE_RUNNER_CONNECTION_SECRET,
 ];
 
-const PROVIDERS_STORAGE = 'fuc_providers';
-const ACTIVE_PROVIDER_STORAGE = 'fuc_active_provider_id';
-const API_KEY_STORAGE = 'fuc_anthropic_key';
-const BASE_URL_STORAGE = 'fuc_anthropic_base_url';
-const GATEWAY_CONFIG_STORAGE = 'fuc_model_gateway_v1';
-const FREE_CHANNEL_KEYS_STORAGE = 'fuc_free_channel_keys_v1';
-const FREE_PROXY_TOKEN_STORAGE = 'fuc_free_proxy_token_v1';
+const PROVIDERS_STORAGE = 'ugs_providers';
+const ACTIVE_PROVIDER_STORAGE = 'ugs_active_provider_id';
+const API_KEY_STORAGE = 'ugs_anthropic_key';
+const BASE_URL_STORAGE = 'ugs_anthropic_base_url';
+const GATEWAY_CONFIG_STORAGE = 'ugs_model_gateway_v1';
+const FREE_CHANNEL_KEYS_STORAGE = 'ugs_free_channel_keys_v1';
+const FREE_PROXY_TOKEN_STORAGE = 'ugs_free_proxy_token_v1';
 const LEGACY_FREE_CHANNEL_KEYS_STORAGE = [
   'owf_free_channel_keys_v1',
-  'openworkflow.free_channel_keys_v1',
-  'openworkflow.freeChannels.keys',
+  'ultragamestudio.free_channel_keys_v1',
+  'ultragamestudio.freeChannels.keys',
 ];
 
 const memorySecrets = new Map<string, string>();

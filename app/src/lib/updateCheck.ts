@@ -13,12 +13,12 @@
 import { openExternal } from '@/lib/tauri';
 
 /** Canonical GitHub project URL. */
-export const REPO_URL = 'https://github.com/wellingfeng/FreeUltraCode';
+export const REPO_URL = 'https://github.com/wellingfeng/UltraGameStudio';
 /** Releases / changelog page. */
 export const RELEASES_URL = `${REPO_URL}/releases`;
 /** Raw manifest consumed by {@link fetchVersionManifest}. */
 export const VERSION_MANIFEST_URL =
-  'https://raw.githubusercontent.com/wellingfeng/FreeUltraCode/main/app/version.txt';
+  'https://raw.githubusercontent.com/wellingfeng/UltraGameStudio/main/app/version.txt';
 
 /** Compile-time version, injected by Vite (falls back to 0.0.0 in tests). */
 export const APP_VERSION: string =

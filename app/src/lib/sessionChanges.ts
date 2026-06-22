@@ -5,9 +5,9 @@ import {
   type WorkspaceChanges,
 } from './tauri';
 
-const SESSION_CHANGES_CACHE_PREFIX = 'freeultracode.sessionChanges.v5:';
+const SESSION_CHANGES_CACHE_PREFIX = 'ultragamestudio.sessionChanges.v5:';
 const SESSION_CHANGES_CACHE_KEY_VERSION = 'v5';
-export const SESSION_CHANGES_UPDATED_EVENT = 'freeultracode:session-changes-updated';
+export const SESSION_CHANGES_UPDATED_EVENT = 'ultragamestudio:session-changes-updated';
 
 export function sessionChangesCacheKey(
   workspaceId: string | null | undefined,

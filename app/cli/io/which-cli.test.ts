@@ -15,7 +15,7 @@ import { repairClaudeBunInstall } from './which-cli';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'fuc-which-cli-'));
+  dir = mkdtempSync(join(tmpdir(), 'ugs-which-cli-'));
 });
 
 afterEach(() => {

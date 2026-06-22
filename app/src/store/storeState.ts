@@ -165,7 +165,7 @@ export interface StoreState {
    */
   chattingSessions: WorkflowSessionKey[];
   /**
-   * Sessions whose in-flight turn is parked on a user interaction (a FUC_ASK
+   * Sessions whose in-flight turn is parked on a user interaction (a UGS_ASK
    * select/input/confirm). The turn is still "live" (its channel stays open),
    * but it is *paused* waiting on the user rather than streaming — so the
    * Sidebar shows a static "waiting" badge instead of the running spinner, and
@@ -201,11 +201,11 @@ export interface StoreState {
   modelOptions: SelectOption[];
   /** Previously-selected workspace folders, most-recent-first. */
   workspaceHistory: string[];
-  /** True once `.freeultracode` history has been loaded or gracefully skipped. */
+  /** True once `.ultragamestudio` history has been loaded or gracefully skipped. */
   historyReady: boolean;
   /** Last history initialization failure, shown instead of sample sessions. */
   historyError: string | null;
-  /** Resolved `.freeultracode` root path for diagnostics. */
+  /** Resolved `.ultragamestudio` root path for diagnostics. */
   historyRootPath: string | null;
   /** Workspace buckets rendered as the first level of the history tree. */
   workspaces: WorkspaceSummary[];
@@ -263,7 +263,7 @@ export interface StoreState {
   popToGraph: (depth: number) => void;
   setWorkflow: (ir: IRGraph) => void;
   openWorkflowSession: (ir: IRGraph, path?: string) => void;
-  /** Export the current workflow to a user-chosen file (.fuc.json). */
+  /** Export the current workflow to a user-chosen file (.ugs.json). */
   exportWorkflow: (title?: string) => void;
   /** Export a workflow session from history to a user-chosen file. */
   exportWorkflowSession: (
@@ -358,7 +358,7 @@ export interface StoreState {
   generateWorldPrompt: (text: string) => void;
   /**
    * UI mode turn: ask the selected coding model to design a game UI deliverable
-   * for the project's default UI channel (Project Settings > UI 渠道). Front-loads
+   * for the global default UI channel (Settings > UI 渠道). Front-loads
    * a UI-design instruction so the model produces interface specs/assets instead
    * of editing the workflow blueprint. Wired to /ui-mode-start and sticky uiMode
    * in AIDock.
@@ -367,7 +367,7 @@ export interface StoreState {
   /**
    * UE Blueprint mode turn: route the request through the selected coding model
    * with instructions to operate UE Blueprint assets via the editor plugin/MCP
-   * when available, never OpenWorkflows workflow IRGraph.
+   * when available, never UltraGameStudio workflow IRGraph.
    */
   generateBlueprintPrompt: (text: string) => void;
   /**
@@ -376,12 +376,12 @@ export interface StoreState {
    */
   generateMetaHumanPrompt: (text: string) => void;
   /**
-   * Search the enabled online 3D model libraries (Project Settings > 在线模型库) for
+   * Search the enabled online 3D model libraries (Settings > 在线模型库) for
    * the given query and render thumbnails / previews / downloads into the active
    * chat. Wired to the `/mesh-search` slash command in AIDock.
    */
   searchMeshLibraryPrompt: (text: string) => void;
-  runUltracodePrompt: (task: string) => void;
+  runStudioPrompt: (task: string) => void;
   /**
    * Append a local message to the current chat session and persist it. Used by
    * app-side actions that produce a result without an AI turn (e.g. the

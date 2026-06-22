@@ -9,7 +9,7 @@ import type {
   WorkspaceSummary,
 } from './types';
 
-const FALLBACK_PREFIX = 'freeultracode.history.v1:';
+const FALLBACK_PREFIX = 'ultragamestudio.history.v1:';
 
 function writeHistoryJson(relPath: string, value: unknown): void {
   window.localStorage.setItem(FALLBACK_PREFIX + relPath, JSON.stringify(value));
@@ -69,11 +69,11 @@ afterEach(() => {
 
 describe('historyStore lone surrogate sanitization', () => {
   it('replaces unpaired UTF-16 surrogates before persisting a session', async () => {
-    const workspaceId = await deriveWorkspaceId('E:\\OpenWorkflow');
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
     const workspace: WorkspaceRecord = {
       id: workspaceId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 1,
       updatedAt: 1,
       sessionCount: 0,
@@ -108,11 +108,11 @@ describe('historyStore lone surrogate sanitization', () => {
   });
 
   it('preserves valid surrogate pairs (intact emoji) when sanitizing', async () => {
-    const workspaceId = await deriveWorkspaceId('E:\\OpenWorkflow');
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
     const workspace: WorkspaceRecord = {
       id: workspaceId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 1,
       updatedAt: 1,
       sessionCount: 0,
@@ -135,12 +135,12 @@ describe('historyStore lone surrogate sanitization', () => {
 
 describe('historyStore workspace reconciliation', () => {
   it('merges legacy duplicate Windows workspace buckets by path identity', async () => {
-    const canonicalId = await deriveWorkspaceId('E:\\OpenWorkflow');
-    const legacyId = 'legacy_openworkflow';
+    const canonicalId = await deriveWorkspaceId('E:\\UltraGameStudio');
+    const legacyId = 'legacy_ultragamestudio';
     const canonicalWorkspace: WorkspaceRecord = {
       id: canonicalId,
-      path: 'e:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'e:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 10,
       updatedAt: 20,
       sessionCount: 1,
@@ -148,8 +148,8 @@ describe('historyStore workspace reconciliation', () => {
     };
     const legacyWorkspace: WorkspaceRecord = {
       id: legacyId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 1,
       updatedAt: 30,
       sessionCount: 1,
@@ -213,8 +213,8 @@ describe('historyStore workspace reconciliation', () => {
     expect(workspaces).toHaveLength(1);
     expect(workspaces[0]).toMatchObject({
       id: canonicalId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       sessionCount: 2,
     });
     expect(sessions.map((session) => session.id)).toEqual([
@@ -228,12 +228,12 @@ describe('historyStore workspace reconciliation', () => {
   });
 
   it('rebuilds duplicate workspace session indexes before merging buckets', async () => {
-    const canonicalId = await deriveWorkspaceId('E:\\OpenWorkflow');
-    const legacyId = 'legacy_openworkflow';
+    const canonicalId = await deriveWorkspaceId('E:\\UltraGameStudio');
+    const legacyId = 'legacy_ultragamestudio';
     const canonicalWorkspace: WorkspaceRecord = {
       id: canonicalId,
-      path: 'e:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'e:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 10,
       updatedAt: 20,
       sessionCount: 1,
@@ -241,8 +241,8 @@ describe('historyStore workspace reconciliation', () => {
     };
     const legacyWorkspace: WorkspaceRecord = {
       id: legacyId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 1,
       updatedAt: 40,
       sessionCount: 1,
@@ -327,7 +327,7 @@ describe('historyStore workspace reconciliation', () => {
   });
 
   it('recovers workspace directories missing from the root index before merging', async () => {
-    const canonicalId = await deriveWorkspaceId('E:\\OpenWorkflow');
+    const canonicalId = await deriveWorkspaceId('E:\\UltraGameStudio');
     const legacyId = '2f973eac8ae19fe3';
     const ccTabId = await deriveWorkspaceId('E:\\cc-tab');
     const defaultWorkspace: WorkspaceRecord = {
@@ -341,8 +341,8 @@ describe('historyStore workspace reconciliation', () => {
     };
     const canonicalWorkspace: WorkspaceRecord = {
       id: canonicalId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 10,
       updatedAt: 20,
       sessionCount: 1,
@@ -350,8 +350,8 @@ describe('historyStore workspace reconciliation', () => {
     };
     const legacyWorkspace: WorkspaceRecord = {
       id: legacyId,
-      path: 'e:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'e:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 2,
       updatedAt: 40,
       sessionCount: 1,
@@ -366,19 +366,19 @@ describe('historyStore workspace reconciliation', () => {
     const pollutedDefaultSession = sessionRecord(
       '__default__',
       's_polluted',
-      'polluted OpenWorkflow chat',
+      'polluted UltraGameStudio chat',
       35,
     );
     const canonicalSession = sessionRecord(
       canonicalId,
       's_new',
-      'canonical OpenWorkflow chat',
+      'canonical UltraGameStudio chat',
       20,
     );
     const legacySession = sessionRecord(
       legacyId,
       's_old',
-      'legacy OpenWorkflow chat',
+      'legacy UltraGameStudio chat',
       40,
     );
 
@@ -455,11 +455,11 @@ describe('historyStore workspace reconciliation', () => {
   });
 
   it('rebuilds a stale session index from session json files', async () => {
-    const workspaceId = await deriveWorkspaceId('E:\\OpenWorkflow');
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
     const workspace: WorkspaceRecord = {
       id: workspaceId,
-      path: 'E:\\OpenWorkflow',
-      name: 'OpenWorkflow',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       createdAt: 1,
       updatedAt: 20,
       sessionCount: 1,

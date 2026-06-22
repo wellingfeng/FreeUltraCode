@@ -4,9 +4,9 @@
  * The CLI runtime can no longer convey tool status/duration/args/result through
  * a flat `🔧 name: detail` text line. Instead it emits inline sentinel blocks:
  *
- *   <<FUC_TOOL>>{ ...json ToolEventPatch... }<<FUC_TOOL_END>>
+ *   <<UGS_TOOL>>{ ...json ToolEventPatch... }<<UGS_TOOL_END>>
  *
- * woven into the normal text stream (the same approach as the `<<FUC_ASK>>`
+ * woven into the normal text stream (the same approach as the `<<UGS_ASK>>`
  * interaction sentinel). Each block is a *patch* keyed by `id`: a `running`
  * patch when the call starts, then a `done`/`error` patch (with `durationMs`
  * and `result`) when it finishes. The renderer's segmenter accumulates patches
@@ -43,14 +43,14 @@ export interface ToolEvent {
 /** A partial update to a {@link ToolEvent}; `id` is required, rest optional. */
 export type ToolEventPatch = Partial<ToolEvent> & { id: string };
 
-export const TOOL_OPEN = '<<FUC_TOOL>>';
-export const TOOL_CLOSE = '<<FUC_TOOL_END>>';
+export const TOOL_OPEN = '<<UGS_TOOL>>';
+export const TOOL_CLOSE = '<<UGS_TOOL_END>>';
 
 /**
  * Escape `<`/`>` in a serialised JSON payload as `<` / `>`. JSON.parse
  * decodes these back to the literal characters, so the payload round-trips
  * byte-for-byte — but a tool result that itself contains the literal sentinel
- * markers (e.g. reading this very file) can no longer produce a `<<FUC_TOOL_END>>`
+ * markers (e.g. reading this very file) can no longer produce a `<<UGS_TOOL_END>>`
  * substring that would prematurely close the block and leak the rest as prose.
  */
 function escapeSentinelPayload(json: string): string {
@@ -81,7 +81,7 @@ export interface ToolSentinelSplit {
 }
 
 /**
- * Pull every `<<FUC_TOOL>>…<<FUC_TOOL_END>>` block out of `text`, returning the
+ * Pull every `<<UGS_TOOL>>…<<UGS_TOOL_END>>` block out of `text`, returning the
  * cleaned text, the decoded patches, and an ordered parts list that preserves
  * each sentinel's position relative to the surrounding prose. Malformed or
  * incomplete blocks (e.g. a half-streamed sentinel with no close yet) are left
@@ -139,7 +139,7 @@ export function extractToolSentinels(text: string): ToolSentinelSplit {
       parts.push({ patch: parsed });
       cursor = close + TOOL_CLOSE.length;
     } else {
-      // The `<<FUC_TOOL>>` marker is literal prose: the model wrote the token
+      // The `<<UGS_TOOL>>` marker is literal prose: the model wrote the token
       // itself (e.g. while explaining this protocol), so its body isn't a valid
       // patch — and its `close` actually paired with a genuine sentinel further
       // downstream. Keep the marker verbatim and resume scanning right after it

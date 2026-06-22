@@ -1,8 +1,8 @@
 /**
- * `fuc list <resource>` — query environment capabilities (spec §3.6).
+ * `ugs list <resource>` — query environment capabilities (spec §3.6).
  *   adapters  : scan PATH for claude/codex/gemini CLIs (via io/which-cli).
  *   models    : built-in model list per adapter.
- *   templates : built-in templates + ~/.fuc/templates/*.fuc.json.
+ *   templates : built-in templates + ~/.ugs/templates/*.ugs.json.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -79,11 +79,11 @@ function listModels(opts: ListOptions): number {
 
 function listTemplates(opts: ListOptions): number {
   const builtin = BUILTIN_TEMPLATE_NAMES.map((name) => ({ name, source: 'builtin' }));
-  const userDir = join(homedir(), '.fuc', 'templates');
+  const userDir = join(homedir(), '.ugs', 'templates');
   const user: Array<{ name: string; source: string }> = [];
   if (existsSync(userDir)) {
     for (const f of readdirSync(userDir)) {
-      if (f.endsWith('.fuc.json')) user.push({ name: f.replace(/\.fuc\.json$/, ''), source: 'user' });
+      if (f.endsWith('.ugs.json')) user.push({ name: f.replace(/\.ugs\.json$/, ''), source: 'user' });
     }
   }
   const all = [...builtin, ...user];

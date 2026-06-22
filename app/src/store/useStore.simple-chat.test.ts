@@ -2,14 +2,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultBlueprint, simpleBlueprint } from '@/core/defaultBlueprint';
 import type { IRGraph } from '@/core/ir';
 import { personalInstructionsKey } from '@/core/personalInstructions';
-import { encodeToolPatch } from '@/components/ai/lib/toolEvent';
+import {
+  encodeToolPatch,
+  extractToolSentinels,
+  mergeToolPatches,
+} from '@/components/ai/lib/toolEvent';
 import { extractSessionFiles } from '@/lib/sessionFiles';
+import { resetSecureStorageForTests } from '@/lib/secureStorage';
 import { refreshCliRuntime } from '@/lib/cliConfig';
 import {
   systemDefaultGatewaySelection,
   workflowDefaultGatewaySelection,
 } from '@/lib/modelGateway/resolver';
 import { DEFAULT_GAME_EXPERT_SETTINGS } from '@/lib/gameExperts';
+import { defaultComposer } from './sampleSessions';
+import {
+  remoteProviderId,
+  remoteWorkspacePath,
+  saveRemoteWorkspace,
+} from '@/lib/remoteWorkspace';
+import { upsertProviders } from '@/lib/apiConfig';
 
 const gatewayMocks = vi.hoisted(() => ({
   completeGatewayText: vi.fn(),
@@ -79,8 +91,8 @@ function cloneGraph(graph: IRGraph): IRGraph {
 }
 
 function resetStore(workflow: IRGraph): void {
-  window.localStorage.setItem('fuc_research_angles_max', '1');
-  window.localStorage.setItem('fuc_nodegen_candidates_max', '1');
+  window.localStorage.setItem('ugs_research_angles_max', '1');
+  window.localStorage.setItem('ugs_nodegen_candidates_max', '1');
   useStore.setState({
     workflow: cloneGraph(workflow),
     selectedNodeId: null,
@@ -92,6 +104,7 @@ function resetStore(workflow: IRGraph): void {
     dirty: false,
     currentFilePath: null,
     messages: [],
+    composer: defaultComposer,
     composerDraft: '',
     composerDrafts: {},
     activeSessionId: null,
@@ -174,6 +187,7 @@ afterEach(async () => {
   tauriMocks.tauriAvailable.mockReturnValue(false);
   resetStore(defaultBlueprint('Current workflow'));
   window.localStorage.clear();
+  resetSecureStorageForTests();
   await refreshCliRuntime();
 });
 
@@ -494,7 +508,7 @@ describe('simple-workflow chat mode', () => {
     const sourceWorkspace =
       await historyStore.resolveWorkspaceByPath('E:\\project_moon_ues\\MoonEngine');
     const targetWorkspace =
-      await historyStore.resolveWorkspaceByPath('E:\\OpenWorkflows');
+      await historyStore.resolveWorkspaceByPath('E:\\UltraGameStudio');
     const sourceRecord = await historyStore.createSession({
       workspaceId: sourceWorkspace.id,
       isWorkflow: false,
@@ -505,7 +519,7 @@ describe('simple-workflow chat mode', () => {
       workspaceId: targetWorkspace.id,
       isWorkflow: false,
       messages: [],
-      title: 'OpenWorkflows chat',
+      title: 'UltraGameStudio chat',
     });
     const sourceSession = {
       id: sourceRecord.id,
@@ -694,6 +708,981 @@ describe('simple-workflow chat mode', () => {
     expect(systems[0]).not.toContain('/image');
   });
 
+  it('runs simple chat through a selected remote workspace runner', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_test');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    saveRemoteWorkspace(
+      {
+        id: 'rw_test',
+        label: '测试 Runner',
+        serverUrl: 'https://runner.test',
+        projectId: 'proj_game',
+        repoUrl: 'https://github.com/me/game.git',
+        branch: 'main',
+        adapter: 'codex',
+        model: 'gpt-test',
+        pushBranch: 'ugs/remote-job',
+        useOwnModelKey: true,
+      },
+      {
+        token: 'runner-token',
+        apiKey: 'model-key',
+        gitToken: 'git-token',
+      },
+    );
+    const workflow = simpleBlueprint('远程会话');
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'codex',
+        modelClass: 'gpt-5.1',
+        modelOverride: 'gpt-5.1',
+        providerId: remoteProviderId('rw_test', 'codex-main'),
+        channelId: 'default',
+      },
+    };
+    resetStore(workflow);
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://runner.test/projects/proj_game') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            project: {
+              id: 'proj_game',
+              label: '测试 Runner',
+              repoUrl: 'https://github.com/me/game.git',
+              branch: 'main',
+              pushBranch: 'ugs/remote-job',
+              adapter: 'codex',
+              model: 'gpt-test',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs') {
+        expect(init?.method).toBe('POST');
+        expect(init?.headers).toMatchObject({
+          Authorization: 'Bearer runner-token',
+          'content-type': 'application/json',
+        });
+        const body = JSON.parse(String(init?.body));
+        expect(body.projectId).toBe('proj_game');
+        expect(body.repoUrl).toBeUndefined();
+        expect(body.adapter).toBe('codex');
+        expect(body.model).toBe('gpt-5.1');
+        expect(body.accountId).toBe('codex-main');
+        expect(body.apiKey).toBe('model-key');
+        expect(body.gitToken).toBeUndefined();
+        expect(body.prompt).toContain('用户：修复远程 bug');
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_1',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              projectId: body.projectId,
+              repoUrl: 'https://github.com/me/game.git',
+              branch: body.branch,
+              adapter: body.adapter,
+              model: body.model,
+              prompt: body.prompt,
+              pushBranch: body.pushBranch,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_1/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: log',
+                    'data: {"at":1,"phase":"model","stream":"stdout","text":"done"}',
+                    '',
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_1","status":"done","createdAt":1,"updatedAt":2,"repoUrl":"https://github.com/me/game.git","branch":"main","adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":"ugs/remote-job","logs":[],"result":{"exitCode":0,"patch":"diff --git a/a b/a\\n+ok","usage":{"inputTokens":10,"outputTokens":5,"cachedInputTokens":2,"totalTokens":15,"calls":1}},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('修复远程 bug')).toBe(true);
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程任务完成')),
+      'remote runner completion',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(assistant?.text).toContain('```diff');
+    expect(assistant?.usage?.totalTokens).toBe(15);
+    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli).not.toHaveBeenCalled();
+  });
+
+  it('uses the remote project model when the selected remote account has no model metadata', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_no_model_metadata');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    const providerId = remoteProviderId('rw_no_model_metadata', 'codex-server');
+    saveRemoteWorkspace(
+      {
+        id: 'rw_no_model_metadata',
+        label: '无模型元数据 Runner',
+        serverUrl: 'https://runner.test',
+        projectId: 'proj_game',
+        repoUrl: 'https://github.com/me/game.git',
+        adapter: 'codex',
+        model: 'gpt-test',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    upsertProviders(
+      [
+        {
+          id: providerId,
+          kind: 'codex',
+          name: '无模型元数据 Runner · Codex server key',
+          apiKey: 'remote-runner',
+          baseUrl: 'https://runner.test',
+          transport: 'cli',
+        },
+      ],
+      { makeActiveId: providerId },
+    );
+    const workflow = simpleBlueprint('远程模型兜底');
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'codex',
+        modelClass: 'sonnet',
+        modelOverride: 'sonnet',
+        providerId,
+        channelId: 'default',
+      },
+    };
+    resetStore(workflow);
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_no_model_metadata',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://runner.test/projects/proj_game') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            project: {
+              id: 'proj_game',
+              label: '无模型元数据 Runner',
+              repoUrl: 'https://github.com/me/game.git',
+              branch: null,
+              pushBranch: null,
+              adapter: 'codex',
+              model: 'gpt-test',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.adapter).toBe('codex');
+        expect(body.accountId).toBe('codex-server');
+        expect(body.model).toBe('gpt-test');
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_project_model',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              projectId: body.projectId,
+              repoUrl: 'https://github.com/me/game.git',
+              branch: body.branch,
+              adapter: body.adapter,
+              model: body.model,
+              prompt: body.prompt,
+              pushBranch: body.pushBranch,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_project_model/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_project_model","status":"done","createdAt":1,"updatedAt":2,"repoUrl":"https://github.com/me/game.git","branch":null,"adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":0},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('测试远程模型')).toBe(true);
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程任务完成')),
+      'remote runner project model fallback',
+    );
+  });
+
+  it('does not send Claude tier aliases to a non-Claude remote runner account', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_codex_sonnet_alias');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    const providerId = remoteProviderId('rw_codex_sonnet_alias', 'codex-server');
+    saveRemoteWorkspace(
+      {
+        id: 'rw_codex_sonnet_alias',
+        label: 'Codex Runner',
+        serverUrl: 'https://runner.test',
+        projectId: 'proj_codex_sonnet_alias',
+        repoUrl: 'https://github.com/me/game.git',
+        adapter: 'codex',
+        model: 'sonnet',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    upsertProviders(
+      [
+        {
+          id: providerId,
+          kind: 'codex',
+          name: 'Codex Runner · KuroAI',
+          apiKey: 'remote-runner',
+          baseUrl: 'https://runner.test',
+          transport: 'cli',
+          model: 'gpt-5.5',
+          models: ['gpt-5.5'],
+        },
+      ],
+      { makeActiveId: providerId },
+    );
+    const workflow = simpleBlueprint('远程 Codex');
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'codex',
+        modelClass: 'sonnet',
+        modelOverride: 'sonnet',
+        providerId,
+        channelId: 'default',
+      },
+    };
+    resetStore(workflow);
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_codex_sonnet_alias',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://runner.test/projects/proj_codex_sonnet_alias') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            project: {
+              id: 'proj_codex_sonnet_alias',
+              label: 'Codex Runner',
+              repoUrl: 'https://github.com/me/game.git',
+              branch: null,
+              pushBranch: null,
+              adapter: 'codex',
+              model: 'sonnet',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.adapter).toBe('codex');
+        expect(body.accountId).toBe('codex-server');
+        expect(body.model).toBe('gpt-5.5');
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_codex_model',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              projectId: body.projectId,
+              repoUrl: 'https://github.com/me/game.git',
+              branch: body.branch,
+              adapter: body.adapter,
+              model: body.model,
+              prompt: body.prompt,
+              pushBranch: body.pushBranch,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_codex_model/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_codex_model","status":"done","createdAt":1,"updatedAt":2,"repoUrl":"https://github.com/me/game.git","branch":null,"adapter":"codex","model":"gpt-5.5","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":0},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('测试 KuroAI 远程模型')).toBe(true);
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程任务完成')),
+      'remote runner codex model alias fallback',
+    );
+  });
+
+  it('keeps the remote runner assistant answer when no patch is produced', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_answer');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    saveRemoteWorkspace(
+      {
+        id: 'rw_answer',
+        label: '回答 Runner',
+        serverUrl: 'https://runner.test',
+        adapter: 'codex',
+        model: 'gpt-test',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    resetStore(simpleBlueprint('远程回答'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_answer',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://runner.test/jobs') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_answer',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              repoUrl: null,
+              branch: null,
+              adapter: 'codex',
+              model: 'gpt-test',
+              prompt: 'x',
+              pushBranch: null,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_answer/stream') {
+        const encoder = new TextEncoder();
+        const answerEvent = JSON.stringify({
+          type: 'item.completed',
+          item: {
+            type: 'agent_message',
+            text: '我是 GPT-5。具体版本取决于当前模型配置。',
+          },
+        });
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: log',
+                    `data: {"at":1,"phase":"model","stream":"stdout","text":${JSON.stringify(answerEvent + '\n')}}`,
+                    '',
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_answer","status":"done","createdAt":1,"updatedAt":2,"repoUrl":null,"branch":null,"adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":0},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('你是什么大模型')).toBe(true);
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('我是 GPT-5')),
+      'remote runner answer',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(assistant?.text).toContain('远程任务完成');
+    expect(assistant?.text).toContain('我是 GPT-5');
+    expect(assistant?.text).not.toContain('```diff');
+    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli).not.toHaveBeenCalled();
+  });
+
+  it('renders remote runner message events without parsing raw CLI logs', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_message_event');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    saveRemoteWorkspace(
+      {
+        id: 'rw_message_event',
+        label: '消息 Runner',
+        serverUrl: 'https://runner.test',
+        adapter: 'codex',
+        model: 'gpt-test',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    resetStore(simpleBlueprint('远程消息事件'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_message_event',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://runner.test/jobs') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_message_event',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              repoUrl: null,
+              branch: null,
+              adapter: 'codex',
+              model: 'gpt-test',
+              prompt: 'x',
+              pushBranch: null,
+              logs: [],
+              messages: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_message_event/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: message',
+                    `data: ${JSON.stringify({
+                      at: 1,
+                      role: 'assistant',
+                      kind: 'delta',
+                      text:
+                        encodeToolPatch({
+                          id: 'remote-live-tool',
+                          name: 'command_execution',
+                          subject: 'cargo check',
+                          status: 'running',
+                        }) + '远程结构化回答',
+                    })}`,
+                    '',
+                    'event: log',
+                    'data: {"at":2,"phase":"git","stream":"stdout","text":"diff ready\\n"}',
+                    '',
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_message_event","status":"done","createdAt":1,"updatedAt":2,"repoUrl":null,"branch":null,"adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":null,"logs":[],"messages":[],"result":{"exitCode":0},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('测试远程结构化消息')).toBe(true);
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程结构化回答')),
+      'remote runner message event answer',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(assistant?.text).toContain('远程任务完成');
+    expect(assistant?.text).toContain('远程结构化回答');
+    expect(assistant?.text).not.toContain('diff ready');
+    const tools = mergeToolPatches(
+      extractToolSentinels(assistant?.text ?? '').patches,
+    );
+    expect(tools.find((tool) => tool.id === 'remote-live-tool')?.status).toBe(
+      'done',
+    );
+    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli).not.toHaveBeenCalled();
+  });
+
+  it('hides remote runner protocol logs from the chat stream', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_protocol');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    saveRemoteWorkspace(
+      {
+        id: 'rw_protocol',
+        label: '协议 Runner',
+        serverUrl: 'https://runner.test',
+        adapter: 'codex',
+        model: 'gpt-test',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    resetStore(simpleBlueprint('远程协议'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_protocol',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const streamRef: {
+      controller: ReadableStreamDefaultController<Uint8Array> | null;
+    } = { controller: null };
+    const encoder = new TextEncoder();
+    const send = (lines: string[]) => {
+      streamRef.controller?.enqueue(encoder.encode(`${lines.join('\n')}\n\n`));
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://runner.test/jobs') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_protocol',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              repoUrl: null,
+              branch: null,
+              adapter: 'codex',
+              model: 'gpt-test',
+              prompt: 'x',
+              pushBranch: null,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_protocol/stream') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              streamRef.controller = controller;
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('你的路径在哪里')).toBe(true);
+    await waitFor(
+      () => fetchMock.mock.calls.some(([url]) => url === 'https://runner.test/jobs/job_protocol/stream'),
+      'remote protocol stream connection',
+    );
+
+    const hookJson = JSON.stringify({
+      type: 'system',
+      subtype: 'hook_response',
+      hook_name: 'SessionStart:startup',
+      stdout: '(node:45364) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities',
+    });
+    send([
+      'event: log',
+      `data: ${JSON.stringify({
+        at: 1,
+        phase: 'model',
+        stream: 'stdout',
+        text: `${hookJson}\n`,
+      })}`,
+    ]);
+    send([
+      'event: log',
+      `data: ${JSON.stringify({
+        at: 2,
+        phase: 'model',
+        stream: 'stderr',
+        text: '(node:45364) [DEP0190] DeprecationWarning: Passing args to a child process with shell option true can lead to security vulnerabilities\n',
+      })}`,
+    ]);
+    send([
+      'event: log',
+      `data: ${JSON.stringify({
+        at: 3,
+        phase: 'git',
+        stream: 'stdout',
+        text: 'workspace ready\n',
+      })}`,
+    ]);
+
+    await waitFor(
+      () =>
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('workspace ready')),
+      'remote non-model log visible',
+    );
+
+    const liveAssistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(liveAssistant?.text).toContain('workspace ready');
+    expect(liveAssistant?.text).not.toContain('hook_response');
+    expect(liveAssistant?.text).not.toContain('DeprecationWarning');
+
+    const answerEvent = JSON.stringify({
+      type: 'item.completed',
+      item: {
+        type: 'agent_message',
+        text: '路径在远程项目工作区。请看项目设置中的云端项目。',
+      },
+    });
+    send([
+      'event: log',
+      `data: ${JSON.stringify({
+        at: 4,
+        phase: 'model',
+        stream: 'stdout',
+        text: `${answerEvent}\n`,
+      })}`,
+    ]);
+    send(['event: status', 'data: "done"']);
+    send([
+      'event: result',
+      'data: {"id":"job_protocol","status":"done","createdAt":1,"updatedAt":2,"repoUrl":null,"branch":null,"adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":0},"error":null}',
+    ]);
+    streamRef.controller?.close();
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('路径在远程项目工作区')),
+      'remote protocol final answer',
+    );
+
+    const finalAssistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(finalAssistant?.text).toContain('路径在远程项目工作区');
+    expect(finalAssistant?.text).not.toContain('hook_response');
+    expect(finalAssistant?.text).not.toContain('DeprecationWarning');
+  });
+
+  it('does not render remote protocol/template noise as a failed answer', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_fail_noise');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    saveRemoteWorkspace(
+      {
+        id: 'rw_fail_noise',
+        label: '失败 Runner',
+        serverUrl: 'https://runner.test',
+        adapter: 'codex',
+        model: 'gpt-test',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    resetStore(simpleBlueprint('远程失败'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_fail_noise',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://runner.test/jobs') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_fail_noise',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              repoUrl: null,
+              branch: null,
+              adapter: 'codex',
+              model: 'gpt-test',
+              prompt: 'x',
+              pushBranch: null,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_fail_noise/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: log',
+                    `data: ${JSON.stringify({
+                      at: 1,
+                      phase: 'model',
+                      stream: 'stdout',
+                      text:
+                        '```markdown\\n' +
+                        "remote://rw_fae76217/[s/S]*?: '.'}: ${phase}${stream}${text}\\n" +
+                        '```\\n',
+                    })}`,
+                    '',
+                    'event: status',
+                    'data: "error"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_fail_noise","status":"error","createdAt":1,"updatedAt":2,"repoUrl":null,"branch":null,"adapter":"codex","model":"gpt-test","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":1},"error":"agent exited with code 1"}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('失败输出不要乱')).toBe(true);
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程任务失败')),
+      'remote failure with noisy protocol output',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((message) => message.role === 'assistant');
+    expect(assistant?.text).toContain('错误：agent exited with code 1');
+    expect(assistant?.text).not.toContain('remote://rw_fae76217');
+    expect(assistant?.text).not.toContain('${phase}');
+    expect(assistant?.text).not.toContain('```markdown');
+  });
+
   it('injects asset generation routing for concrete asset creation requests', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     mockDirectRoute();
@@ -861,14 +1850,14 @@ describe('simple-workflow chat mode', () => {
       });
       if (requests.length === 1) {
         return [
-          '<<FUC_ASK>>',
+          '<<UGS_ASK>>',
           JSON.stringify({
             type: 'select',
             prompt: '要继续连接远程服务器吗？',
             options: ['继续连接', '先停止'],
             multi: false,
           }),
-          '<<FUC_ASK_END>>',
+          '<<UGS_ASK_END>>',
         ].join('\n');
       }
       return '已按你的选择继续处理。';
@@ -935,7 +1924,7 @@ describe('simple-workflow chat mode', () => {
     gatewayMocks.completeGatewayText.mockResolvedValue(
       [
         '我需要确认一件事：',
-        '<<FUC_ASK>>',
+        '<<UGS_ASK>>',
         JSON.stringify({
           type: 'confirm',
           prompt: '要不要我直接动手改那三处代码？',
@@ -2249,7 +3238,7 @@ describe('simple-workflow chat mode', () => {
       gatewayMocks.completeGatewayText.mock.calls[1]?.[0]?.userContent ?? '';
     expect(secondUserContent).toContain('助手：第一轮回答');
     expect(secondUserContent).not.toContain('⚙ 路由');
-    expect(secondUserContent).not.toContain('<<FUC_TOOL>>');
+    expect(secondUserContent).not.toContain('<<UGS_TOOL>>');
     expect(secondUserContent).not.toContain('free_proxy');
     expect(secondUserContent).not.toContain('⏱');
   });
@@ -2735,7 +3724,7 @@ describe('simple-workflow chat mode', () => {
     const assistant = useStore
       .getState()
       .messages.find((m) => m.role === 'assistant' && m.text.includes('已经检查完'));
-    expect(assistant?.text.indexOf('<<FUC_TOOL>>')).toBeLessThan(
+    expect(assistant?.text.indexOf('<<UGS_TOOL>>')).toBeLessThan(
       assistant?.text.indexOf('结论：已经检查完。') ?? -1,
     );
   });
@@ -2838,7 +3827,7 @@ describe('simple-workflow chat mode', () => {
     const assistant = useStore
       .getState()
       .messages.find((m) => m.role === 'assistant' && m.text.includes('仓库状态'));
-    expect(assistant?.text.indexOf('<<FUC_TOOL>>')).toBeLessThan(
+    expect(assistant?.text.indexOf('<<UGS_TOOL>>')).toBeLessThan(
       assistant?.text.indexOf('结论：仓库状态已经检查完。') ?? -1,
     );
   });
@@ -2904,7 +3893,7 @@ describe('simple-workflow chat mode', () => {
     const assistant = useStore
       .getState()
       .messages.find((m) => m.role === 'assistant' && m.text.includes(finalAnswer));
-    const firstToolIdx = assistant?.text.indexOf('<<FUC_TOOL>>') ?? -1;
+    const firstToolIdx = assistant?.text.indexOf('<<UGS_TOOL>>') ?? -1;
     const proseIdx = assistant?.text.indexOf(finalAnswer) ?? -1;
     expect(firstToolIdx).toBeGreaterThanOrEqual(0);
     expect(proseIdx).toBeGreaterThanOrEqual(0);
@@ -2945,14 +3934,14 @@ describe('simple-workflow chat mode', () => {
           }),
         );
         return [
-          '<<FUC_ASK>>',
+          '<<UGS_ASK>>',
           JSON.stringify({
             type: 'select',
             prompt: '用哪种修复方式？',
             options: ['方案A', '方案B'],
             multi: false,
           }),
-          '<<FUC_ASK_END>>',
+          '<<UGS_ASK_END>>',
         ].join('\n');
       }
       // Second round (after the user picks): stream this round's own tool, then

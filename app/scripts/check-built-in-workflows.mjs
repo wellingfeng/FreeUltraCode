@@ -1,50 +1,33 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const appDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = dirname(appDir);
 
-const workflowRoot = join(
-  appDir,
-  'src-tauri',
-  'resources',
-  'workflows',
-  'deep-research',
-);
-
-const requiredFiles = [
-  'WORKFLOW.md',
-  'protocol/model-agnostic-deep-research.md',
-  'protocol/README.md',
-];
+const workflowsRoot = join(appDir, 'src-tauri', 'resources', 'workflows');
 
 const failures = [];
+const workflowDirs = existsSync(workflowsRoot)
+  ? readdirSync(workflowsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(workflowsRoot, entry.name))
+  : [];
 
-for (const file of requiredFiles) {
-  const path = join(workflowRoot, file);
-  if (!existsSync(path)) {
-    failures.push(`missing ${relative(root, path)}`);
+for (const workflowRoot of workflowDirs) {
+  const workflowFile = join(workflowRoot, 'WORKFLOW.md');
+  if (!existsSync(workflowFile)) {
+    failures.push(`missing ${relative(root, workflowFile)}`);
     continue;
   }
-  if (!statSync(path).isFile()) {
-    failures.push(`not a file ${relative(root, path)}`);
+  if (!statSync(workflowFile).isFile()) {
+    failures.push(`not a file ${relative(root, workflowFile)}`);
     continue;
   }
-  const text = readFileSync(path, 'utf8');
+
+  const text = readFileSync(workflowFile, 'utf8');
   if (text.trim().length < 200) {
-    failures.push(`too short ${relative(root, path)}`);
-  }
-}
-
-const workflow = readFileSync(join(workflowRoot, 'WORKFLOW.md'), 'utf8');
-for (const needle of [
-  'FUC_BUILTIN_DEEP_RESEARCH_WORKFLOW_DIR',
-  'protocol/model-agnostic-deep-research.md',
-  'not installed in, loaded from, or dependent on a user',
-]) {
-  if (!workflow.includes(needle)) {
-    failures.push(`WORKFLOW.md missing expected text: ${needle}`);
+    failures.push(`too short ${relative(root, workflowFile)}`);
   }
 }
 
@@ -55,4 +38,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-process.stdout.write('Built-in workflow resources are complete.\n');
+process.stdout.write(
+  workflowDirs.length === 0
+    ? 'No built-in workflow resources are configured.\n'
+    : 'Built-in workflow resources are complete.\n',
+);

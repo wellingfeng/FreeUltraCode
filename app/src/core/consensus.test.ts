@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { EXEC, type ConsensusStrategy, type IRGraph } from './ir';
 import { emitClaudeScript } from './emitter';
 import { parseClaudeScript } from './parser';
 import { roundtrip } from './roundtrip';
 import { isComplexGenerationRequest } from './consensusHeuristic';
+
+afterEach(() => {
+  window.localStorage.clear();
+});
 
 /** A start → consensus → end workflow with three lens voters and a VERDICT schema. */
 function buildConsensusWorkflow(
@@ -62,7 +66,7 @@ describe('consensus node emission', () => {
     // Self-contained helper so the export runs in real Claude Code, annotated so
     // the parser skips it.
     expect(script).toContain('async function consensus(voters, opts)');
-    expect(script).toContain('// @fuc:runtime consensus');
+    expect(script).toContain('// @ugs:runtime consensus');
     // The call site uses fixed-key-order options and a bare schema identifier.
     expect(script).toContain('await consensus([');
     expect(script).toContain("strategy: 'multi-lens'");
@@ -93,7 +97,7 @@ describe('consensus node emission', () => {
       ],
       edges: [],
     };
-    expect(emitClaudeScript(noConsensus)).not.toContain('@fuc:runtime');
+    expect(emitClaudeScript(noConsensus)).not.toContain('@ugs:runtime');
   });
 });
 
@@ -137,7 +141,14 @@ describe('consensus round-trip (emit → parse → emit)', () => {
 });
 
 describe('generation-time consensus heuristic', () => {
-  it('flags long / multi-goal / high-stakes requests as complex', () => {
+  it('is off by default', () => {
+    expect(isComplexGenerationRequest('对这个项目做一次全面的安全审计')).toBe(false);
+    expect(isComplexGenerationRequest('a'.repeat(250))).toBe(false);
+  });
+
+  it('flags long / multi-goal / high-stakes requests as complex after opt-in', () => {
+    window.localStorage.setItem('ugs_gen_consensus', '1');
+
     expect(isComplexGenerationRequest('对这个项目做一次全面的安全审计')).toBe(true);
     expect(isComplexGenerationRequest('重构整个鉴权模块的架构')).toBe(true);
     expect(

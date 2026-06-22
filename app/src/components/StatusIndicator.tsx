@@ -16,7 +16,7 @@ interface StatusIndicatorProps {
 }
 
 function statusColorStyle(color: string): CSSProperties {
-  return { '--fuc-status-color': color } as CSSProperties;
+  return { '--ugs-status-color': color } as CSSProperties;
 }
 
 const TONE_STYLE: Record<StatusTone, CSSProperties> = {
@@ -43,7 +43,7 @@ export default function StatusIndicator({
     <span
       aria-hidden={!active}
       aria-label={active ? label : undefined}
-      className={cn('fuc-status-slot', className)}
+      className={cn('ugs-status-slot', className)}
       data-status={tone ?? 'none'}
       role={active ? 'img' : undefined}
       title={active ? label : undefined}
@@ -52,8 +52,8 @@ export default function StatusIndicator({
         <span
           aria-hidden="true"
           className={cn(
-            'fuc-status-indicator',
-            isSpinningTone(tone) && 'fuc-status-spinner',
+            'ugs-status-indicator',
+            isSpinningTone(tone) && 'ugs-status-spinner',
           )}
           style={TONE_STYLE[tone]}
         />

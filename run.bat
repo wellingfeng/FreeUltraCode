@@ -1,15 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
-title FreeUltraCode Runner
+title UltraGameStudio Runner
 cd /d "%~dp0"
 
-set "EXE=app\src-tauri\target\release\FreeUltraCode.exe"
+set "EXE=app\src-tauri\target\release\UltraGameStudio.exe"
 set "MODE=auto"
 if /I "%~1"=="/run"   set "MODE=run"
 if /I "%~1"=="/build" set "MODE=build"
 
 echo ============================================================
-echo   FreeUltraCode Runner
+echo   UltraGameStudio Runner
 echo ============================================================
 echo   run.bat          auto: rebuild if sources changed, then launch
 echo   run.bat /run     launch existing exe only
@@ -58,7 +58,7 @@ popd
 if not "!CMD_RC!"=="0" goto npm_fail
 :have_deps
 if exist "%EXE%" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "app\scripts\stop-freeultracode-instances.ps1"
+  powershell -NoProfile -ExecutionPolicy Bypass -File "app\scripts\stop-ultragamestudio-instances.ps1"
   if errorlevel 1 goto stop_exe_fail
 )
 echo.
@@ -76,10 +76,10 @@ if "%MODE%"=="build" goto build_only_done
 
 :do_launch
 if not exist "%EXE%" goto no_exe
-powershell -NoProfile -ExecutionPolicy Bypass -File "app\scripts\stop-freeultracode-instances.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "app\scripts\stop-ultragamestudio-instances.ps1"
 if errorlevel 1 goto stop_exe_fail
 echo.
-echo [..] launching FreeUltraCode ...
+echo [..] launching UltraGameStudio ...
 start "" "%EXE%"
 echo [OK] launched an independent window. You can close this console.
 echo      (self-test tip: point the in-app workspace to a project COPY.)

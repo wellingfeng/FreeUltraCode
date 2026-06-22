@@ -6,7 +6,7 @@
  * run time — because a resumable workflow MUST produce the same sequence of
  * calls every run; a nondeterministic clock/RNG breaks the cache identity.
  *
- * OpenWorkflow interprets the IR node-by-node rather than running a JS sandbox,
+ * UltraGameStudio interprets the IR node-by-node rather than running a JS sandbox,
  * so we can't (and needn't) override globals. But the same hazard applies to our
  * content-addressed resume (runtime/node-hash.ts): if a `codeblock` node's body
  * calls `Date.now()`/`Math.random()`, its hash is stable yet its real output

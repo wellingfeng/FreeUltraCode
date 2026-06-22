@@ -1,0 +1,19 @@
+{
+  "name": "ugs-remote-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "UltraGameStudio Remote Runner - self-hosted cloud execution backend.",
+  "bin": {
+    "ugs-runner": "./src/server.mjs"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -74,9 +75,31 @@ export interface FilePreviewCustomContent {
   children: ReactNode;
 }
 
+export const FILE_PREVIEW_DRAWER_LAYOUT_EVENT =
+  'ugs:file-preview-drawer-layout';
+
+export interface FilePreviewDrawerLayoutDetail {
+  id: string;
+  open: boolean;
+  width: number;
+  expanded: boolean;
+}
+
 const FILE_PREVIEW_DEFAULT_WIDTH = 760;
 const FILE_PREVIEW_MIN_WIDTH = 360;
 const FILE_PREVIEW_MAX_WIDTH = 1280;
+
+function publishFilePreviewDrawerLayout(
+  detail: FilePreviewDrawerLayoutDetail,
+): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<FilePreviewDrawerLayoutDetail>(
+      FILE_PREVIEW_DRAWER_LAYOUT_EVENT,
+      { detail },
+    ),
+  );
+}
 
 function filePreviewMaxWidth(): number {
   if (typeof window === 'undefined') return FILE_PREVIEW_MAX_WIDTH;
@@ -396,25 +419,55 @@ export default function FilePreviewDrawer({
   refData,
   customContent = null,
   cwd,
+  previewFile = previewLocalFile,
+  diffEnabled = true,
+  canOpenExternally = true,
   onClose,
 }: {
   refData: FileRef | null;
   customContent?: FilePreviewCustomContent | null;
   cwd?: string;
+  previewFile?: typeof previewLocalFile;
+  diffEnabled?: boolean;
+  canOpenExternally?: boolean;
   onClose: () => void;
 }) {
+  const drawerId = useId();
   const [state, setState] = useState<PreviewState>({ status: 'idle' });
   const [diffState, setDiffState] = useState<DiffState>({ status: 'idle' });
   const [isExpanded, setIsExpanded] = useState(false);
   const asideRef = useRef<HTMLElement | null>(null);
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'freeultracode.filePreviewWidth.v1',
+    storageKey: 'ultragamestudio.filePreviewWidth.v1',
     defaultWidth: filePreviewDefaultWidth(),
     min: FILE_PREVIEW_MIN_WIDTH,
     max: filePreviewMaxWidth(),
     edge: 'left',
   });
   const open = Boolean(refData || customContent);
+
+  useEffect(() => {
+    publishFilePreviewDrawerLayout({
+      id: drawerId,
+      open,
+      width: open
+        ? Math.round(isExpanded ? window.innerWidth : width)
+        : 0,
+      expanded: open && isExpanded,
+    });
+  }, [drawerId, isExpanded, open, width]);
+
+  useEffect(
+    () => () => {
+      publishFilePreviewDrawerLayout({
+        id: drawerId,
+        open: false,
+        width: 0,
+        expanded: false,
+      });
+    },
+    [drawerId],
+  );
 
   useEffect(() => {
     if (!refData || customContent) {
@@ -425,7 +478,7 @@ export default function FilePreviewDrawer({
 
     let disposed = false;
     setState({ status: 'loading' });
-    void previewLocalFile(refData.path, { cwd })
+    void previewFile(refData.path, { cwd })
       .then((file) => {
         if (!disposed) setState({ status: 'ready', file });
       })
@@ -435,10 +488,10 @@ export default function FilePreviewDrawer({
     return () => {
       disposed = true;
     };
-  }, [customContent, cwd, refData]);
+  }, [customContent, cwd, previewFile, refData]);
 
   useEffect(() => {
-    if (!refData || !cwd || customContent) {
+    if (!refData || !cwd || customContent || !diffEnabled) {
       setDiffState({ status: 'idle' });
       return;
     }
@@ -455,7 +508,7 @@ export default function FilePreviewDrawer({
     return () => {
       disposed = true;
     };
-  }, [customContent, cwd, refData]);
+  }, [customContent, cwd, diffEnabled, refData]);
 
   useEffect(() => {
     if (!open) return;
@@ -556,7 +609,7 @@ export default function FilePreviewDrawer({
           >
             {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
-          {file && (
+          {file && canOpenExternally && (
             <button
               type="button"
               onClick={() => void openLocalPath(file.path)}

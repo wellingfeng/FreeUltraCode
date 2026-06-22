@@ -1,4 +1,8 @@
-import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+import {
+  readSettingsRaw,
+  type SettingsProfileOptions,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
 
 export type UiDesignChannelId =
   | 'figma'
@@ -49,7 +53,7 @@ export interface UiDesignChannelSettings {
 }
 
 export const UI_DESIGN_CHANNEL_STORAGE_KEY =
-  'freeultracode.uiDesignChannels.v1';
+  'ultragamestudio.uiDesignChannels.v1';
 const UI_DESIGN_CHANNEL_REL_PATH = 'settings/uiDesignChannels.v1.json';
 
 export const UI_DESIGN_CHANNELS: UiDesignChannelDefinition[] = [
@@ -186,7 +190,7 @@ const UI_DESIGN_CHANNEL_BY_ID = new Map<UiDesignChannelId, UiDesignChannelDefini
 );
 
 export const DEFAULT_UI_DESIGN_CHANNEL_SETTINGS: UiDesignChannelSettings = {
-  enabled: false,
+  enabled: true,
   preferredChannelId: 'figma',
   channelKeys: {},
   channelBaseUrls: {},
@@ -254,10 +258,7 @@ export function normalizeUiDesignChannelSettings(
     ? source.preferredChannelId
     : DEFAULT_UI_DESIGN_CHANNEL_SETTINGS.preferredChannelId;
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_UI_DESIGN_CHANNEL_SETTINGS.enabled,
+    enabled: true,
     preferredChannelId,
     channelKeys: cleanRecord(source.channelKeys, isUiDesignChannelId),
     channelBaseUrls: cleanRecord(source.channelBaseUrls, isUiDesignChannelId),
@@ -269,11 +270,14 @@ export function normalizeUiDesignChannelSettings(
   };
 }
 
-export function loadUiDesignChannelSettings(): UiDesignChannelSettings {
+export function loadUiDesignChannelSettings(
+  options: SettingsProfileOptions = {},
+): UiDesignChannelSettings {
   try {
     const raw = readSettingsRaw(
       UI_DESIGN_CHANNEL_REL_PATH,
       UI_DESIGN_CHANNEL_STORAGE_KEY,
+      options,
     );
     return normalizeUiDesignChannelSettings(raw ? JSON.parse(raw) : null);
   } catch {
@@ -283,19 +287,21 @@ export function loadUiDesignChannelSettings(): UiDesignChannelSettings {
 
 export function saveUiDesignChannelSettings(
   settings: UiDesignChannelSettings,
+  options: SettingsProfileOptions = {},
 ): void {
   const payload = JSON.stringify(normalizeUiDesignChannelSettings(settings));
   const ok = writeSettingsRaw(
     UI_DESIGN_CHANNEL_REL_PATH,
     UI_DESIGN_CHANNEL_STORAGE_KEY,
     payload,
+    options,
   );
   if (!ok) {
     console.error('[uiDesignChannels] failed to persist settings');
     return;
   }
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('fuc:ui-design-channel-settings-changed'));
+    window.dispatchEvent(new Event('ugs:ui-design-channel-settings-changed'));
   }
 }
 

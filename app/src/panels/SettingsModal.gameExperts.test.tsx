@@ -4,16 +4,52 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import SettingsModal from './SettingsModal';
 import { defaultBlueprint } from '@/core/defaultBlueprint';
 import { DEFAULT_GAME_EXPERT_SETTINGS } from '@/lib/gameExperts';
+import {
+  installSkillFromUrl,
+  isTauri,
+  skillInstallTargets,
+  tauriAvailable,
+  uninstallSkill,
+} from '@/lib/tauri';
 import { defaultComposer } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
+
+vi.mock('@/lib/tauri', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/tauri')>(
+    '@/lib/tauri',
+  );
+  return {
+    ...actual,
+    installSkillFromText: vi.fn(),
+    installSkillFromUrl: vi.fn(),
+    isTauri: vi.fn(() => false),
+    openExternal: vi.fn(),
+    skillInstallTargets: vi.fn(async () => []),
+    tauriAvailable: vi.fn(() => false),
+    uninstallSkill: vi.fn(),
+  };
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
 
-async function renderSettingsModal(): Promise<{
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
+async function renderSettingsModal(tauri = false): Promise<{
   container: HTMLDivElement;
   cleanup: () => Promise<void>;
 }> {
+  vi.mocked(tauriAvailable).mockReturnValue(tauri);
+  vi.mocked(isTauri).mockReturnValue(tauri);
+  if (!tauri) {
+    vi.mocked(skillInstallTargets).mockResolvedValue([]);
+  }
   useStore.setState({
     locale: 'zh-CN',
     workflow: defaultBlueprint('Current workflow'),
@@ -82,16 +118,20 @@ afterEach(() => {
 });
 
 describe('SettingsModal game feature navigation', () => {
-  it('does not show project-scoped game feature tabs in global settings', async () => {
-    const view = await renderSettingsModal();
+  it('shows migrated game channel tabs in global settings', async () => {
+    const view = await renderSettingsModal(true);
 
     try {
       const tabText = Array.from(
         view.container.querySelectorAll('nav [role="tab"]'),
       ).map((tab) => tab.textContent?.trim());
 
-      expect(tabText).not.toContain('Mesh 渠道');
-      expect(tabText).not.toContain('骨骼绑定');
+      expect(tabText).toContain('Mesh 渠道');
+      expect(tabText).toContain('在线模型库');
+      expect(tabText).toContain('Sprite');
+      expect(tabText).toContain('UI 渠道');
+      expect(tabText).toContain('绑定渠道');
+      expect(tabText).toContain('抓帧性能');
       expect(tabText).not.toContain('游戏专家');
       expect(
         Array.from(view.container.querySelectorAll('button')).some(
@@ -103,13 +143,111 @@ describe('SettingsModal game feature navigation', () => {
     }
   });
 
-  it('shows image-to-game in the global commands tab', async () => {
+  it('installs capture/performance skills to a global target', async () => {
+    vi.mocked(tauriAvailable).mockReturnValue(true);
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(skillInstallTargets).mockResolvedValue([
+      {
+        id: 'project-codex',
+        label: 'Codex 项目 Skill',
+        path: 'E:\\UltraGameStudio\\.codex\\skills',
+        exists: true,
+        skillCount: 1,
+        skills: ['renderdoc-gpu-debug'],
+        isDefault: true,
+        scope: 'project',
+      },
+      {
+        id: 'global-codex',
+        label: 'Codex 全局 Skill',
+        path: 'C:\\Users\\FW\\.codex\\skills',
+        exists: true,
+        skillCount: 1,
+        skills: ['renderdoc-gpu-debug'],
+        isDefault: false,
+        scope: 'global',
+      },
+    ]);
+    vi.mocked(installSkillFromUrl).mockResolvedValue({
+      name: 'renderdoc-gpu-debug',
+      slug: 'renderdoc-gpu-debug',
+      targetId: 'global-codex',
+      path: 'C:\\Users\\FW\\.codex\\skills\\renderdoc-gpu-debug',
+      skillFile: 'C:\\Users\\FW\\.codex\\skills\\renderdoc-gpu-debug\\SKILL.md',
+      sourceUrl: 'https://github.com/rudybear/renderdoc-skill',
+      overwritten: true,
+    });
+    vi.mocked(uninstallSkill).mockResolvedValue({
+      targetId: 'global-codex',
+      slug: 'renderdoc-gpu-debug',
+      path: 'C:\\Users\\FW\\.codex\\skills\\renderdoc-gpu-debug',
+      removed: true,
+    });
+
+    const view = await renderSettingsModal(true);
+
+    try {
+      await clickButtonByText(view.container, '抓帧性能');
+      await settle();
+
+      expect(view.container.textContent).toContain('Codex 全局 Skill');
+      expect(view.container.textContent).toContain('RenderDoc GPU Debug');
+      expect(view.container.textContent).toContain('v0.2.0');
+
+      const updateButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '更新');
+      expect(updateButton).toBeInstanceOf(HTMLButtonElement);
+      await act(async () => {
+        updateButton?.click();
+      });
+      await settle();
+
+      expect(installSkillFromUrl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          slug: 'renderdoc-gpu-debug',
+          targetId: 'global-codex',
+          overwrite: true,
+          projectRoot: null,
+        }),
+      );
+
+      const uninstallButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((button) => button.textContent?.trim() === '卸载');
+      expect(uninstallButton).toBeInstanceOf(HTMLButtonElement);
+      await act(async () => {
+        uninstallButton?.click();
+      });
+      await settle();
+
+      expect(uninstallSkill).toHaveBeenCalledWith({
+        targetId: 'global-codex',
+        slug: 'renderdoc-gpu-debug',
+        projectRoot: null,
+      });
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows app and game commands in the global commands tab', async () => {
     const view = await renderSettingsModal();
 
     try {
       await clickButtonByText(view.container, '命令');
 
+      const commandNames = Array.from(view.container.querySelectorAll('code')).map(
+        (item) => item.textContent?.trim(),
+      );
+      expect(commandNames).toContain('/music');
+      expect(commandNames).toContain('/game');
       expect(view.container.textContent).toContain('/image-to-game');
+      expect(commandNames.filter((name) => name === '/image-to-game')).toHaveLength(1);
+      expect(commandNames).toContain('/mesh-mode-start');
+      expect(commandNames).toContain('/sprite');
+      expect(commandNames).toContain('/blueprint-mode-start');
+      expect(commandNames).toContain('/ui-mode-start');
       expect(view.container.textContent).toContain('图像驱动游戏开发');
       expect(view.container.textContent).toContain(
         '从参考图、截图、文章链接或画面描述反推游戏方案、技术拆解和素材生成链路',
@@ -134,7 +272,7 @@ describe('SettingsModal game feature navigation', () => {
       await pasteInput(input!, 'r8_test_video_key');
 
       const saved = JSON.parse(
-        window.localStorage.getItem('freeultracode.videoGeneration.v1') ?? '{}',
+        window.localStorage.getItem('ultragamestudio.videoGeneration.v1') ?? '{}',
       );
       expect(saved.providerKeys['replicate-video']).toBe('r8_test_video_key');
     } finally {
@@ -164,7 +302,7 @@ describe('SettingsModal game feature navigation', () => {
       expect(keyInput!.value).toBe('key_test_video');
 
       const saved = JSON.parse(
-        window.localStorage.getItem('freeultracode.videoGeneration.v1') ?? '{}',
+        window.localStorage.getItem('ultragamestudio.videoGeneration.v1') ?? '{}',
       );
       expect(saved.providerBaseUrls.runway).toBe('https://video.example.test/v1');
       expect(saved.providerKeys.runway).toBe('key_test_video');
@@ -212,7 +350,7 @@ describe('SettingsModal game feature navigation', () => {
       await pasteInput(input!, 'xi_test_speech_key');
 
       const saved = JSON.parse(
-        window.localStorage.getItem('freeultracode.speechGeneration.v1') ?? '{}',
+        window.localStorage.getItem('ultragamestudio.speechGeneration.v1') ?? '{}',
       );
       expect(saved.providerKeys.elevenlabs).toBe('xi_test_speech_key');
     } finally {
@@ -242,7 +380,7 @@ describe('SettingsModal game feature navigation', () => {
       expect(keyInput!.value).toBe('xi_test_speech');
 
       const saved = JSON.parse(
-        window.localStorage.getItem('freeultracode.speechGeneration.v1') ?? '{}',
+        window.localStorage.getItem('ultragamestudio.speechGeneration.v1') ?? '{}',
       );
       expect(saved.providerBaseUrls.elevenlabs).toBe(
         'https://speech.example.test/v1',

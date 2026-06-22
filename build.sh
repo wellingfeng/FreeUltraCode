@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FreeUltraCode (Build Installer) — macOS/Linux counterpart to build.bat.
+# UltraGameStudio (Build Installer) — macOS/Linux counterpart to build.bat.
 # Mirrors build.bat: check prerequisites -> install deps -> tauri build ->
 # print output paths -> open the output folder.
 #
@@ -22,7 +22,7 @@ pause() { printf 'Press Enter to continue...'; read -r _ || true; }
 cd "$APP_DIR"
 
 echo "============================================================"
-echo "  FreeUltraCode  -  Package Installer  (tauri build)"
+echo "  UltraGameStudio  -  Package Installer  (tauri build)"
 echo "============================================================"
 echo
 
@@ -90,10 +90,10 @@ if [ -d "$BUNDLE_DIR/macos" ]; then
     find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -print 2>/dev/null \
         | sed 's/^/    - /'
 fi
-[ -f "$REL_DIR/FreeUltraCode" ] && \
-    echo "  Standalone binary: $REL_DIR/FreeUltraCode"
+[ -f "$REL_DIR/UltraGameStudio" ] && \
+    echo "  Standalone binary: $REL_DIR/UltraGameStudio"
 echo "------------------------------------------------------------"
-echo "  - On macOS: open the .dmg, drag FreeUltraCode into Applications."
+echo "  - On macOS: open the .dmg, drag UltraGameStudio into Applications."
 echo "  - On Linux: install the .deb (sudo dpkg -i …) or run the .AppImage."
 echo "------------------------------------------------------------"
 

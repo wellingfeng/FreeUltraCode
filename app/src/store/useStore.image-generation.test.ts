@@ -7,7 +7,7 @@ import {
 } from '@/lib/imageGeneration';
 import { useStore } from './useStore';
 
-const IMAGE_SETTINGS_KEY = 'freeultracode.imageGeneration.v1';
+const IMAGE_SETTINGS_KEY = 'ultragamestudio.imageGeneration.v1';
 
 function cloneGraph(graph: IRGraph): IRGraph {
   return JSON.parse(JSON.stringify(graph)) as IRGraph;

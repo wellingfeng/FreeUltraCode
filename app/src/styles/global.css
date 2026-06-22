@@ -4,47 +4,47 @@
 
 :root {
   /* Default primitive tokens. Style presets override these on html. */
-  --fuc-color-bg: #0d1117;
-  --fuc-color-bg-alt: #161b22;
-  --fuc-color-panel: #1c2128;
-  --fuc-color-panel-2: #21262d;
-  --fuc-color-border: #30363d;
-  --fuc-color-border-soft: #262c34;
-  --fuc-color-text: #e6edf3;
-  --fuc-color-text-muted: #9da7b3;
-  --fuc-color-text-faint: #6e7681;
-  --fuc-color-accent: #7c8cff;
-  --fuc-color-accent-2: #37c2a8;
-  --fuc-color-accent-3: #e3a008;
-  --fuc-color-accent-4: #f778ba;
-  --fuc-status-ai-edit: #4da3ff;
-  --fuc-status-ai-edit-contrast: #071421;
-  --fuc-status-running: #e3a008;
-  --fuc-status-running-contrast: #1a1300;
-  --fuc-status-success: #37c2a8;
-  --fuc-status-success-contrast: #06231d;
-  --fuc-status-error: #f778ba;
-  --fuc-status-error-contrast: #2a0a1a;
-  --fuc-status-interrupted: #d995a6;
-  --fuc-status-interrupted-contrast: #2a0a1a;
-  --fuc-font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  --fuc-mono-font-family: 'JetBrains Mono', ui-monospace, monospace;
-  --fuc-font-size: 16px;
+  --ugs-color-bg: #0d1117;
+  --ugs-color-bg-alt: #161b22;
+  --ugs-color-panel: #1c2128;
+  --ugs-color-panel-2: #21262d;
+  --ugs-color-border: #30363d;
+  --ugs-color-border-soft: #262c34;
+  --ugs-color-text: #e6edf3;
+  --ugs-color-text-muted: #9da7b3;
+  --ugs-color-text-faint: #6e7681;
+  --ugs-color-accent: #7c8cff;
+  --ugs-color-accent-2: #37c2a8;
+  --ugs-color-accent-3: #e3a008;
+  --ugs-color-accent-4: #f778ba;
+  --ugs-status-ai-edit: #4da3ff;
+  --ugs-status-ai-edit-contrast: #071421;
+  --ugs-status-running: #e3a008;
+  --ugs-status-running-contrast: #1a1300;
+  --ugs-status-success: #37c2a8;
+  --ugs-status-success-contrast: #06231d;
+  --ugs-status-error: #f778ba;
+  --ugs-status-error-contrast: #2a0a1a;
+  --ugs-status-interrupted: #d995a6;
+  --ugs-status-interrupted-contrast: #2a0a1a;
+  --ugs-font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --ugs-mono-font-family: 'JetBrains Mono', ui-monospace, monospace;
+  --ugs-font-size: 16px;
 
   /* Semantic tokens consumed by Tailwind and component styles. */
-  --bg: var(--fuc-color-bg);
-  --bg-alt: var(--fuc-color-bg-alt);
-  --panel: var(--fuc-color-panel);
-  --panel-2: var(--fuc-color-panel-2);
-  --border: var(--fuc-color-border);
-  --border-soft: var(--fuc-color-border-soft);
-  --fg: var(--fuc-color-text);
-  --fg-dim: var(--fuc-color-text-muted);
-  --fg-faint: var(--fuc-color-text-faint);
-  --accent: var(--fuc-color-accent);
-  --accent-2: var(--fuc-color-accent-2);
-  --accent-3: var(--fuc-color-accent-3);
-  --accent-4: var(--fuc-color-accent-4);
+  --bg: var(--ugs-color-bg);
+  --bg-alt: var(--ugs-color-bg-alt);
+  --panel: var(--ugs-color-panel);
+  --panel-2: var(--ugs-color-panel-2);
+  --border: var(--ugs-color-border);
+  --border-soft: var(--ugs-color-border-soft);
+  --fg: var(--ugs-color-text);
+  --fg-dim: var(--ugs-color-text-muted);
+  --fg-faint: var(--ugs-color-text-faint);
+  --accent: var(--ugs-color-accent);
+  --accent-2: var(--ugs-color-accent-2);
+  --accent-3: var(--ugs-color-accent-3);
+  --accent-4: var(--ugs-color-accent-4);
   --file-preview-link: color-mix(in oklab, var(--accent-2) 82%, var(--fg) 18%);
   --file-preview-link-hover: color-mix(in oklab, var(--accent-2) 64%, var(--fg) 36%);
   --file-preview-link-bg: color-mix(in oklab, var(--accent-2) 12%, transparent);
@@ -54,25 +54,25 @@
     var(--file-preview-link) 62%,
     transparent
   );
-  --status-ai-edit: var(--fuc-status-ai-edit);
-  --status-ai-edit-contrast: var(--fuc-status-ai-edit-contrast);
+  --status-ai-edit: var(--ugs-status-ai-edit);
+  --status-ai-edit-contrast: var(--ugs-status-ai-edit-contrast);
   --status-ai-edit-border: #2c6fb3;
-  --status-running: var(--fuc-status-running);
-  --status-running-contrast: var(--fuc-status-running-contrast);
-  --status-success: var(--fuc-status-success);
-  --status-success-contrast: var(--fuc-status-success-contrast);
+  --status-running: var(--ugs-status-running);
+  --status-running-contrast: var(--ugs-status-running-contrast);
+  --status-success: var(--ugs-status-success);
+  --status-success-contrast: var(--ugs-status-success-contrast);
   --status-success-border: var(--status-success);
-  --status-error: var(--fuc-status-error);
-  --status-error-contrast: var(--fuc-status-error-contrast);
+  --status-error: var(--ugs-status-error);
+  --status-error-contrast: var(--ugs-status-error-contrast);
   --status-error-border: var(--status-error);
-  --status-interrupted: var(--fuc-status-interrupted);
-  --status-interrupted-contrast: var(--fuc-status-interrupted-contrast);
+  --status-interrupted: var(--ugs-status-interrupted);
+  --status-interrupted-contrast: var(--ugs-status-interrupted-contrast);
   --status-interrupted-border: #9b6a05;
   --status-running-track: var(--border);
-  --fuc-status-slot-size: 20px;
-  --fuc-status-indicator-size: 14px;
-  --fuc-status-spinner-ring: 2px;
-  --fuc-composer-chat-border: color-mix(
+  --ugs-status-slot-size: 20px;
+  --ugs-status-indicator-size: 14px;
+  --ugs-status-spinner-ring: 2px;
+  --ugs-composer-chat-border: color-mix(
     in oklab,
     var(--border) 68%,
     var(--fg-faint)
@@ -122,116 +122,116 @@
   color-scheme: dark;
 }
 
-html[data-fuc-style='pencil'],
-html.fuc-style-pencil {
+html[data-ugs-style='pencil'],
+html.ugs-style-pencil {
   color-scheme: dark;
-  --fuc-color-bg: #0d1117;
-  --fuc-color-bg-alt: #161b22;
-  --fuc-color-panel: #1c2128;
-  --fuc-color-panel-2: #21262d;
-  --fuc-color-border: #30363d;
-  --fuc-color-border-soft: #262c34;
-  --fuc-color-text: #e6edf3;
-  --fuc-color-text-muted: #9da7b3;
-  --fuc-color-text-faint: #6e7681;
-  --fuc-color-accent: #7c8cff;
-  --fuc-color-accent-2: #37c2a8;
-  --fuc-color-accent-3: #e3a008;
-  --fuc-color-accent-4: #f778ba;
-  --fuc-status-ai-edit: #4da3ff;
-  --fuc-status-ai-edit-contrast: #071421;
-  --fuc-status-running: #e3a008;
-  --fuc-status-running-contrast: #1a1300;
-  --fuc-status-success: #37c2a8;
-  --fuc-status-success-contrast: #06231d;
-  --fuc-status-error: #f778ba;
-  --fuc-status-error-contrast: #2a0a1a;
-  --fuc-status-interrupted: #d995a6;
-  --fuc-status-interrupted-contrast: #2a0a1a;
+  --ugs-color-bg: #0d1117;
+  --ugs-color-bg-alt: #161b22;
+  --ugs-color-panel: #1c2128;
+  --ugs-color-panel-2: #21262d;
+  --ugs-color-border: #30363d;
+  --ugs-color-border-soft: #262c34;
+  --ugs-color-text: #e6edf3;
+  --ugs-color-text-muted: #9da7b3;
+  --ugs-color-text-faint: #6e7681;
+  --ugs-color-accent: #7c8cff;
+  --ugs-color-accent-2: #37c2a8;
+  --ugs-color-accent-3: #e3a008;
+  --ugs-color-accent-4: #f778ba;
+  --ugs-status-ai-edit: #4da3ff;
+  --ugs-status-ai-edit-contrast: #071421;
+  --ugs-status-running: #e3a008;
+  --ugs-status-running-contrast: #1a1300;
+  --ugs-status-success: #37c2a8;
+  --ugs-status-success-contrast: #06231d;
+  --ugs-status-error: #f778ba;
+  --ugs-status-error-contrast: #2a0a1a;
+  --ugs-status-interrupted: #d995a6;
+  --ugs-status-interrupted-contrast: #2a0a1a;
 }
 
-html[data-fuc-style='midnight'],
-html.fuc-style-midnight {
+html[data-ugs-style='midnight'],
+html.ugs-style-midnight {
   color-scheme: dark;
-  --fuc-color-bg: #0b0e1a;
-  --fuc-color-bg-alt: #11152a;
-  --fuc-color-panel: #171c38;
-  --fuc-color-panel-2: #1f2547;
-  --fuc-color-border: #2e3563;
-  --fuc-color-border-soft: #222845;
-  --fuc-color-text: #eef1fb;
-  --fuc-color-text-muted: #a7aecb;
-  --fuc-color-text-faint: #6e7699;
-  --fuc-color-accent: #7c6cff;
-  --fuc-color-accent-2: #2dd4d4;
-  --fuc-color-accent-3: #f5b73c;
-  --fuc-color-accent-4: #f062c8;
-  --fuc-status-ai-edit: #4d8dff;
-  --fuc-status-ai-edit-contrast: #04122b;
-  --fuc-status-running: #f0a52a;
-  --fuc-status-running-contrast: #2a1a00;
-  --fuc-status-success: #23c08a;
-  --fuc-status-success-contrast: #03200f;
-  --fuc-status-error: #ff5c7a;
-  --fuc-status-error-contrast: #2c0710;
-  --fuc-status-interrupted: #6b7194;
-  --fuc-status-interrupted-contrast: #0a0d18;
+  --ugs-color-bg: #0b0e1a;
+  --ugs-color-bg-alt: #11152a;
+  --ugs-color-panel: #171c38;
+  --ugs-color-panel-2: #1f2547;
+  --ugs-color-border: #2e3563;
+  --ugs-color-border-soft: #222845;
+  --ugs-color-text: #eef1fb;
+  --ugs-color-text-muted: #a7aecb;
+  --ugs-color-text-faint: #6e7699;
+  --ugs-color-accent: #7c6cff;
+  --ugs-color-accent-2: #2dd4d4;
+  --ugs-color-accent-3: #f5b73c;
+  --ugs-color-accent-4: #f062c8;
+  --ugs-status-ai-edit: #4d8dff;
+  --ugs-status-ai-edit-contrast: #04122b;
+  --ugs-status-running: #f0a52a;
+  --ugs-status-running-contrast: #2a1a00;
+  --ugs-status-success: #23c08a;
+  --ugs-status-success-contrast: #03200f;
+  --ugs-status-error: #ff5c7a;
+  --ugs-status-error-contrast: #2c0710;
+  --ugs-status-interrupted: #6b7194;
+  --ugs-status-interrupted-contrast: #0a0d18;
 }
 
-html[data-fuc-style='aurora'],
-html.fuc-style-aurora {
+html[data-ugs-style='aurora'],
+html.ugs-style-aurora {
   color-scheme: dark;
-  --fuc-color-bg: #2e3440;
-  --fuc-color-bg-alt: #323846;
-  --fuc-color-panel: #3b4252;
-  --fuc-color-panel-2: #434c5e;
-  --fuc-color-border: #4c566a;
-  --fuc-color-border-soft: #3b4252;
-  --fuc-color-text: #eceff4;
-  --fuc-color-text-muted: #c5cddb;
-  --fuc-color-text-faint: #8a93a6;
-  --fuc-color-accent: #88c0d0;
-  --fuc-color-accent-2: #a3be8c;
-  --fuc-color-accent-3: #ebcb8b;
-  --fuc-color-accent-4: #b48ead;
-  --fuc-status-ai-edit: #81a1c1;
-  --fuc-status-ai-edit-contrast: #1c2128;
-  --fuc-status-running: #ebcb8b;
-  --fuc-status-running-contrast: #2e3440;
-  --fuc-status-success: #a3be8c;
-  --fuc-status-success-contrast: #2e3440;
-  --fuc-status-error: #bf616a;
-  --fuc-status-error-contrast: #fdf2f3;
-  --fuc-status-interrupted: #6b7080;
-  --fuc-status-interrupted-contrast: #1c2026;
+  --ugs-color-bg: #2e3440;
+  --ugs-color-bg-alt: #323846;
+  --ugs-color-panel: #3b4252;
+  --ugs-color-panel-2: #434c5e;
+  --ugs-color-border: #4c566a;
+  --ugs-color-border-soft: #3b4252;
+  --ugs-color-text: #eceff4;
+  --ugs-color-text-muted: #c5cddb;
+  --ugs-color-text-faint: #8a93a6;
+  --ugs-color-accent: #88c0d0;
+  --ugs-color-accent-2: #a3be8c;
+  --ugs-color-accent-3: #ebcb8b;
+  --ugs-color-accent-4: #b48ead;
+  --ugs-status-ai-edit: #81a1c1;
+  --ugs-status-ai-edit-contrast: #1c2128;
+  --ugs-status-running: #ebcb8b;
+  --ugs-status-running-contrast: #2e3440;
+  --ugs-status-success: #a3be8c;
+  --ugs-status-success-contrast: #2e3440;
+  --ugs-status-error: #bf616a;
+  --ugs-status-error-contrast: #fdf2f3;
+  --ugs-status-interrupted: #6b7080;
+  --ugs-status-interrupted-contrast: #1c2026;
 }
 
-html[data-fuc-style='daylight'],
-html.fuc-style-daylight {
+html[data-ugs-style='daylight'],
+html.ugs-style-daylight {
   color-scheme: light;
-  --fuc-color-bg: #f6f7f9;
-  --fuc-color-bg-alt: #eceef2;
-  --fuc-color-panel: #ffffff;
-  --fuc-color-panel-2: #f2f4f7;
-  --fuc-color-border: #d3d8e0;
-  --fuc-color-border-soft: #e5e8ee;
-  --fuc-color-text: #11151c;
-  --fuc-color-text-muted: #566072;
-  --fuc-color-text-faint: #828b9b;
-  --fuc-color-accent: #2f6fed;
-  --fuc-color-accent-2: #13a07a;
-  --fuc-color-accent-3: #d98a07;
-  --fuc-color-accent-4: #d6489b;
-  --fuc-status-ai-edit: #2f6fed;
-  --fuc-status-ai-edit-contrast: #ffffff;
-  --fuc-status-running: #e08a00;
-  --fuc-status-running-contrast: #2a1a00;
-  --fuc-status-success: #13a07a;
-  --fuc-status-success-contrast: #ffffff;
-  --fuc-status-error: #df3b4e;
-  --fuc-status-error-contrast: #ffffff;
-  --fuc-status-interrupted: #9aa3b2;
-  --fuc-status-interrupted-contrast: #1a1f28;
+  --ugs-color-bg: #f6f7f9;
+  --ugs-color-bg-alt: #eceef2;
+  --ugs-color-panel: #ffffff;
+  --ugs-color-panel-2: #f2f4f7;
+  --ugs-color-border: #d3d8e0;
+  --ugs-color-border-soft: #e5e8ee;
+  --ugs-color-text: #11151c;
+  --ugs-color-text-muted: #566072;
+  --ugs-color-text-faint: #828b9b;
+  --ugs-color-accent: #2f6fed;
+  --ugs-color-accent-2: #13a07a;
+  --ugs-color-accent-3: #d98a07;
+  --ugs-color-accent-4: #d6489b;
+  --ugs-status-ai-edit: #2f6fed;
+  --ugs-status-ai-edit-contrast: #ffffff;
+  --ugs-status-running: #e08a00;
+  --ugs-status-running-contrast: #2a1a00;
+  --ugs-status-success: #13a07a;
+  --ugs-status-success-contrast: #ffffff;
+  --ugs-status-error: #df3b4e;
+  --ugs-status-error-contrast: #ffffff;
+  --ugs-status-interrupted: #9aa3b2;
+  --ugs-status-interrupted-contrast: #1a1f28;
 
   /* Canvas redesign — light-mode polarity flip (white lip, soft slate shadow,
      weak glow) so the glass/neon system degrades to flat depth on white. */
@@ -256,151 +256,151 @@ html.fuc-style-daylight {
     transparent 0%,
     rgba(15, 23, 42, 0.05) 100%
   );
-  --fuc-composer-chat-border: color-mix(
+  --ugs-composer-chat-border: color-mix(
     in oklab,
     var(--border) 76%,
     var(--panel)
   );
 }
 
-html[data-fuc-style='ember'],
-html.fuc-style-ember {
+html[data-ugs-style='ember'],
+html.ugs-style-ember {
   color-scheme: dark;
-  --fuc-color-bg: #1a1411;
-  --fuc-color-bg-alt: #221a15;
-  --fuc-color-panel: #2b211a;
-  --fuc-color-panel-2: #352920;
-  --fuc-color-border: #473628;
-  --fuc-color-border-soft: #352a20;
-  --fuc-color-text: #f5e9dc;
-  --fuc-color-text-muted: #c2a890;
-  --fuc-color-text-faint: #8c7461;
-  --fuc-color-accent: #ff8c42;
-  --fuc-color-accent-2: #3fb8a8;
-  --fuc-color-accent-3: #f0b429;
-  --fuc-color-accent-4: #e06b8b;
-  --fuc-status-ai-edit: #5b9bd5;
-  --fuc-status-ai-edit-contrast: #0c1620;
-  --fuc-status-running: #f0a830;
-  --fuc-status-running-contrast: #241803;
-  --fuc-status-success: #3fb8a8;
-  --fuc-status-success-contrast: #06201c;
-  --fuc-status-error: #e0566b;
-  --fuc-status-error-contrast: #2a0810;
-  --fuc-status-interrupted: #8c7461;
-  --fuc-status-interrupted-contrast: #1c1510;
+  --ugs-color-bg: #1a1411;
+  --ugs-color-bg-alt: #221a15;
+  --ugs-color-panel: #2b211a;
+  --ugs-color-panel-2: #352920;
+  --ugs-color-border: #473628;
+  --ugs-color-border-soft: #352a20;
+  --ugs-color-text: #f5e9dc;
+  --ugs-color-text-muted: #c2a890;
+  --ugs-color-text-faint: #8c7461;
+  --ugs-color-accent: #ff8c42;
+  --ugs-color-accent-2: #3fb8a8;
+  --ugs-color-accent-3: #f0b429;
+  --ugs-color-accent-4: #e06b8b;
+  --ugs-status-ai-edit: #5b9bd5;
+  --ugs-status-ai-edit-contrast: #0c1620;
+  --ugs-status-running: #f0a830;
+  --ugs-status-running-contrast: #241803;
+  --ugs-status-success: #3fb8a8;
+  --ugs-status-success-contrast: #06201c;
+  --ugs-status-error: #e0566b;
+  --ugs-status-error-contrast: #2a0810;
+  --ugs-status-interrupted: #8c7461;
+  --ugs-status-interrupted-contrast: #1c1510;
 }
 
-html[data-fuc-style='campbell'],
-html.fuc-style-campbell {
+html[data-ugs-style='campbell'],
+html.ugs-style-campbell {
   color-scheme: dark;
-  --fuc-color-bg: #0c0c0c;
-  --fuc-color-bg-alt: #111111;
-  --fuc-color-panel: #1a1a1a;
-  --fuc-color-panel-2: #242424;
-  --fuc-color-border: #3a3a3a;
-  --fuc-color-border-soft: #2a2a2a;
-  --fuc-color-text: #f2f2f2;
-  --fuc-color-text-muted: #cccccc;
-  --fuc-color-text-faint: #767676;
-  --fuc-color-accent: #3b78ff;
-  --fuc-color-accent-2: #16c60c;
-  --fuc-color-accent-3: #f9f1a5;
-  --fuc-color-accent-4: #b4009e;
-  --fuc-status-ai-edit: #3b78ff;
-  --fuc-status-ai-edit-contrast: #05080d;
-  --fuc-status-running: #f9f1a5;
-  --fuc-status-running-contrast: #1a1700;
-  --fuc-status-success: #16c60c;
-  --fuc-status-success-contrast: #031a02;
-  --fuc-status-error: #e74856;
-  --fuc-status-error-contrast: #260407;
-  --fuc-status-interrupted: #767676;
-  --fuc-status-interrupted-contrast: #050505;
+  --ugs-color-bg: #0c0c0c;
+  --ugs-color-bg-alt: #111111;
+  --ugs-color-panel: #1a1a1a;
+  --ugs-color-panel-2: #242424;
+  --ugs-color-border: #3a3a3a;
+  --ugs-color-border-soft: #2a2a2a;
+  --ugs-color-text: #f2f2f2;
+  --ugs-color-text-muted: #cccccc;
+  --ugs-color-text-faint: #767676;
+  --ugs-color-accent: #3b78ff;
+  --ugs-color-accent-2: #16c60c;
+  --ugs-color-accent-3: #f9f1a5;
+  --ugs-color-accent-4: #b4009e;
+  --ugs-status-ai-edit: #3b78ff;
+  --ugs-status-ai-edit-contrast: #05080d;
+  --ugs-status-running: #f9f1a5;
+  --ugs-status-running-contrast: #1a1700;
+  --ugs-status-success: #16c60c;
+  --ugs-status-success-contrast: #031a02;
+  --ugs-status-error: #e74856;
+  --ugs-status-error-contrast: #260407;
+  --ugs-status-interrupted: #767676;
+  --ugs-status-interrupted-contrast: #050505;
 }
 
-html[data-fuc-style='campbell-powershell'],
-html.fuc-style-campbell-powershell {
+html[data-ugs-style='campbell-powershell'],
+html.ugs-style-campbell-powershell {
   color-scheme: dark;
-  --fuc-color-bg: #012456;
-  --fuc-color-bg-alt: #082448;
-  --fuc-color-panel: #0b2f61;
-  --fuc-color-panel-2: #123a70;
-  --fuc-color-border: #1c4a86;
-  --fuc-color-border-soft: #123a70;
-  --fuc-color-text: #ffffff;
-  --fuc-color-text-muted: #d7e8ff;
-  --fuc-color-text-faint: #84a8d6;
-  --fuc-color-accent: #79c0ff;
-  --fuc-color-accent-2: #61d6d6;
-  --fuc-color-accent-3: #f9f1a5;
-  --fuc-color-accent-4: #d2a8ff;
-  --fuc-status-ai-edit: #79c0ff;
-  --fuc-status-ai-edit-contrast: #031224;
-  --fuc-status-running: #f9f1a5;
-  --fuc-status-running-contrast: #1a1700;
-  --fuc-status-success: #6ee787;
-  --fuc-status-success-contrast: #03210f;
-  --fuc-status-error: #ff9da4;
-  --fuc-status-error-contrast: #2a0509;
-  --fuc-status-interrupted: #84a8d6;
-  --fuc-status-interrupted-contrast: #061529;
+  --ugs-color-bg: #012456;
+  --ugs-color-bg-alt: #082448;
+  --ugs-color-panel: #0b2f61;
+  --ugs-color-panel-2: #123a70;
+  --ugs-color-border: #1c4a86;
+  --ugs-color-border-soft: #123a70;
+  --ugs-color-text: #ffffff;
+  --ugs-color-text-muted: #d7e8ff;
+  --ugs-color-text-faint: #84a8d6;
+  --ugs-color-accent: #79c0ff;
+  --ugs-color-accent-2: #61d6d6;
+  --ugs-color-accent-3: #f9f1a5;
+  --ugs-color-accent-4: #d2a8ff;
+  --ugs-status-ai-edit: #79c0ff;
+  --ugs-status-ai-edit-contrast: #031224;
+  --ugs-status-running: #f9f1a5;
+  --ugs-status-running-contrast: #1a1700;
+  --ugs-status-success: #6ee787;
+  --ugs-status-success-contrast: #03210f;
+  --ugs-status-error: #ff9da4;
+  --ugs-status-error-contrast: #2a0509;
+  --ugs-status-interrupted: #84a8d6;
+  --ugs-status-interrupted-contrast: #061529;
 }
 
-html[data-fuc-style='one-half-dark'],
-html.fuc-style-one-half-dark {
+html[data-ugs-style='one-half-dark'],
+html.ugs-style-one-half-dark {
   color-scheme: dark;
-  --fuc-color-bg: #282c34;
-  --fuc-color-bg-alt: #23272f;
-  --fuc-color-panel: #2d323c;
-  --fuc-color-panel-2: #343b48;
-  --fuc-color-border: #3a404d;
-  --fuc-color-border-soft: #313744;
-  --fuc-color-text: #f5f7fb;
-  --fuc-color-text-muted: #dcdfe4;
-  --fuc-color-text-faint: #8b94a7;
-  --fuc-color-accent: #61afef;
-  --fuc-color-accent-2: #98c379;
-  --fuc-color-accent-3: #e5c07b;
-  --fuc-color-accent-4: #c678dd;
-  --fuc-status-ai-edit: #61afef;
-  --fuc-status-ai-edit-contrast: #071421;
-  --fuc-status-running: #e5c07b;
-  --fuc-status-running-contrast: #241803;
-  --fuc-status-success: #98c379;
-  --fuc-status-success-contrast: #0b1d08;
-  --fuc-status-error: #e06c75;
-  --fuc-status-error-contrast: #2a090b;
-  --fuc-status-interrupted: #8b94a7;
-  --fuc-status-interrupted-contrast: #0b0e12;
+  --ugs-color-bg: #282c34;
+  --ugs-color-bg-alt: #23272f;
+  --ugs-color-panel: #2d323c;
+  --ugs-color-panel-2: #343b48;
+  --ugs-color-border: #3a404d;
+  --ugs-color-border-soft: #313744;
+  --ugs-color-text: #f5f7fb;
+  --ugs-color-text-muted: #dcdfe4;
+  --ugs-color-text-faint: #8b94a7;
+  --ugs-color-accent: #61afef;
+  --ugs-color-accent-2: #98c379;
+  --ugs-color-accent-3: #e5c07b;
+  --ugs-color-accent-4: #c678dd;
+  --ugs-status-ai-edit: #61afef;
+  --ugs-status-ai-edit-contrast: #071421;
+  --ugs-status-running: #e5c07b;
+  --ugs-status-running-contrast: #241803;
+  --ugs-status-success: #98c379;
+  --ugs-status-success-contrast: #0b1d08;
+  --ugs-status-error: #e06c75;
+  --ugs-status-error-contrast: #2a090b;
+  --ugs-status-interrupted: #8b94a7;
+  --ugs-status-interrupted-contrast: #0b0e12;
 }
 
-html[data-fuc-style='solarized-dark'],
-html.fuc-style-solarized-dark {
+html[data-ugs-style='solarized-dark'],
+html.ugs-style-solarized-dark {
   color-scheme: dark;
-  --fuc-color-bg: #002b36;
-  --fuc-color-bg-alt: #073642;
-  --fuc-color-panel: #0d404d;
-  --fuc-color-panel-2: #144b57;
-  --fuc-color-border: #1d5965;
-  --fuc-color-border-soft: #144b57;
-  --fuc-color-text: #d6e2e4;
-  --fuc-color-text-muted: #93a1a1;
-  --fuc-color-text-faint: #657b83;
-  --fuc-color-accent: #268bd2;
-  --fuc-color-accent-2: #2aa198;
-  --fuc-color-accent-3: #b58900;
-  --fuc-color-accent-4: #d33682;
-  --fuc-status-ai-edit: #268bd2;
-  --fuc-status-ai-edit-contrast: #00121a;
-  --fuc-status-running: #b58900;
-  --fuc-status-running-contrast: #1f1700;
-  --fuc-status-success: #859900;
-  --fuc-status-success-contrast: #111600;
-  --fuc-status-error: #dc322f;
-  --fuc-status-error-contrast: #260605;
-  --fuc-status-interrupted: #657b83;
-  --fuc-status-interrupted-contrast: #00131a;
+  --ugs-color-bg: #002b36;
+  --ugs-color-bg-alt: #073642;
+  --ugs-color-panel: #0d404d;
+  --ugs-color-panel-2: #144b57;
+  --ugs-color-border: #1d5965;
+  --ugs-color-border-soft: #144b57;
+  --ugs-color-text: #d6e2e4;
+  --ugs-color-text-muted: #93a1a1;
+  --ugs-color-text-faint: #657b83;
+  --ugs-color-accent: #268bd2;
+  --ugs-color-accent-2: #2aa198;
+  --ugs-color-accent-3: #b58900;
+  --ugs-color-accent-4: #d33682;
+  --ugs-status-ai-edit: #268bd2;
+  --ugs-status-ai-edit-contrast: #00121a;
+  --ugs-status-running: #b58900;
+  --ugs-status-running-contrast: #1f1700;
+  --ugs-status-success: #859900;
+  --ugs-status-success-contrast: #111600;
+  --ugs-status-error: #dc322f;
+  --ugs-status-error-contrast: #260605;
+  --ugs-status-interrupted: #657b83;
+  --ugs-status-interrupted-contrast: #00131a;
 }
 
 * {
@@ -415,13 +415,13 @@ body,
 }
 
 html {
-  font-size: var(--fuc-font-size);
+  font-size: var(--ugs-font-size);
 }
 
 body {
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--fuc-font-family);
+  font-family: var(--ugs-font-family);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -429,7 +429,7 @@ body {
 code,
 pre,
 .mono {
-  font-family: var(--fuc-mono-font-family);
+  font-family: var(--ugs-mono-font-family);
 }
 
 /* Scrollbar */
@@ -449,98 +449,98 @@ pre,
   background: var(--fg-faint);
 }
 
-.fuc-ai-input,
-.fuc-ai-input-card {
+.ugs-ai-input,
+.ugs-ai-input-card {
   background: color-mix(in oklab, var(--bg) 74%, transparent);
   border-color: var(--border);
   backdrop-filter: blur(10px);
 }
 
-.fuc-ai-input-toolbar {
+.ugs-ai-input-toolbar {
   background: color-mix(in oklab, var(--bg) 42%, transparent);
   backdrop-filter: blur(8px);
 }
 
-.fuc-ai-input--chat {
+.ugs-ai-input--chat {
   background: color-mix(in oklab, var(--panel-2) 70%, var(--bg));
-  border-color: var(--fuc-composer-chat-border);
+  border-color: var(--ugs-composer-chat-border);
 }
 
-.fuc-ai-input--drop {
+.ugs-ai-input--drop {
   background: color-mix(in oklab, var(--accent) 5%, var(--bg));
   border-color: var(--accent);
 }
 
 /* Sticky image-generation mode: tint the composer with the data accent so it
    reads as a different surface than the default AI-coding input. */
-.fuc-ai-input--image {
+.ugs-ai-input--image {
   background: color-mix(in oklab, var(--accent-2) 9%, var(--bg));
   border-color: color-mix(in oklab, var(--accent-2) 55%, var(--border));
 }
 
-.fuc-ai-input--image:focus-within {
+.ugs-ai-input--image:focus-within {
   border-color: var(--accent-2);
 }
 
-.fuc-ai-input--music {
+.ugs-ai-input--music {
   background: color-mix(in oklab, var(--accent-3) 8%, var(--bg));
   border-color: color-mix(in oklab, var(--accent-3) 50%, var(--border));
 }
 
-.fuc-ai-input--music:focus-within {
+.ugs-ai-input--music:focus-within {
   border-color: var(--accent-3);
 }
 
-.fuc-ai-input--three-d {
+.ugs-ai-input--three-d {
   background: color-mix(in oklab, var(--accent) 7%, var(--bg));
   border-color: color-mix(in oklab, var(--accent) 48%, var(--border));
 }
 
-.fuc-ai-input--three-d:focus-within {
+.ugs-ai-input--three-d:focus-within {
   border-color: var(--accent);
 }
 
-.fuc-ai-input--video {
+.ugs-ai-input--video {
   background: color-mix(in oklab, var(--accent-2) 7%, var(--bg));
   border-color: color-mix(in oklab, var(--accent-2) 48%, var(--border));
 }
 
-.fuc-ai-input--video:focus-within {
+.ugs-ai-input--video:focus-within {
   border-color: var(--accent-2);
 }
 
-.fuc-ai-input--sprite {
+.ugs-ai-input--sprite {
   background: color-mix(in oklab, var(--status-running) 8%, var(--bg));
   border-color: color-mix(in oklab, var(--status-running) 48%, var(--border));
 }
 
-.fuc-ai-input--sprite:focus-within {
+.ugs-ai-input--sprite:focus-within {
   border-color: var(--status-running);
 }
 
-.fuc-ai-input--speech {
+.ugs-ai-input--speech {
   background: color-mix(in oklab, var(--accent) 7%, var(--bg));
   border-color: color-mix(in oklab, var(--accent) 48%, var(--border));
 }
 
-.fuc-ai-input--speech:focus-within {
+.ugs-ai-input--speech:focus-within {
   border-color: var(--accent);
 }
 
-.fuc-ai-input--blueprint {
+.ugs-ai-input--blueprint {
   background: color-mix(in oklab, var(--status-success) 7%, var(--bg));
   border-color: color-mix(in oklab, var(--status-success) 50%, var(--border));
 }
 
-.fuc-ai-input--blueprint:focus-within {
+.ugs-ai-input--blueprint:focus-within {
   border-color: var(--status-success);
 }
 
-.fuc-ai-input:focus {
+.ugs-ai-input:focus {
   border-color: var(--accent);
 }
 
-.fuc-stream-nav {
+.ugs-stream-nav {
   background: color-mix(
     in oklab,
     var(--stream-surface-control-bg) 28%,
@@ -550,8 +550,8 @@ pre,
   transform: translateY(-50%) translateX(4px);
   transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
 }
-.fuc-stream-nav:hover,
-.fuc-stream-nav:focus-within {
+.ugs-stream-nav:hover,
+.ugs-stream-nav:focus-within {
   background: color-mix(
     in oklab,
     var(--stream-surface-control-bg) 72%,
@@ -560,7 +560,7 @@ pre,
   opacity: 1;
   transform: translateY(-50%) translateX(0);
 }
-.fuc-stream-nav-button {
+.ugs-stream-nav-button {
   border: 1px solid var(--stream-surface-border);
   background: color-mix(
     in oklab,
@@ -570,8 +570,8 @@ pre,
   box-shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(8px);
 }
-.fuc-stream-nav-button:hover,
-.fuc-stream-nav-button:focus-visible {
+.ugs-stream-nav-button:hover,
+.ugs-stream-nav-button:focus-visible {
   border-color: color-mix(
     in oklab,
     var(--stream-link) 50%,
@@ -583,7 +583,7 @@ pre,
     var(--stream-link) 8%
   );
 }
-.fuc-stream-nav-button:disabled {
+.ugs-stream-nav-button:disabled {
   background: color-mix(
     in oklab,
     var(--stream-surface-control-bg) 36%,
@@ -592,7 +592,7 @@ pre,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fuc-stream-nav {
+  .ugs-stream-nav {
     transition: none;
   }
 }
@@ -602,12 +602,12 @@ pre,
     animation: none !important;
   }
 
-  .fuc-status-spinner {
+  .ugs-status-spinner {
     animation: none !important;
   }
 }
 
-@keyframes fuc-status-spin {
+@keyframes ugs-status-spin {
   to {
     transform: rotate(360deg);
   }
@@ -634,36 +634,36 @@ pre,
   }
 }
 
-.fuc-status-slot {
+.ugs-status-slot {
   contain: layout paint;
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: var(--fuc-status-slot-size);
-  min-width: var(--fuc-status-slot-size);
-  height: var(--fuc-status-slot-size);
+  width: var(--ugs-status-slot-size);
+  min-width: var(--ugs-status-slot-size);
+  height: var(--ugs-status-slot-size);
   line-height: 0;
   pointer-events: none;
 }
 
-.fuc-status-indicator {
+.ugs-status-indicator {
   box-sizing: border-box;
   display: block;
   flex: none;
-  width: var(--fuc-status-indicator-size);
-  height: var(--fuc-status-indicator-size);
+  width: var(--ugs-status-indicator-size);
+  height: var(--ugs-status-indicator-size);
   border: 0;
   border-radius: 9999px;
-  background: var(--fuc-status-color, transparent);
+  background: var(--ugs-status-color, transparent);
 }
 
-.fuc-status-spinner {
+.ugs-status-spinner {
   background: transparent;
-  border: var(--fuc-status-spinner-ring) solid var(--status-running-track);
-  border-right-color: var(--fuc-status-color, var(--status-running));
-  border-top-color: var(--fuc-status-color, var(--status-running));
-  animation: fuc-status-spin 900ms linear infinite;
+  border: var(--ugs-status-spinner-ring) solid var(--status-running-track);
+  border-right-color: var(--ugs-status-color, var(--status-running));
+  border-top-color: var(--ugs-status-color, var(--status-running));
+  animation: ugs-status-spin 900ms linear infinite;
 }
 
 /* React Flow dark theme overrides */
@@ -704,38 +704,38 @@ pre,
 }
 
 /* ── Canvas redesign: node card hover + pins + relayout transition ─────────── */
-.fuc-card {
+.ugs-card {
   will-change: transform;
 }
-.react-flow__node:hover .fuc-card:not(.fuc-card-selected) {
+.react-flow__node:hover .ugs-card:not(.ugs-card-selected) {
   box-shadow: var(--node-shadow-hover);
   border-color: color-mix(
     in oklab,
-    var(--fuc-node-accent, var(--accent)) 50%,
+    var(--ugs-node-accent, var(--accent)) 50%,
     var(--node-border)
   );
 }
 
 /* Pins — enlarge hit zone + glow on hover, pulse the active drop target. */
-.react-flow__handle.fuc-pin-exec::before,
-.react-flow__handle.fuc-pin-data::before {
+.react-flow__handle.ugs-pin-exec::before,
+.react-flow__handle.ugs-pin-data::before {
   content: '';
   position: absolute;
   inset: -8px;
   border-radius: 9999px;
 }
-.react-flow__handle.fuc-pin-exec:hover {
+.react-flow__handle.ugs-pin-exec:hover {
   transform: scale(1.18);
   filter: drop-shadow(0 0 6px var(--pin-glow-exec));
 }
-.react-flow__handle.fuc-pin-data:hover {
+.react-flow__handle.ugs-pin-data:hover {
   transform: scale(1.25);
   box-shadow: 0 0 0 2px var(--pin-data), 0 0 8px var(--pin-glow-data);
 }
 .react-flow__handle.connectingto {
-  animation: fuc-pin-pulse 900ms ease-in-out infinite;
+  animation: ugs-pin-pulse 900ms ease-in-out infinite;
 }
-@keyframes fuc-pin-pulse {
+@keyframes ugs-pin-pulse {
   0%,
   100% {
     transform: scale(1.1);
@@ -884,8 +884,8 @@ pre,
   --stream-tool-meta: var(--fg-faint);
 }
 
-html[data-fuc-stream-scheme='campbell'],
-html.fuc-stream-scheme-campbell {
+html[data-ugs-stream-scheme='campbell'],
+html.ugs-stream-scheme-campbell {
   --hl-comment: #767676;
   --hl-keyword: #e74856;
   --hl-string: #16c60c;
@@ -940,8 +940,8 @@ html.fuc-stream-scheme-campbell {
   --stream-tool-meta: #8a8a8a;
 }
 
-html[data-fuc-stream-scheme='campbell-powershell'],
-html.fuc-stream-scheme-campbell-powershell {
+html[data-ugs-stream-scheme='campbell-powershell'],
+html.ugs-stream-scheme-campbell-powershell {
   --hl-comment: #84a8d6;
   --hl-keyword: #ff9da4;
   --hl-string: #6ee787;
@@ -996,8 +996,8 @@ html.fuc-stream-scheme-campbell-powershell {
   --stream-tool-meta: #9bbde8;
 }
 
-html[data-fuc-stream-scheme='one-half-dark'],
-html.fuc-stream-scheme-one-half-dark {
+html[data-ugs-stream-scheme='one-half-dark'],
+html.ugs-stream-scheme-one-half-dark {
   --hl-comment: #5a6374;
   --hl-keyword: #e06c75;
   --hl-string: #98c379;
@@ -1052,8 +1052,8 @@ html.fuc-stream-scheme-one-half-dark {
   --stream-tool-meta: #8b94a7;
 }
 
-html[data-fuc-stream-scheme='solarized-dark'],
-html.fuc-stream-scheme-solarized-dark {
+html[data-ugs-stream-scheme='solarized-dark'],
+html.ugs-stream-scheme-solarized-dark {
   --hl-comment: #586e75;
   --hl-keyword: #dc322f;
   --hl-string: #859900;
@@ -1110,28 +1110,28 @@ html.fuc-stream-scheme-solarized-dark {
 
 /* AI return surface. Imported terminal schemes tint the full message pane,
    while the adaptive "current" scheme stays transparent over the UI theme. */
-.fuc-ai-return-pane,
-.fuc-ai-return-stream {
+.ugs-ai-return-pane,
+.ugs-ai-return-stream {
   background: var(--stream-surface-bg);
   color: var(--stream-fg);
 }
-.fuc-ai-return-header {
+.ugs-ai-return-header {
   border-color: var(--stream-surface-border);
   background: var(--stream-surface-header-bg);
 }
-.fuc-ai-return-search {
+.ugs-ai-return-search {
   border-color: var(--stream-surface-border);
   background: var(--stream-surface-popover-bg);
 }
-.fuc-ai-return-search-input {
+.ugs-ai-return-search-input {
   border-color: var(--stream-surface-border);
   background: var(--stream-surface-input-bg);
 }
-.fuc-ai-return-search-button {
+.ugs-ai-return-search-button {
   border-color: var(--stream-surface-border);
   background: var(--stream-surface-control-bg);
 }
-.fuc-ai-return-empty {
+.ugs-ai-return-empty {
   color: var(--stream-fg-muted);
 }
 
@@ -1319,7 +1319,7 @@ html.fuc-stream-scheme-solarized-dark {
 .ai-code__scroll code {
   display: block;
   padding: 0.75rem 0.9rem;
-  font-family: var(--fuc-mono-font-family);
+  font-family: var(--ugs-mono-font-family);
   white-space: pre;
   tab-size: 2;
 }
@@ -1372,7 +1372,7 @@ html.fuc-stream-scheme-solarized-dark {
 }
 .ai-file-preview-diff__code {
   min-width: max-content;
-  font-family: var(--fuc-mono-font-family);
+  font-family: var(--ugs-mono-font-family);
   font-size: 0.78rem;
   line-height: 1.45;
   tab-size: 2;

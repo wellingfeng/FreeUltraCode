@@ -452,18 +452,18 @@ export function applyAppearance(settings: AppearanceSettings): void {
   const fontFamily = FONT_FAMILIES[fontFamilyId];
   const root = document.documentElement;
 
-  root.dataset.fucStyle = stylePresetId;
-  root.dataset.fucStreamScheme = streamSchemeId;
-  root.dataset.fucFontFamily = fontFamilyId;
-  root.dataset.fucFontSize = String(fontSizePx);
-  root.style.setProperty('--fuc-font-family', fontFamily.cssFamily);
-  root.style.setProperty('--fuc-font-size', `${fontSizePx}px`);
+  root.dataset.ugsStyle = stylePresetId;
+  root.dataset.ugsStreamScheme = streamSchemeId;
+  root.dataset.ugsFontFamily = fontFamilyId;
+  root.dataset.ugsFontSize = String(fontSizePx);
+  root.style.setProperty('--ugs-font-family', fontFamily.cssFamily);
+  root.style.setProperty('--ugs-font-size', `${fontSizePx}px`);
   for (const presetId of BUILTIN_STYLE_PRESETS) {
-    root.classList.toggle(`fuc-style-${presetId}`, presetId === stylePresetId);
+    root.classList.toggle(`ugs-style-${presetId}`, presetId === stylePresetId);
   }
   for (const schemeId of BUILTIN_STREAM_SCHEMES) {
     root.classList.toggle(
-      `fuc-stream-scheme-${schemeId}`,
+      `ugs-stream-scheme-${schemeId}`,
       schemeId === streamSchemeId,
     );
   }

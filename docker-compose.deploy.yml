@@ -1,0 +1,19 @@
+# 服务器部署用（仓库根作为 build context，固定IP+HTTP 测试）。
+# 用法（在仓库根）：
+#   docker compose -f docker-compose.deploy.yml up -d --build
+services:
+  ugs-runner:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: ugs-remote-runner:latest
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    env_file:
+      - backend/.env.deploy
+    volumes:
+      - ugs-runner-data:/data
+
+volumes:
+  ugs-runner-data:

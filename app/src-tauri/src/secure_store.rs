@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-const SERVICE_NAME: &str = "FreeUltraCode";
+const SERVICE_NAME: &str = "UltraGameStudio";
 const MAX_SECRET_KEY_LEN: usize = 160;
 
 fn normalize_secret_key(key: &str) -> Result<String, String> {

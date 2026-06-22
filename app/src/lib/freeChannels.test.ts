@@ -112,7 +112,7 @@ describe('applyFreeChannelEnvKeys', () => {
     const onChanged = () => {
       events += 1;
     };
-    window.addEventListener('fuc:gateway-config-changed', onChanged);
+    window.addEventListener('ugs:gateway-config-changed', onChanged);
 
     try {
       const imported = applyFreeChannelEnvKeys({
@@ -123,7 +123,7 @@ describe('applyFreeChannelEnvKeys', () => {
       expect([...imported].sort()).toEqual(['groq', 'open_router'].sort());
       expect(events).toBe(1);
     } finally {
-      window.removeEventListener('fuc:gateway-config-changed', onChanged);
+      window.removeEventListener('ugs:gateway-config-changed', onChanged);
     }
   });
 });
@@ -143,7 +143,7 @@ describe('legacy free channel storage recovery', () => {
     expect(getFreeChannelKey('open_router')).toBe('legacy-openrouter');
     expect(
       JSON.parse(
-        window.localStorage.getItem('fuc_free_channel_keys_v1') ?? '{}',
+        window.localStorage.getItem('ugs_free_channel_keys_v1') ?? '{}',
       ),
     ).toMatchObject({
       groq: 'legacy-groq',
@@ -172,7 +172,7 @@ describe('free channel change broadcasts', () => {
     const onChanged = () => {
       events += 1;
     };
-    window.addEventListener('fuc:gateway-config-changed', onChanged);
+    window.addEventListener('ugs:gateway-config-changed', onChanged);
 
     try {
       expect(setFreeChannelKey('groq', 'sk-test-123')).toBe(true);
@@ -182,7 +182,7 @@ describe('free channel change broadcasts', () => {
 
       expect(events).toBe(2);
     } finally {
-      window.removeEventListener('fuc:gateway-config-changed', onChanged);
+      window.removeEventListener('ugs:gateway-config-changed', onChanged);
     }
   });
 });
@@ -334,14 +334,14 @@ describe('channel catalog', () => {
 
 describe('freeChannelGatewayProviders', () => {
   it('drops cached proxy ports outside the free proxy range', () => {
-    window.localStorage.setItem('fuc_free_proxy_port_v1', String(8766 - 1));
+    window.localStorage.setItem('ugs_free_proxy_port_v1', String(8766 - 1));
 
     expect(getCachedFreeProxyPort()).toBe(8766);
-    expect(window.localStorage.getItem('fuc_free_proxy_port_v1')).toBeNull();
+    expect(window.localStorage.getItem('ugs_free_proxy_port_v1')).toBeNull();
   });
 
   it('builds a CLI claude-code provider per channel pointed at the local proxy', () => {
-    window.localStorage.setItem('fuc_free_proxy_token_v1', 'local-token-123');
+    window.localStorage.setItem('ugs_free_proxy_token_v1', 'local-token-123');
     const providers = freeChannelGatewayProviders();
     expect(providers).toHaveLength(FREE_CHANNELS.length);
     for (const provider of providers) {

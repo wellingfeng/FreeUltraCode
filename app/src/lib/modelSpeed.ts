@@ -50,7 +50,7 @@ interface StoredSpeed {
 
 type StoredSpeedMap = Record<string, StoredSpeed>;
 
-const STORAGE_KEY = 'fuc_model_speed_v1';
+const STORAGE_KEY = 'ugs_model_speed_v1';
 const EWMA_ALPHA = 0.35;
 const FAST_MS = 90_000;
 const SLOW_MS = 210_000;
@@ -281,9 +281,18 @@ export function effectiveGenerationConsensusPlan(
 ): GenerationConsensusPlan {
   const profile = modelSpeedProfile(selection);
   const configured = Math.max(
-    2,
-    Math.min(5, Math.floor(configuredCandidates) || 2),
+    1,
+    Math.min(5, Math.floor(configuredCandidates) || 1),
   );
+  if (configured <= 1) {
+    return {
+      enabled: false,
+      count: 1,
+      concurrency: 1,
+      tier: profile.tier,
+      reason: '生成期多候选未开启',
+    };
+  }
   if (profile.tier !== 'fast') {
     return {
       enabled: false,

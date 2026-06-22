@@ -155,7 +155,7 @@ describe('3D generation settings and routing', () => {
       providerModels: { 'local-hunyuan3d': ' Hunyuan3D-2.5 ' },
       providerBaseUrls: { 'local-hunyuan3d': ' http://127.0.0.1:8083/generate ' },
     });
-    expect(settings.enabled).toBe(false);
+    expect(settings.enabled).toBe(true);
     expect(settings.preferredProviderId).toBe('local-hunyuan3d');
     expect(settings.providerKeys.meshy).toBe('token');
     expect(settings.providerModels['local-hunyuan3d']).toBe('Hunyuan3D-2.5');

@@ -39,10 +39,24 @@ export function isAbsoluteFileRefPath(path: string): boolean {
   return /^(?:[A-Za-z]:[/\\]|[/\\]|\\\\|~[/\\]|\$\w+[/\\])/.test(path.trim());
 }
 
+/**
+ * A workspace root that is not a real local filesystem path — e.g. the synthetic
+ * `remote://<id>` path of a cloud workspace (see REMOTE_WORKSPACE_PREFIX). Such a
+ * root has no local files to resolve against, so joining a relative chip path
+ * onto it produces a meaningless, un-openable string like
+ * `remote://rw_0ab2d791/a/app/src.rs` and (because the join also normalizes path
+ * separators) corrupts non-path text such as a regex `[\s\S]` into `[s/S]`.
+ */
+function isOpaqueWorkspaceRoot(root: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(root.trim());
+}
+
 export function displayFileRefPath(ref: FileRef, cwd?: string): string {
   const path = ref.path.trim();
   const root = cwd?.trim().replace(/[\\/]+$/, '') ?? '';
-  if (!path || !root || isAbsoluteFileRefPath(path)) return ref.path;
+  if (!path || !root || isAbsoluteFileRefPath(path) || isOpaqueWorkspaceRoot(root)) {
+    return ref.path;
+  }
 
   const separator = root.includes('\\') ? '\\' : '/';
   const relative = path.replace(/^\.[/\\]+/, '');

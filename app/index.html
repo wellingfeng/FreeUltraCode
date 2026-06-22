@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/icon-256.png" />
-    <title>FreeUltraCode</title>
+    <title>UltraGameStudio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -20,22 +20,23 @@
         const supported = new Set([fallback]);
         try {
           const raw =
+            localStorage.getItem('ultragamestudio.appearance.v1') ??
             localStorage.getItem('freeultracode.appearance.v1') ??
-            localStorage.getItem('openworkflow.appearance.v1');
+            localStorage.getItem('ultragamestudio.appearance.v1');
           const parsed = raw ? JSON.parse(raw) : null;
           const storedId =
             parsed && typeof parsed.stylePresetId === 'string'
               ? parsed.stylePresetId
               : fallback;
           const id = supported.has(storedId) ? storedId : fallback;
-          document.documentElement.dataset.fucStyle = id;
+          document.documentElement.dataset.ugsStyle = id;
           document.documentElement.classList.toggle(
-            'fuc-style-pencil',
+            'ugs-style-pencil',
             id === 'pencil',
           );
         } catch {
-          document.documentElement.dataset.fucStyle = fallback;
-          document.documentElement.classList.add('fuc-style-pencil');
+          document.documentElement.dataset.ugsStyle = fallback;
+          document.documentElement.classList.add('ugs-style-pencil');
         }
       })();
     </script>

@@ -46,7 +46,7 @@ export function parseRunFailure(err: unknown): RunFailure {
       raw,
       cli: timeout[1],
       timeoutSeconds: seconds,
-      message: `CLI "${timeout[1]}" 超过 ${seconds}s 未完成，已终止。可通过 FREEULTRACODE_AI_CLI_TIMEOUT_SECS 调整上限。`,
+      message: `CLI "${timeout[1]}" 超过 ${seconds}s 未完成，已终止。可通过 ULTRAGAMESTUDIO_AI_CLI_TIMEOUT_SECS 调整上限。`,
     };
   }
 
@@ -59,7 +59,7 @@ export function parseRunFailure(err: unknown): RunFailure {
       raw,
       cli: idleTimeout[1],
       idleTimeoutSeconds: seconds,
-      message: `CLI "${idleTimeout[1]}" 超过 ${seconds}s 没有新的输出或结果文件更新，已终止。可通过 FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS 调整。`,
+      message: `CLI "${idleTimeout[1]}" 超过 ${seconds}s 没有新的输出或结果文件更新，已终止。可通过 ULTRAGAMESTUDIO_AI_CLI_IDLE_TIMEOUT_SECS 调整。`,
     };
   }
 

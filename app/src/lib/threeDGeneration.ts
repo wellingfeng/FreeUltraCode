@@ -1,5 +1,6 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
@@ -162,7 +163,7 @@ export interface ThreeDAutoRiggingSettings {
   providerModels: Partial<Record<ThreeDRiggingProviderId, string>>;
 }
 
-const STORAGE_KEY = 'freeultracode.threeDGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.threeDGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/threeDGeneration.v1.json';
 
 export type ThreeDCommonAnimationId =
@@ -616,7 +617,7 @@ const THREE_D_RIGGING_PROVIDER_BY_ID = new Map<
 >(THREE_D_RIGGING_PROVIDERS.map((provider) => [provider.id, provider]));
 
 export const DEFAULT_THREE_D_AUTO_RIGGING_SETTINGS: ThreeDAutoRiggingSettings = {
-  enabled: false,
+  enabled: true,
   preferredProviderId: 'fal-meshy-rigging',
   fallbackProviderIds: ['meshy-rigging-api', 'local-rigging-server'],
   providerKeys: {},
@@ -1107,7 +1108,7 @@ const THREE_D_PROVIDER_BY_ID = new Map<BuiltInThreeDProviderId, ThreeDProviderDe
 );
 
 export const DEFAULT_THREE_D_GENERATION_SETTINGS: ThreeDGenerationSettings = {
-  enabled: false,
+  enabled: true,
   preferredProviderId: 'meshy',
   customProviders: [],
   providerKeys: {},
@@ -1284,10 +1285,7 @@ export function normalizeThreeDGenerationSettings(
   const validKey = (key: unknown): key is ThreeDProviderId =>
     isKnownThreeDProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_THREE_D_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     customProviders,
     providerKeys: cleanRecord(source.providerKeys, validKey),
@@ -1311,10 +1309,7 @@ export function normalizeThreeDAutoRiggingSettings(
     ? source.fallbackProviderIds.filter(isThreeDRiggingProviderId)
     : DEFAULT_THREE_D_AUTO_RIGGING_SETTINGS.fallbackProviderIds;
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_THREE_D_AUTO_RIGGING_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     fallbackProviderIds: uniqueRiggingProviderIds(fallbackProviderIds),
     providerKeys: cleanRecord(source.providerKeys, isThreeDRiggingProviderId),
@@ -1324,23 +1319,28 @@ export function normalizeThreeDAutoRiggingSettings(
   };
 }
 
-export function loadThreeDGenerationSettings(): ThreeDGenerationSettings {
+export function loadThreeDGenerationSettings(
+  options: SettingsProfileOptions = {},
+): ThreeDGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeThreeDGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_THREE_D_GENERATION_SETTINGS;
   }
 }
 
-export function saveThreeDGenerationSettings(settings: ThreeDGenerationSettings): boolean {
+export function saveThreeDGenerationSettings(
+  settings: ThreeDGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeThreeDGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[threeDGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:three-d-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:three-d-generation-settings-changed'));
   return true;
 }
 
@@ -1598,7 +1598,6 @@ export async function generateThreeD(
   request: ThreeDGenerationRequest,
   settings = loadThreeDGenerationSettings(),
 ): Promise<ThreeDGenerationResult> {
-  if (!settings.enabled) throw new Error('THREE_D_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyThreeDProviderId(settings);
   if (!providerId) throw new Error('NO_READY_THREE_D_PROVIDER');
   if (!threeDProviderReady(providerId, settings)) {
@@ -1673,15 +1672,6 @@ async function maybeAutoRigThreeDAssets(
   signal?: AbortSignal,
 ): Promise<ThreeDAutoRiggingResult | null> {
   if (!rigging.enabled) return null;
-  if (!settings.rigging.enabled) {
-    return {
-      providerId: settings.rigging.preferredProviderId,
-      providerLabel: threeDRiggingProviderById(settings.rigging.preferredProviderId).label,
-      status: 'skipped',
-      assets: [],
-      reason: '自动绑骨设置已关闭。',
-    };
-  }
   const providerIds = uniqueRiggingProviderIds([
     settings.rigging.preferredProviderId,
     ...settings.rigging.fallbackProviderIds,

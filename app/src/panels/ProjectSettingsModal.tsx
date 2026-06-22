@@ -8,16 +8,11 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  Activity,
-  ArrowRight,
-  Bone,
   Box,
   Boxes,
   Check,
   Copy,
   Download,
-  Eye,
-  EyeOff,
   ExternalLink,
   FileText,
   Folder,
@@ -26,13 +21,11 @@ import {
   Gamepad2,
   Info,
   Languages,
-  Palette,
   Plus,
   RefreshCw,
   Rocket,
   Search,
   Settings as SettingsIcon,
-  SlashSquare,
   SlidersHorizontal,
   Terminal,
   Trash2,
@@ -41,8 +34,15 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import RemoteWorkspaceDialog from '@/components/RemoteWorkspaceDialog';
 import { cn } from '@/lib/cn';
 import { basename, pickFolder } from '@/lib/folderPicker';
+import {
+  getRemoteWorkspace,
+  isRemoteWorkspacePath,
+  remoteWorkspaceIdFromPath,
+  type RemoteWorkspaceConfig,
+} from '@/lib/remoteWorkspace';
 import { uniqueWorkspaceHistory, workspacePathKey } from '@/lib/workspaceHistory';
 import {
   dedupeFolders,
@@ -58,21 +58,6 @@ import {
   type ProjectSettings,
 } from '@/lib/projectSettings';
 import {
-  UI_DESIGN_CHANNELS,
-  loadUiDesignChannelSettings,
-  saveUiDesignChannelSettings,
-  uiDesignChannelBaseUrl,
-  uiDesignChannelById,
-  uiDesignChannelCategoryLabel,
-  uiDesignChannelCommand,
-  uiDesignChannelExportFormat,
-  uiDesignChannelReady,
-  type UiDesignChannelCategory,
-  type UiDesignChannelDefinition,
-  type UiDesignChannelId,
-  type UiDesignChannelSettings,
-} from '@/lib/uiDesignChannels';
-import {
   fallbackLanguageScanForEngine,
   installCommandText,
   lspServerById,
@@ -86,11 +71,7 @@ import {
   type RankedLspServerDefinition,
 } from '@/lib/lspCatalog';
 import {
-  GAME_PROJECT_COMMAND_NAMES,
-  buildGameSkillSuggestions,
-  isGameProjectCommandName,
   slashText,
-  type SlashSuggestion,
 } from '@/lib/slashCommands';
 import {
   mcpCategoryLabel,
@@ -101,29 +82,6 @@ import {
   type RankedMcpServerDefinition,
 } from '@/lib/mcpCatalog';
 import {
-  loadThreeDGenerationSettings,
-  saveThreeDGenerationSettings,
-} from '@/lib/threeDGeneration';
-import {
-  loadSpriteGenerationSettings,
-  saveSpriteGenerationSettings,
-} from '@/lib/spriteGeneration';
-import {
-  MESH_LIBRARY_CATEGORY_LABELS,
-  createCustomMeshLibraryId,
-  meshLibraryCategoryLabel,
-  meshLibraries,
-  loadMeshLibrarySettings,
-  meshLibraryReady,
-  meshLibraryUsability,
-  meshLibraryUsable,
-  saveMeshLibrarySettings,
-  type CustomMeshLibraryDefinition,
-  type MeshLibraryAccountSettings,
-  type MeshLibraryDefinition,
-  type MeshLibraryId,
-} from '@/lib/meshLibrary';
-import {
   COCOS_MCP_SERVER_ID,
   GODOT_MCP_SERVER_ID,
   blueprintModeInstall,
@@ -133,8 +91,6 @@ import {
   cocosMcpSetupProject,
   godotMcpSetupProject,
   installProjectLspServer,
-  installSkillFromText,
-  installSkillFromUrl,
   openExternal,
   openLocalPath,
   probeProjectLspServer,
@@ -149,7 +105,6 @@ import {
   skillInstallTargets,
   slashCatalog,
   onSlashCatalogUpdated,
-  uninstallSkill,
   type ProjectEnvironmentScan,
   type ProjectLspInstallResult,
   type ProjectLspProbeResult,
@@ -163,11 +118,6 @@ import {
   type UnityMcpSetupResult,
   type UeMcpSetupResult,
 } from '@/lib/tauri';
-import {
-  CAPTURE_PERF_SKILLS,
-  capturePerfCategoryLabel,
-  type CapturePerfSkillDefinition,
-} from '@/lib/capturePerfSkills';
 import { historyStore } from '@/store/history/store';
 import type { WorkspaceRecord, WorkspaceSummary } from '@/store/history/types';
 import { useStore } from '@/store/useStore';
@@ -368,22 +318,9 @@ import {
   shouldTranslatePluginDescription,
   translatePluginDescriptionCached,
 } from '@/lib/pluginStoreTranslation';
-import {
-  ThreeDGenerationSettingsPanel,
-  SpriteGenerationSettingsPanel,
-  RiggingSettingsPanel,
-} from '@/panels/SettingsModal';
-
 type ProjectSettingsTab =
   | 'overview'
-  | 'mesh'
-  | 'sprite'
-  | 'uiDesign'
-  | 'meshLibrary'
-  | 'rigging'
-  | 'capturePerf'
   | 'blueprint'
-  | 'commands'
   | 'mcp'
   | 'lsp'
   | 'skills'
@@ -391,14 +328,7 @@ type ProjectSettingsTab =
 
 const tabs: { id: ProjectSettingsTab; label: string; Icon: LucideIcon }[] = [
   { id: 'overview', label: '概览', Icon: Info },
-  { id: 'mesh', label: 'Mesh 渠道', Icon: Box },
-  { id: 'meshLibrary', label: '在线模型库', Icon: Boxes },
-  { id: 'sprite', label: 'Sprite', Icon: Boxes },
-  { id: 'uiDesign', label: 'UI 渠道', Icon: Palette },
-  { id: 'rigging', label: '绑定渠道', Icon: Bone },
-  { id: 'capturePerf', label: '抓帧/性能', Icon: Activity },
   { id: 'blueprint', label: '蓝图', Icon: FileText },
-  { id: 'commands', label: '命令', Icon: SlashSquare },
   { id: 'automation', label: '权限/自动化', Icon: SlidersHorizontal },
 ];
 
@@ -447,150 +377,6 @@ function formatTime(ms: number | null | undefined, locale: Locale): string {
     minute: '2-digit',
   });
 }
-
-function syncProjectGameFeaturesToRuntime(settings: ProjectSettings): void {
-  const currentThreeD = loadThreeDGenerationSettings();
-  saveThreeDGenerationSettings({
-    ...currentThreeD,
-    enabled: settings.gameFeatures.meshGeneration,
-    rigging: {
-      ...currentThreeD.rigging,
-      enabled: settings.gameFeatures.rigging,
-    },
-  });
-
-  useStore.getState().setGameExpertSettings({
-    enabled: settings.gameFeatures.gameExperts,
-    engine: settings.gameFeatures.gameExpertEngine,
-  });
-}
-
-function syncProjectSpriteToRuntime(settings: ProjectSettings): void {
-  const currentSprite = loadSpriteGenerationSettings();
-  saveSpriteGenerationSettings({
-    ...currentSprite,
-    enabled: settings.sprite.enabled,
-  });
-}
-
-function syncProjectUiDesignToRuntime(settings: ProjectSettings): void {
-  const currentUiDesign = loadUiDesignChannelSettings();
-  saveUiDesignChannelSettings({
-    ...currentUiDesign,
-    enabled: settings.uiDesign.enabled,
-    preferredChannelId: settings.uiDesign.defaultChannelId,
-  });
-}
-
-function syncProjectSettingsToRuntime(settings: ProjectSettings): void {
-  syncProjectGameFeaturesToRuntime(settings);
-  syncProjectSpriteToRuntime(settings);
-  syncProjectUiDesignToRuntime(settings);
-}
-
-function SpritePipelineDiagram({ locale }: { locale: Locale }) {
-  const steps = [
-    {
-      icon: SlashSquare,
-      title: locale === 'zh-CN' ? '进入 Sprite 模式' : 'Enter Sprite mode',
-      desc: '/sprite-mode-start',
-    },
-    {
-      icon: Palette,
-      title: locale === 'zh-CN' ? '复用生图路由' : 'Reuse image route',
-      desc:
-        locale === 'zh-CN'
-          ? '使用当前生图 Provider 出 raw sheet'
-          : 'Use the active image provider for a raw sheet',
-    },
-    {
-      icon: SlidersHorizontal,
-      title: locale === 'zh-CN' ? '套 Sprite 合约' : 'Apply Sprite contract',
-      desc:
-        locale === 'zh-CN'
-          ? '网格 / 锚点 / 安全边距 / 真实动作'
-          : 'grid / anchor / safe margin / real poses',
-    },
-    {
-      icon: Boxes,
-      title: locale === 'zh-CN' ? '规范化准备' : 'Normalization ready',
-      desc:
-        locale === 'zh-CN'
-          ? '保留 raw，约束切帧与对齐'
-          : 'keep raw, constrain slicing and alignment',
-    },
-    {
-      icon: Check,
-      title: locale === 'zh-CN' ? '验收目标' : 'Acceptance target',
-      desc:
-        locale === 'zh-CN'
-          ? 'normalized / frames / GIF / manifest / QC'
-          : 'normalized / frames / GIF / manifest / QC',
-    },
-  ];
-
-  return (
-    <section className="rounded-md border border-border bg-panel-2 p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-semibold text-fg">
-            {locale === 'zh-CN' ? '设计流程' : 'Design flow'}
-          </div>
-          <div className="mt-1 text-xs text-fg-faint">
-            {locale === 'zh-CN'
-              ? 'Sprite 模式不是第二套生图渠道；它给现有生图路由增加 raw、规范化、manifest 和验收约束。'
-              : 'Sprite mode is not a second image channel; it adds raw, normalization, manifest, and acceptance constraints to the existing image route.'}
-          </div>
-        </div>
-        <span className="rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-faint">
-          Sprite Forge
-        </span>
-      </div>
-
-      <div className="grid gap-2 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
-        {steps.map((step, index) => {
-          const Icon = step.icon;
-          return (
-            <div key={step.title} className="contents">
-              <div className="min-w-0 rounded-md border border-border-soft bg-bg-alt p-3">
-                <div className="flex items-center gap-2 text-xs font-semibold text-fg">
-                  <Icon size={15} strokeWidth={2.1} />
-                  <span>{step.title}</span>
-                </div>
-                <div className="mt-1 break-words text-[11px] leading-relaxed text-fg-faint">
-                  {step.desc}
-                </div>
-              </div>
-              {index < steps.length - 1 && (
-                <div className="hidden items-center justify-center px-1 text-fg-faint lg:flex">
-                  <ArrowRight size={15} strokeWidth={2.1} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-// Game-only tabs are shown from the project-level switch. Auto-detect sets this
-// for Unity / Unreal / Godot / Cocos, and users can enable it manually for other
-// engines that we do not recognize yet.
-function shouldShowGameFeatures(settings: ProjectSettings): boolean {
-  return settings.gameFeatures.isGameProject;
-}
-
-const GAME_FEATURE_TABS: ReadonlySet<ProjectSettingsTab> = new Set([
-  'mesh',
-  'sprite',
-  'uiDesign',
-  'meshLibrary',
-  'rigging',
-  'capturePerf',
-  'blueprint',
-  'commands',
-]);
 
 function fieldId(prefix: string, id: string): string {
   return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
@@ -866,1318 +652,6 @@ function ProjectSubTabBar({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function ProjectCommandsSettings() {
-  const locale = useStore((s) => s.locale);
-  const [query, setQuery] = useState('');
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const commands = useMemo(() => {
-    const order = new Map(
-      GAME_PROJECT_COMMAND_NAMES.map((name, index) => [name.toLowerCase(), index]),
-    );
-    return buildGameSkillSuggestions(locale)
-      .filter((item) => isGameProjectCommandName(item.name))
-      .sort(
-        (a, b) =>
-          (order.get(a.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER) -
-          (order.get(b.name.toLowerCase()) ?? Number.MAX_SAFE_INTEGER),
-      );
-  }, [locale]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return commands;
-    return commands.filter((item) => item.searchText.includes(q));
-  }, [commands, query]);
-
-  const copyName = (item: SlashSuggestion) => {
-    void navigator.clipboard?.writeText(item.name).then(
-      () => {
-        setCopiedId(item.id);
-        window.setTimeout(() => {
-          setCopiedId((current) => (current === item.id ? null : current));
-        }, 1500);
-      },
-      () => {},
-    );
-  };
-
-  return (
-    <div className="grid gap-4">
-      <section className="rounded-md border border-border bg-panel-2 p-4">
-        <div className="text-sm font-semibold text-fg">
-          {locale === 'zh-CN' ? '游戏命令' : 'Game commands'}
-        </div>
-        <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {locale === 'zh-CN'
-            ? '当前项目可用的游戏 slash command。非游戏项目不会显示此 tab。'
-            : 'Game slash commands available in this project. This tab is hidden for non-game projects.'}
-        </div>
-      </section>
-
-      <div className="relative">
-        <Search
-          size={14}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-faint"
-        />
-        <input
-          type="text"
-          value={query}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder={tr('搜索命令或用途...', locale)}
-          className="w-full rounded-lg border border-border bg-bg-alt py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
-        />
-      </div>
-
-      {filtered.length === 0 ? (
-        <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
-          {locale === 'zh-CN' ? '没有匹配的命令。' : 'No matching commands.'}
-        </p>
-      ) : (
-        <div className="space-y-2">
-          {filtered.map((item) => (
-            <ProjectCommandRow
-              key={item.id}
-              item={item}
-              copied={copiedId === item.id}
-              onCopy={() => copyName(item)}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ProjectCommandRow({
-  item,
-  copied,
-  onCopy,
-}: {
-  item: SlashSuggestion;
-  copied: boolean;
-  onCopy: () => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  return (
-    <div className="group grid gap-2 rounded-lg border border-border bg-bg-alt px-4 py-3 md:grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] md:items-start">
-      <div className="flex min-w-0 items-center gap-2">
-        <code className="truncate font-mono text-sm font-medium text-accent">
-          {item.name}
-        </code>
-        <button
-          type="button"
-          onClick={onCopy}
-          aria-label={tr('复制命令名', locale)}
-          title={tr('复制命令名', locale)}
-          className="ml-auto shrink-0 rounded p-1 text-fg-faint opacity-0 transition-opacity hover:text-fg focus:opacity-100 group-hover:opacity-100"
-        >
-          {copied ? (
-            <Check size={13} className="text-accent-2" />
-          ) : (
-            <Copy size={13} />
-          )}
-        </button>
-      </div>
-      <div className="min-w-0">
-        {item.label && item.label !== item.name && (
-          <div className="text-sm font-medium text-fg">{item.label}</div>
-        )}
-        {item.detail && (
-          <p className="mt-0.5 text-xs leading-relaxed text-fg-faint">
-            {item.detail}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function uiDesignChannelBadgeClass(category: UiDesignChannelCategory): string {
-  return category === 'free-open'
-    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-    : 'border-sky-500/30 bg-sky-500/10 text-sky-300';
-}
-
-function uiDesignChannelStatus(
-  channel: UiDesignChannelDefinition,
-  settings: UiDesignChannelSettings,
-  locale: Locale,
-): { label: string; className: string } {
-  if (uiDesignChannelReady(channel.id, settings)) {
-    return {
-      label:
-        channel.needsKey || channel.requiresCommand
-          ? tr('已配置', locale)
-          : tr('可用', locale),
-      className: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-    };
-  }
-  if (channel.needsKey && !settings.channelKeys[channel.id]?.trim()) {
-    return {
-      label: tr('待填 Key', locale),
-      className: 'border-rose-500/40 bg-rose-500/10 text-rose-300',
-    };
-  }
-  if (channel.requiresCommand && !uiDesignChannelCommand(channel.id, settings)) {
-    return {
-      label: tr('待配置路径', locale),
-      className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
-    };
-  }
-  return {
-    label: tr('待配置', locale),
-    className: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
-  };
-}
-
-function UiDesignChannelSettingsPanel({
-  projectUiDesign,
-  onProjectUiDesignChange,
-}: {
-  projectUiDesign: ProjectSettings['uiDesign'];
-  onProjectUiDesignChange: (patch: Partial<ProjectSettings['uiDesign']>) => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  const [runtimeSettings, setRuntimeSettings] = useState<UiDesignChannelSettings>(
-    () => loadUiDesignChannelSettings(),
-  );
-
-  const persistRuntimeSettings = useCallback((next: UiDesignChannelSettings) => {
-    saveUiDesignChannelSettings(next);
-    setRuntimeSettings(loadUiDesignChannelSettings());
-  }, []);
-
-  // The category tab only controls which channel cards are shown; the default
-  // channel is a single project-wide choice shared across commercial and
-  // free-open and can point at any channel regardless of the active tab.
-  const activeChannels = UI_DESIGN_CHANNELS.filter(
-    (channel) => channel.category === projectUiDesign.mode,
-  );
-  const defaultChannel = uiDesignChannelById(projectUiDesign.defaultChannelId);
-
-  const setMode = (mode: UiDesignChannelCategory) => {
-    onProjectUiDesignChange({ mode });
-  };
-
-  const setDefaultChannel = (channelId: UiDesignChannelId) => {
-    onProjectUiDesignChange({ defaultChannelId: channelId });
-    persistRuntimeSettings({
-      ...runtimeSettings,
-      preferredChannelId: channelId,
-    });
-  };
-
-  return (
-    <div className="grid gap-4">
-      <div className="grid gap-3 rounded-md border border-border bg-panel-2 p-4">
-        <SettingsRow
-          label={tr('默认 UI 渠道', locale)}
-          hint={tr(
-            '这个项目在进行游戏 UI 设计时优先使用的设计工具或协作平台。/ui-mode-start 会使用这里选择的默认渠道；商用与免费开源共用一个默认。',
-            locale,
-          )}
-        >
-          <select
-            value={projectUiDesign.defaultChannelId}
-            onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-              setDefaultChannel(event.currentTarget.value as UiDesignChannelId)
-            }
-            className="h-9 w-full rounded-md border border-border bg-bg-alt px-2.5 text-sm text-fg outline-none transition-colors focus:border-accent"
-          >
-            {(['commercial', 'free-open'] as const).map((category) => {
-              const channels = UI_DESIGN_CHANNELS.filter(
-                (channel) => channel.category === category,
-              );
-              if (channels.length === 0) return null;
-              return (
-                <optgroup
-                  key={category}
-                  label={uiDesignChannelCategoryLabel(category, locale)}
-                >
-                  {channels.map((channel) => (
-                    <option key={channel.id} value={channel.id}>
-                      {channel.label}
-                    </option>
-                  ))}
-                </optgroup>
-              );
-            })}
-          </select>
-        </SettingsRow>
-
-        <div className="flex flex-wrap gap-2 text-[11px] text-fg-faint">
-          <span className="inline-flex items-center gap-1 rounded border border-border-soft bg-bg-alt px-2 py-1">
-            <Palette size={12} />
-            {tr('UI 渠道', locale)}：
-            {projectUiDesign.enabled ? tr('开启', locale) : (locale === 'zh-CN' ? '关闭' : 'Off')}
-          </span>
-          <span className="inline-flex items-center gap-1 rounded border border-border-soft bg-bg-alt px-2 py-1">
-            {locale === 'zh-CN' ? '默认' : 'Default'}：{defaultChannel.label}（
-            {uiDesignChannelCategoryLabel(defaultChannel.category, locale)}）
-          </span>
-        </div>
-      </div>
-
-      <div>
-        <div
-          role="tablist"
-          aria-orientation="horizontal"
-          className="flex w-full min-w-0 flex-wrap items-center gap-1 border-b border-border"
-        >
-          {(
-            [
-              ['commercial', tr('商用渠道', locale)],
-              ['free-open', tr('免费开源渠道', locale)],
-            ] as const
-          ).map(([mode, label]) => {
-            const active = projectUiDesign.mode === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setMode(mode)}
-                className={cn(
-                  'px-4 py-2 text-xs font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-accent',
-                  active
-                    ? '-mb-px border-b-2 border-accent text-fg'
-                    : 'text-fg-faint hover:text-fg',
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <section
-        role="tabpanel"
-        className="rounded-md border border-border bg-panel-2 p-4"
-      >
-        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h4 className="text-sm font-semibold text-fg">
-              {locale === 'zh-CN'
-                ? `${uiDesignChannelCategoryLabel(projectUiDesign.mode, locale)}渠道`
-                : `${uiDesignChannelCategoryLabel(projectUiDesign.mode, locale)} channels`}
-            </h4>
-            <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-              {projectUiDesign.mode === 'commercial'
-                ? tr(
-                    '生产协作优先，适合 Figma 文件、Photoshop 视觉资产和可交付 UI 规范。',
-                    locale,
-                  )
-                : tr(
-                    '免费和开源优先，适合 Pencil 原型、Penpot 自托管协作、GIMP/Inkscape 图形资产。',
-                    locale,
-                  )}
-            </p>
-          </div>
-          <span className="rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-faint">
-            {locale === 'zh-CN'
-              ? `${activeChannels.length} 个`
-              : activeChannels.length}
-          </span>
-        </div>
-        <div className="grid gap-3 xl:grid-cols-2">
-          {activeChannels.map((channel) => (
-            <UiDesignChannelCard
-              key={channel.id}
-              channel={channel}
-              isDefault={projectUiDesign.defaultChannelId === channel.id}
-              settings={runtimeSettings}
-              onDefault={() => setDefaultChannel(channel.id)}
-              onChange={persistRuntimeSettings}
-            />
-          ))}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function UiDesignChannelCard({
-  channel,
-  isDefault,
-  settings,
-  onDefault,
-  onChange,
-}: {
-  channel: UiDesignChannelDefinition;
-  isDefault: boolean;
-  settings: UiDesignChannelSettings;
-  onDefault: () => void;
-  onChange: (settings: UiDesignChannelSettings) => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  const [showKey, setShowKey] = useState(false);
-  const keyValue = settings.channelKeys[channel.id] ?? '';
-  const baseUrl = settings.channelBaseUrls[channel.id] ?? '';
-  const command = settings.channelCommands[channel.id] ?? '';
-  const exportFormat = uiDesignChannelExportFormat(channel.id, settings);
-  const effectiveBaseUrl = uiDesignChannelBaseUrl(channel.id, settings);
-  const status = uiDesignChannelStatus(channel, settings, locale);
-  const KeyIcon = showKey ? EyeOff : Eye;
-  const externalLinks =
-    channel.downloadLinks && channel.downloadLinks.length > 0
-      ? channel.downloadLinks
-      : channel.credentialUrl
-        ? [
-            {
-              label: channel.needsKey ? tr('获取 Key', locale) : tr('打开官网', locale),
-              url: channel.credentialUrl,
-            },
-          ]
-        : [];
-
-  const patchChannel = (
-    patch: Partial<{
-      key: string;
-      baseUrl: string;
-      command: string;
-      exportFormat: string;
-    }>,
-  ) => {
-    const next: UiDesignChannelSettings = {
-      ...settings,
-      channelKeys: { ...settings.channelKeys },
-      channelBaseUrls: { ...settings.channelBaseUrls },
-      channelCommands: { ...settings.channelCommands },
-      channelExportFormats: { ...settings.channelExportFormats },
-    };
-    if (patch.key !== undefined) {
-      const value = patch.key.trim();
-      if (value) next.channelKeys[channel.id] = value;
-      else delete next.channelKeys[channel.id];
-    }
-    if (patch.baseUrl !== undefined) {
-      const value = patch.baseUrl.trim();
-      if (value) next.channelBaseUrls[channel.id] = value;
-      else delete next.channelBaseUrls[channel.id];
-    }
-    if (patch.command !== undefined) {
-      const value = patch.command.trim();
-      if (value) next.channelCommands[channel.id] = value;
-      else delete next.channelCommands[channel.id];
-    }
-    if (patch.exportFormat !== undefined) {
-      const value = patch.exportFormat.trim();
-      if (value && channel.exportFormats.includes(value)) {
-        next.channelExportFormats[channel.id] = value;
-      } else {
-        delete next.channelExportFormats[channel.id];
-      }
-    }
-    onChange(next);
-  };
-
-  return (
-    <article className="space-y-3 rounded-md border border-border bg-bg-alt p-4">
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{channel.label}</span>
-            <span
-              className={cn(
-                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                uiDesignChannelBadgeClass(channel.category),
-              )}
-            >
-              {uiDesignChannelCategoryLabel(channel.category, locale)}
-            </span>
-            <span
-              className={cn(
-                'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                status.className,
-              )}
-            >
-              {status.label}
-            </span>
-            {isDefault ? (
-              <span className="inline-flex shrink-0 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
-                {locale === 'zh-CN' ? '默认' : 'Default'}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1 text-[11px] leading-relaxed text-fg-faint">
-            {channel.note}
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          {!isDefault ? (
-            <button
-              type="button"
-              onClick={onDefault}
-              className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-            >
-              <Check size={13} />
-              {locale === 'zh-CN' ? '设为默认' : 'Set as default'}
-            </button>
-          ) : null}
-          {externalLinks.map((link) => (
-            <button
-              key={link.url}
-              type="button"
-              onClick={() => void openExternal(link.url)}
-              className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-            >
-              {channel.downloadLinks && channel.downloadLinks.length > 0 ? (
-                <Download size={13} strokeWidth={2.2} />
-              ) : (
-                <ExternalLink size={13} strokeWidth={2.2} />
-              )}
-              {link.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        {channel.supportsBaseUrl ? (
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-fg-dim">Base URL</span>
-            <input
-              type="text"
-              value={baseUrl}
-              onChange={(event) => patchChannel({ baseUrl: event.target.value })}
-              placeholder={effectiveBaseUrl || channel.endpointPlaceholder}
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
-            />
-          </label>
-        ) : null}
-
-        {channel.supportsKey ? (
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {channel.keyLabel ?? 'API Key'}
-            </span>
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={keyValue}
-                onChange={(event) => patchChannel({ key: event.target.value })}
-                placeholder={channel.keyPlaceholder ?? tr('粘贴 API Key / Token', locale)}
-                autoComplete="off"
-                spellCheck={false}
-                className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-14 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
-              />
-              <div className="absolute inset-y-0 right-1 flex items-center gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => setShowKey((value) => !value)}
-                  title={showKey ? tr('隐藏 Key', locale) : tr('显示 Key', locale)}
-                  className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
-                >
-                  <KeyIcon size={13} strokeWidth={2} />
-                </button>
-                {keyValue ? (
-                  <button
-                    type="button"
-                    onClick={() => patchChannel({ key: '' })}
-                    title={tr('清空', locale)}
-                    className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
-                  >
-                    <Trash2 size={13} strokeWidth={2} />
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </label>
-        ) : null}
-
-        {channel.supportsCommand ? (
-          <label className="block space-y-1 lg:col-span-2">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {locale === 'zh-CN' ? '本地命令 / 工具路径' : 'Local command / tool path'}
-            </span>
-            <input
-              type="text"
-              value={command}
-              onChange={(event) => patchChannel({ command: event.target.value })}
-              placeholder={channel.commandPlaceholder}
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-sm text-fg outline-none transition-colors focus:border-accent"
-            />
-          </label>
-        ) : null}
-
-        <label
-          className={cn(
-            'block space-y-1',
-            channel.supportsBaseUrl || channel.supportsKey ? 'lg:col-span-2' : '',
-          )}
-        >
-          <span className="text-[11px] font-medium text-fg-dim">
-            {locale === 'zh-CN' ? '默认导出格式' : 'Default export format'}
-          </span>
-          <select
-            value={exportFormat}
-            onChange={(event) => patchChannel({ exportFormat: event.target.value })}
-            className="h-[35px] w-full rounded-md border border-border bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-          >
-            {channel.exportFormats.map((format) => (
-              <option key={format} value={format}>
-                {format}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-    </article>
-  );
-}
-
-function MeshLibraryCard({
-  library,
-  settings,
-  onToggle,
-  onKeyChange,
-  onDelete,
-}: {
-  library: MeshLibraryDefinition;
-  settings: MeshLibraryAccountSettings;
-  onToggle: (enabled: boolean) => void;
-  onKeyChange: (value: string) => void;
-  onDelete?: () => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  const enabled = settings.enabledIds.includes(library.id);
-  const ready = meshLibraryReady(library.id, settings);
-  const usability = meshLibraryUsability(library.id, settings);
-  const keyValue = settings.apiKeys[library.id] ?? '';
-  const searchKindLabel =
-    library.searchKind === 'public-api'
-      ? tr('免费 API', locale)
-      : library.searchKind === 'api-key'
-        ? tr('API Key 搜索', locale)
-        : tr('深链搜索页', locale);
-  return (
-    <section className="flex flex-col gap-2.5 rounded-md border border-border bg-panel-2 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-fg">{library.label}</span>
-            <span className="shrink-0 rounded border border-border-soft bg-bg-alt px-1.5 py-0.5 text-[10px] text-fg-faint">
-              {meshLibraryCategoryLabel(library.category, locale)}
-            </span>
-          </div>
-          <span className="mt-1 block max-h-12 overflow-hidden text-xs leading-snug text-fg-faint">
-            {library.note}
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onClick={() => void openExternal(library.homepageUrl)}
-            title={tr('打开来源', locale)}
-            aria-label={tr('打开来源', locale)}
-            className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg-alt text-fg-faint hover:border-accent hover:text-fg"
-          >
-            <ExternalLink size={13} />
-          </button>
-          {onDelete ? (
-            <button
-              type="button"
-              onClick={onDelete}
-              title={tr('删除', locale)}
-              aria-label={tr('删除', locale)}
-              className="flex h-7 w-7 items-center justify-center rounded border border-rose-500/40 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20"
-            >
-              <Trash2 size={13} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1">
-        <span className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
-          {searchKindLabel}
-        </span>
-        {usability === 'usable' ? (
-          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
-            {locale === 'zh-CN' ? '真正可用' : 'Fully usable'}
-          </span>
-        ) : usability === 'needs-key' ? (
-          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
-            {tr('待配置 Key', locale)}
-          </span>
-        ) : (
-          <span className="rounded border border-border-soft bg-bg-alt px-1.5 py-0.5 text-[10px] text-fg-faint">
-            {locale === 'zh-CN' ? '仅深链浏览' : 'Deep-link only'}
-          </span>
-        )}
-        {library.supportsDownload ? (
-          <span className="rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
-            {locale === 'zh-CN' ? '可直接下载' : 'Direct download'}
-          </span>
-        ) : (
-          <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-300">
-            {locale === 'zh-CN' ? '账号内下载' : 'In-account download'}
-          </span>
-        )}
-        {library.needsKey ? (
-          <span
-            className={cn(
-              'rounded border px-1.5 py-0.5 text-[10px]',
-              ready
-                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                : 'border-amber-500/40 bg-amber-500/10 text-amber-300',
-            )}
-          >
-            {ready ? tr('已配置 Key', locale) : tr('需 API Key', locale)}
-          </span>
-        ) : null}
-      </div>
-
-      {(library.needsKey || library.keyLabel) && (
-        <label className="grid gap-1">
-          <span className="text-[11px] font-semibold text-fg-dim">
-            {library.keyLabel ?? 'API Key'}
-          </span>
-          <input
-            type="password"
-            value={keyValue}
-            placeholder={library.keyPlaceholder ?? tr('粘贴 API Key / Token', locale)}
-            onChange={(event) => onKeyChange(event.currentTarget.value)}
-            className="w-full rounded-md border border-border bg-bg-alt px-2.5 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
-          />
-          {library.credentialUrl ? (
-            <button
-              type="button"
-              onClick={() => void openExternal(library.credentialUrl!)}
-              className="justify-self-start text-[11px] text-accent hover:underline"
-            >
-              {locale === 'zh-CN' ? '获取 / 管理凭据' : 'Get / manage credentials'}
-            </button>
-          ) : null}
-        </label>
-      )}
-
-      <label className="mt-auto flex items-center justify-between gap-2 rounded border border-border-soft bg-bg-alt px-2.5 py-2">
-        <span className="text-xs font-semibold text-fg">
-          {locale === 'zh-CN' ? '在 /mesh-search 中启用' : 'Enable in /mesh-search'}
-        </span>
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => onToggle(event.currentTarget.checked)}
-          className="h-4 w-4 shrink-0 accent-accent"
-        />
-      </label>
-    </section>
-  );
-}
-
-function customMeshLibraryName(baseUrl: string, fallback: string): string {
-  try {
-    const url = new URL(baseUrl.trim());
-    return url.hostname.replace(/^www\./iu, '') || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function customMeshHomepageUrl(rawUrl: string): string {
-  const trimmed = rawUrl.trim();
-  if (!trimmed.includes('{query}')) return trimmed.replace(/\/+$/, '');
-  try {
-    const url = new URL(trimmed.replace('{query}', ''));
-    return url.origin;
-  } catch {
-    return trimmed.split('{query}', 1)[0]?.replace(/[?&=/_-]+$/u, '') || trimmed;
-  }
-}
-
-function customMeshSearchUrlTemplate(rawUrl: string): string {
-  const trimmed = rawUrl.trim().replace(/\/+$/, '');
-  if (trimmed.includes('{query}')) return trimmed;
-  if (trimmed.includes('?')) return `${trimmed}&q={query}`;
-  if (/\/search$/iu.test(trimmed)) return `${trimmed}?q={query}`;
-  return `${trimmed}/search?q={query}`;
-}
-
-function CustomMeshLibraryDialog({
-  locale,
-  onClose,
-  onSave,
-}: {
-  locale: Locale;
-  onClose: () => void;
-  onSave: (draft: {
-    name: string;
-    homepageUrl: string;
-    token: string;
-  }) => void;
-}) {
-  const [name, setName] = useState('');
-  const [homepageUrl, setHomepageUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [showKey, setShowKey] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const KeyIcon = showKey ? EyeOff : Eye;
-
-  const save = () => {
-    const trimmedUrl = homepageUrl.trim();
-    if (!trimmedUrl) {
-      setError(locale === 'zh-CN' ? '请填写 URL。' : 'Enter a URL.');
-      return;
-    }
-    setError(null);
-    onSave({
-      name: name.trim() || customMeshLibraryName(trimmedUrl, '自定义模型库'),
-      homepageUrl: trimmedUrl,
-      token: token.trim(),
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-[75] bg-black/60 sm:flex sm:items-center sm:justify-center sm:p-6">
-      <div
-        role="dialog"
-        aria-modal="true"
-        data-custom-mesh-library-editor="true"
-        className="fixed inset-x-0 bottom-0 flex max-h-[calc(100vh-1rem)] flex-col overflow-hidden rounded-t-lg border border-border bg-panel shadow-2xl sm:relative sm:inset-auto sm:max-h-[calc(100vh-3rem)] sm:w-[min(520px,calc(100vw-2rem))] sm:rounded-lg"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="shrink-0 border-b border-border-soft bg-bg-alt px-5 py-4">
-          <div className="flex items-center gap-3">
-            <h3 className="min-w-0 flex-1 text-base font-semibold text-fg">
-              {locale === 'zh-CN' ? '添加模型库渠道' : 'Add model library channel'}
-            </h3>
-            <button
-              type="button"
-              onClick={onClose}
-              title={tr('关闭', locale)}
-              aria-label={tr('关闭', locale)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-faint transition-colors hover:border-accent hover:text-fg"
-            >
-              <X size={15} strokeWidth={2.2} />
-            </button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-fg-dim">
-              {locale === 'zh-CN' ? '渠道名称' : 'Channel name'}
-            </span>
-            <input
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.currentTarget.value)}
-              placeholder={locale === 'zh-CN' ? '新模型库' : 'New model library'}
-              className="w-full rounded border border-border bg-bg px-2 py-1.5 text-xs text-fg outline-none transition-colors focus:border-accent"
-            />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-fg-dim">URL</span>
-            <input
-              type="text"
-              value={homepageUrl}
-              onChange={(event) => {
-                setHomepageUrl(event.currentTarget.value);
-                setError(null);
-              }}
-              placeholder="https://example.com/search?q={query}"
-              className={cn(
-                'w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-fg outline-none transition-colors focus:border-accent',
-                error && 'border-rose-500/60',
-              )}
-            />
-            {error ? (
-              <p className="text-[11px] leading-relaxed text-rose-300">{error}</p>
-            ) : null}
-          </label>
-          <label className="block space-y-1">
-            <span className="text-[11px] font-medium text-fg-dim">Token</span>
-            <div className="relative">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={token}
-                onChange={(event) => setToken(event.currentTarget.value)}
-                placeholder={locale === 'zh-CN' ? '可选' : 'Optional'}
-                className="w-full rounded border border-border bg-bg px-2 py-1.5 pr-10 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey((v) => !v)}
-                title={showKey ? tr('隐藏', locale) : tr('显示', locale)}
-                className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
-              >
-                <KeyIcon size={13} strokeWidth={2} />
-              </button>
-            </div>
-          </label>
-        </div>
-
-        <div className="shrink-0 border-t border-border-soft bg-bg-alt px-5 py-3">
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded border border-border bg-panel px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-            >
-              {tr('取消', locale)}
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              className="rounded border border-accent bg-accent px-3 py-1.5 text-xs font-semibold text-bg transition-colors hover:bg-accent/90"
-            >
-              {tr('保存', locale)}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function MeshLibrarySettings() {
-  const locale = useStore((s) => s.locale);
-  const [settings, setSettings] = useState<MeshLibraryAccountSettings>(() =>
-    loadMeshLibrarySettings(),
-  );
-  const [query, setQuery] = useState('');
-  const [innerTab, setInnerTab] = useState<'enabled' | 'repository'>('enabled');
-  const [customDialogOpen, setCustomDialogOpen] = useState(false);
-
-  const persist = useCallback((next: MeshLibraryAccountSettings) => {
-    saveMeshLibrarySettings(next);
-    setSettings(loadMeshLibrarySettings());
-  }, []);
-
-  const libraries = useMemo(() => meshLibraries(settings), [settings]);
-
-  const toggleLibrary = useCallback(
-    (id: MeshLibraryId, enabled: boolean) => {
-      persist({
-        ...settings,
-        enabledIds: enabled
-          ? Array.from(new Set([...settings.enabledIds, id]))
-          : settings.enabledIds.filter((value) => value !== id),
-      });
-    },
-    [persist, settings],
-  );
-
-  const setKey = useCallback(
-    (id: MeshLibraryId, value: string) => {
-      const apiKeys = { ...settings.apiKeys };
-      const trimmed = value.trim();
-      if (trimmed) apiKeys[id] = value;
-      else delete apiKeys[id];
-      persist({ ...settings, apiKeys });
-    },
-    [persist, settings],
-  );
-
-  const addCustomLibrary = useCallback(
-    (draft: { name: string; homepageUrl: string; token: string }) => {
-      const existingIds = new Set(libraries.map((library) => library.id));
-      let id = createCustomMeshLibraryId(draft.name);
-      let suffix = 2;
-      while (existingIds.has(id)) {
-        id = `${createCustomMeshLibraryId(draft.name)}-${suffix}` as typeof id;
-        suffix += 1;
-      }
-      const searchUrlTemplate = customMeshSearchUrlTemplate(draft.homepageUrl);
-      const library: CustomMeshLibraryDefinition = {
-        id,
-        label: draft.name,
-        category: 'marketplace',
-        searchKind: 'link-out',
-        needsKey: !!draft.token,
-        supportsDownload: false,
-        homepageUrl: customMeshHomepageUrl(draft.homepageUrl),
-        searchUrlTemplate,
-        keyLabel: 'Token',
-        keyPlaceholder: 'optional',
-        note: '自定义在线模型库渠道（深链搜索）。',
-      };
-      persist({
-        ...settings,
-        enabledIds: Array.from(new Set([...settings.enabledIds, id])),
-        customLibraries: [...settings.customLibraries, library],
-        apiKeys: draft.token
-          ? { ...settings.apiKeys, [id]: draft.token }
-          : { ...settings.apiKeys },
-      });
-      setCustomDialogOpen(false);
-      setInnerTab('enabled');
-    },
-    [libraries, persist, settings],
-  );
-
-  const deleteCustomLibrary = useCallback(
-    (id: MeshLibraryId) => {
-      const apiKeys = { ...settings.apiKeys };
-      delete apiKeys[id];
-      persist({
-        ...settings,
-        enabledIds: settings.enabledIds.filter((value) => value !== id),
-        customLibraries: settings.customLibraries.filter((library) => library.id !== id),
-        apiKeys,
-      });
-    },
-    [persist, settings],
-  );
-
-  // "已启用" only lists libraries that genuinely work end to end: toggled on AND
-  // actually able to run an in-app search/download (key configured where the API
-  // requires one). Toggling a library on without its key keeps it out of here.
-  const usableLibraries = useMemo(
-    () =>
-      libraries.filter(
-        (library) =>
-          settings.enabledIds.includes(library.id) &&
-          meshLibraryUsable(library.id, settings),
-      ),
-    [libraries, settings],
-  );
-
-  // Enabled-but-not-yet-usable libraries (e.g. toggled on but missing API key)
-  // so the user understands why they are not in the working set.
-  const pendingLibraries = useMemo(
-    () =>
-      libraries.filter(
-        (library) =>
-          settings.enabledIds.includes(library.id) &&
-          !meshLibraryUsable(library.id, settings),
-      ),
-    [libraries, settings],
-  );
-
-  const filteredRepository = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return libraries;
-    return libraries.filter((library) =>
-      `${library.label} ${library.note} ${MESH_LIBRARY_CATEGORY_LABELS[library.category]}`
-        .toLowerCase()
-        .includes(q),
-    );
-  }, [libraries, query]);
-
-  const usableCount = usableLibraries.length;
-  const enabledCount = settings.enabledIds.length;
-
-  return (
-    <div className="grid gap-4">
-      <section className="rounded-md border border-border bg-panel-2 p-4">
-        <div className="text-sm font-semibold text-fg">
-          {locale === 'zh-CN' ? '在线模型库' : 'Online model libraries'}
-        </div>
-        <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {locale === 'zh-CN' ? (
-            <>
-              配置 /mesh-search 使用的在线 3D 模型库。在 AI 输入框发送
-              <code className="mx-1 rounded bg-bg-alt px-1 py-0.5 font-mono text-accent">
-                /mesh-search 关键字
-              </code>
-              会按关键字搜索「已启用」中真正可用的库；可直接下载的结果会下载到工作区并在会话中预览。
-            </>
-          ) : (
-            <>
-              Configure the online 3D model libraries used by /mesh-search. Send
-              <code className="mx-1 rounded bg-bg-alt px-1 py-0.5 font-mono text-accent">
-                /mesh-search keyword
-              </code>
-              in the AI input to search the genuinely usable libraries under “Enabled”; directly downloadable results are saved to the workspace and previewed in the session.
-            </>
-          )}
-        </div>
-        <div className="mt-2 text-[11px] text-fg-faint">
-          {locale === 'zh-CN'
-            ? `可用 ${usableCount} 个 · 已开启 ${enabledCount} 个 · 仓库共 ${libraries.length} 个`
-            : `${usableCount} usable · ${enabledCount} enabled · ${libraries.length} in registry`}
-        </div>
-      </section>
-
-      <div
-        role="tablist"
-        aria-orientation="horizontal"
-        className="flex w-full min-w-0 flex-wrap items-center gap-1 border-b border-border"
-      >
-        {(
-          [
-            { id: 'enabled' as const, label: tr('已启用', locale), count: usableCount },
-            { id: 'repository' as const, label: tr('仓库', locale), count: libraries.length },
-          ]
-        ).map((tab) => {
-          const active = innerTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setInnerTab(tab.id)}
-              className={cn(
-                'px-4 py-2 text-xs font-medium outline-none transition-colors focus-visible:ring-1 focus-visible:ring-accent',
-                active
-                  ? '-mb-px border-b-2 border-accent text-fg'
-                  : 'text-fg-faint hover:text-fg',
-              )}
-            >
-              {tab.label}
-              <span
-                className={cn(
-                  'ml-1.5 rounded-full px-1.5 py-0.5 text-[10px]',
-                  active ? 'bg-accent/20 text-accent' : 'bg-bg-alt text-fg-faint',
-                )}
-              >
-                {tab.count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      {innerTab === 'enabled' ? (
-        <MeshLibraryEnabledTab
-          usableLibraries={usableLibraries}
-          pendingLibraries={pendingLibraries}
-          settings={settings}
-          onToggle={toggleLibrary}
-          onKeyChange={setKey}
-          onAddLibrary={() => setCustomDialogOpen(true)}
-          onDeleteCustomLibrary={deleteCustomLibrary}
-          onBrowseRepository={() => setInnerTab('repository')}
-        />
-      ) : (
-        <MeshLibraryRepositoryTab
-          libraries={filteredRepository}
-          settings={settings}
-          query={query}
-          onQueryChange={setQuery}
-          onToggle={toggleLibrary}
-          onKeyChange={setKey}
-          onAddLibrary={() => setCustomDialogOpen(true)}
-          onDeleteCustomLibrary={deleteCustomLibrary}
-        />
-      )}
-
-      <div className="grid gap-2 rounded-md border border-border bg-panel-2 p-3 sm:grid-cols-2">
-        <label className="flex items-center justify-between gap-2 rounded border border-border-soft bg-bg-alt px-3 py-2">
-          <span className="text-xs font-semibold text-fg">
-            {locale === 'zh-CN' ? '自动下载可下载结果' : 'Auto-download downloadable results'}
-          </span>
-          <input
-            type="checkbox"
-            checked={settings.autoDownload}
-            onChange={(event) =>
-              persist({ ...settings, autoDownload: event.currentTarget.checked })
-            }
-            className="h-4 w-4 shrink-0 accent-accent"
-          />
-        </label>
-        <label className="flex items-center justify-between gap-2 rounded border border-border-soft bg-bg-alt px-3 py-2">
-          <span className="text-xs font-semibold text-fg">
-            {locale === 'zh-CN' ? '每个库返回上限' : 'Per-library result limit'}
-          </span>
-          <input
-            type="number"
-            min={1}
-            max={24}
-            value={settings.perLibraryLimit}
-            onChange={(event) =>
-              persist({
-                ...settings,
-                perLibraryLimit: Number(event.currentTarget.value) || 6,
-              })
-            }
-            className="w-16 rounded-md border border-border bg-bg px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
-          />
-        </label>
-      </div>
-      {customDialogOpen ? (
-        <CustomMeshLibraryDialog
-          locale={locale}
-          onClose={() => setCustomDialogOpen(false)}
-          onSave={addCustomLibrary}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function MeshLibraryEnabledTab({
-  usableLibraries,
-  pendingLibraries,
-  settings,
-  onToggle,
-  onKeyChange,
-  onAddLibrary,
-  onDeleteCustomLibrary,
-  onBrowseRepository,
-}: {
-  usableLibraries: MeshLibraryDefinition[];
-  pendingLibraries: MeshLibraryDefinition[];
-  settings: MeshLibraryAccountSettings;
-  onToggle: (id: MeshLibraryId, enabled: boolean) => void;
-  onKeyChange: (id: MeshLibraryId, value: string) => void;
-  onAddLibrary: () => void;
-  onDeleteCustomLibrary: (id: MeshLibraryId) => void;
-  onBrowseRepository: () => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  if (usableLibraries.length === 0 && pendingLibraries.length === 0) {
-    return (
-      <div className="grid gap-2 rounded-lg border border-border bg-bg-alt px-4 py-8 text-center">
-        <p className="text-xs text-fg-faint">
-          {locale === 'zh-CN'
-            ? '还没有真正可用的模型库。前往「仓库」开启并配置好 API Key 后，能真正搜索 / 下载的库会出现在这里。'
-            : 'No genuinely usable model libraries yet. Once you enable and configure API keys under “Registry”, the libraries that can actually search / download appear here.'}
-        </p>
-        <button
-          type="button"
-          onClick={onAddLibrary}
-          className="justify-self-center rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/20"
-        >
-          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
-        </button>
-        <button
-          type="button"
-          onClick={onBrowseRepository}
-          className="justify-self-center rounded-md border border-border bg-panel px-3 py-1.5 text-xs font-semibold text-fg-dim hover:border-accent hover:text-fg"
-        >
-          {locale === 'zh-CN' ? '浏览仓库' : 'Browse registry'}
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-3">
-      <div>
-        <button
-          type="button"
-          onClick={onAddLibrary}
-          className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-        >
-          <Plus size={13} strokeWidth={2.2} />
-          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
-        </button>
-      </div>
-      {usableLibraries.length > 0 ? (
-        <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
-          {usableLibraries.map((library) => (
-            <MeshLibraryCard
-              key={library.id}
-              library={library}
-              settings={settings}
-              onToggle={(enabled) => onToggle(library.id, enabled)}
-              onKeyChange={(value) => onKeyChange(library.id, value)}
-              onDelete={
-                library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
-              }
-            />
-          ))}
-        </div>
-      ) : null}
-
-      {pendingLibraries.length > 0 ? (
-        <section className="grid gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-          <div className="text-[11px] font-semibold text-amber-300">
-            {locale === 'zh-CN'
-              ? '已开启但还不能用（需补全 API Key）'
-              : 'Enabled but not yet usable (API key required)'}
-          </div>
-          <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
-            {pendingLibraries.map((library) => (
-              <MeshLibraryCard
-                key={library.id}
-                library={library}
-                settings={settings}
-                onToggle={(enabled) => onToggle(library.id, enabled)}
-                onKeyChange={(value) => onKeyChange(library.id, value)}
-                onDelete={
-                  library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
-                }
-              />
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </div>
-  );
-}
-
-function MeshLibraryRepositoryTab({
-  libraries,
-  settings,
-  query,
-  onQueryChange,
-  onToggle,
-  onKeyChange,
-  onAddLibrary,
-  onDeleteCustomLibrary,
-}: {
-  libraries: MeshLibraryDefinition[];
-  settings: MeshLibraryAccountSettings;
-  query: string;
-  onQueryChange: (value: string) => void;
-  onToggle: (id: MeshLibraryId, enabled: boolean) => void;
-  onKeyChange: (id: MeshLibraryId, value: string) => void;
-  onAddLibrary: () => void;
-  onDeleteCustomLibrary: (id: MeshLibraryId) => void;
-}) {
-  const locale = useStore((s) => s.locale);
-  return (
-    <div className="grid gap-3">
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="relative">
-          <Search
-            size={14}
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fg-faint"
-          />
-          <input
-            type="text"
-            value={query}
-            onChange={(event) => onQueryChange(event.currentTarget.value)}
-            placeholder={tr('搜索在线模型库名称、用途...', locale)}
-            className="w-full rounded-lg border border-border bg-bg-alt py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={onAddLibrary}
-          className="inline-flex items-center justify-center gap-1.5 rounded border border-border bg-panel px-3 py-2 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-        >
-          <Plus size={13} strokeWidth={2.2} />
-          {locale === 'zh-CN' ? '添加新渠道' : 'Add new channel'}
-        </button>
-      </div>
-
-      {libraries.length === 0 ? (
-        <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
-          {locale === 'zh-CN' ? '没有匹配的模型库。' : 'No matching model libraries.'}
-        </p>
-      ) : (
-        <div className="grid gap-2.5 lg:grid-cols-2 2xl:grid-cols-3">
-          {libraries.map((library) => (
-            <MeshLibraryCard
-              key={library.id}
-              library={library}
-              settings={settings}
-              onToggle={(enabled) => onToggle(library.id, enabled)}
-              onKeyChange={(value) => onKeyChange(library.id, value)}
-              onDelete={
-                library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
-              }
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -3002,119 +1476,6 @@ function UnityMcpQuickSetup({
   );
 }
 
-function CapturePerfSkillCard({
-  definition,
-  locale,
-  desktop,
-  installedTarget,
-  installing,
-  onInstall,
-  onUninstall,
-}: {
-  definition: CapturePerfSkillDefinition;
-  locale: Locale;
-  desktop: boolean;
-  installedTarget?: SkillInstallTarget;
-  installing: boolean;
-  onInstall: () => void;
-  onUninstall: () => void;
-}) {
-  const installed = installedTarget != null;
-  return (
-    <div className="flex min-h-[13rem] flex-col rounded-md border border-border bg-bg-alt p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold text-accent">
-              {capturePerfCategoryLabel(definition.category)}
-            </span>
-            <span className="rounded border border-border bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
-              {/^\d/.test(definition.version)
-                ? `v${definition.version}`
-                : definition.version}
-            </span>
-            {installed ? (
-              <span className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
-                <Check size={11} />
-                {tr('已安装', locale)}
-              </span>
-            ) : null}
-          </div>
-          <h4 className="mt-2 text-sm font-semibold text-fg">{definition.title}</h4>
-          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-            {definition.summary}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {definition.tags.map((tag) => (
-          <span
-            key={tag}
-            className="rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      {definition.command ? (
-        <div className="mt-3 truncate rounded border border-border-soft bg-bg px-2 py-1.5 font-mono text-[11px] text-fg-dim">
-          {definition.command}
-        </div>
-      ) : null}
-
-      <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-        <button
-          type="button"
-          onClick={() => void openExternal(definition.sourceUrl)}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg"
-        >
-          <ExternalLink size={13} />
-          {tr('打开来源', locale)}
-        </button>
-        <div className="flex flex-wrap gap-2">
-          {installed ? (
-            <button
-              type="button"
-              onClick={onUninstall}
-              disabled={installing || !desktop}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim hover:border-red-400 hover:text-red-200 disabled:opacity-50"
-              title={installedTarget?.label}
-            >
-              {installing ? (
-                <RefreshCw size={13} className="animate-spin" />
-              ) : (
-                <Trash2 size={13} />
-              )}
-              {tr('卸载', locale)}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={onInstall}
-            disabled={installing || !desktop}
-            className="inline-flex items-center gap-1.5 rounded-md border border-accent bg-accent/15 px-2.5 py-1.5 text-xs font-semibold text-fg hover:bg-accent/25 disabled:border-border disabled:bg-panel disabled:text-fg-faint"
-          >
-            {installing ? (
-              <RefreshCw size={13} className="animate-spin" />
-            ) : (
-              <Download size={13} />
-            )}
-            {installing
-              ? tr('安装中...', locale)
-              : installed
-                ? locale === 'zh-CN'
-                  ? '更新'
-                  : 'Update'
-                : tr('一键安装', locale)}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function ProjectSettingsModal({
   workspace,
   onClose,
@@ -3210,14 +1571,6 @@ export default function ProjectSettingsModal({
   const [skillCatalogEntries, setSkillCatalogEntries] = useState<SlashCatalogEntry[]>(
     [],
   );
-  const [capturePerfTargets, setCapturePerfTargets] = useState<SkillInstallTarget[]>(
-    [],
-  );
-  const [capturePerfBusyId, setCapturePerfBusyId] = useState<string | null>(null);
-  const [capturePerfStatus, setCapturePerfStatus] = useState<{
-    tone: 'ok' | 'err';
-    msg: string;
-  } | null>(null);
   const [mcpQuery, setMcpQuery] = useState('');
   const [mcpSubTab, setMcpSubTab] = useState<'installed' | 'registry'>('installed');
   const [onlineMcpServers, setOnlineMcpServers] = useState<McpServerDefinition[]>(
@@ -3261,8 +1614,26 @@ export default function ProjectSettingsModal({
   const [cocosSetupResult, setCocosSetupResult] =
     useState<GenericProjectMcpSetupResult | null>(null);
   const [cocosSetupError, setCocosSetupError] = useState<string | null>(null);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
 
   const workspacePath = record?.path || workspace.path || '';
+  const isRemoteWorkspace = isRemoteWorkspacePath(workspacePath);
+  const remoteWorkspaceId = isRemoteWorkspace
+    ? remoteWorkspaceIdFromPath(workspacePath)
+    : '';
+  const remoteConfig = isRemoteWorkspace ? getRemoteWorkspace(remoteWorkspaceId) : null;
+  const editableRemoteConfig: RemoteWorkspaceConfig | null =
+    isRemoteWorkspace && remoteWorkspaceId
+      ? remoteConfig ?? {
+          id: remoteWorkspaceId,
+          label: record?.name ?? workspace.name,
+          serverUrl: '',
+          adapter: 'claude',
+          useOwnModelKey: false,
+          createdAt: 0,
+          updatedAt: 0,
+        }
+      : null;
   const health = useMemo(
     () =>
       projectHealth(
@@ -3274,7 +1645,7 @@ export default function ProjectSettingsModal({
       ),
     [record?.metadata, scan, workspace],
   );
-  const showGameFeatures = shouldShowGameFeatures(settings);
+  const showGameFeatures = settings.gameFeatures.isGameProject;
   const detectedOrConfiguredEngine = scan?.engine.engine ?? settings.engine;
   const changeSkillSubTab = useCallback((id: ProjectSubTabId) => {
     skillSubTabTouchedRef.current = true;
@@ -3286,7 +1657,7 @@ export default function ProjectSettingsModal({
         if (item.id === 'blueprint') {
           return showGameFeatures && detectedOrConfiguredEngine === 'unreal';
         }
-        return !GAME_FEATURE_TABS.has(item.id) || showGameFeatures;
+        return true;
       }),
     [detectedOrConfiguredEngine, showGameFeatures],
   );
@@ -3325,25 +1696,6 @@ export default function ProjectSettingsModal({
     () => new Set(settings.mcp.servers.map((server) => server.id)),
     [settings.mcp.servers],
   );
-  const capturePerfInstallTarget = useMemo(
-    () =>
-      capturePerfTargets.find((target) => target.id === 'project-codex') ??
-      capturePerfTargets.find((target) => target.scope === 'project') ??
-      capturePerfTargets.find((target) => target.isDefault) ??
-      capturePerfTargets[0] ??
-      null,
-    [capturePerfTargets],
-  );
-  const installedCapturePerfSkills = useMemo(() => {
-    const installed = new Map<string, SkillInstallTarget>();
-    for (const target of capturePerfTargets) {
-      for (const skill of target.skills) {
-        installed.set(skill.toLowerCase(), target);
-      }
-    }
-    return installed;
-  }, [capturePerfTargets]);
-
   const updateMcp = useCallback(
     (patch: Partial<ProjectSettings['mcp']>) => {
       setSettings((current) => ({
@@ -3371,17 +1723,6 @@ export default function ProjectSettingsModal({
     [scan],
   );
 
-  const updateGameFeatures = useCallback(
-    (patch: Partial<ProjectSettings['gameFeatures']>) => {
-      setSettings((current) => ({
-        ...current,
-        gameFeatures: { ...current.gameFeatures, ...patch },
-      }));
-      setDirty(true);
-    },
-    [],
-  );
-
   const setGameProjectEnabled = useCallback((checked: boolean) => {
     setSettings((current) => ({
       ...current,
@@ -3404,35 +1745,6 @@ export default function ProjectSettingsModal({
     }));
     setDirty(true);
   }, []);
-
-  const updateSprite = useCallback(
-    (patch: Partial<ProjectSettings['sprite']>) => {
-      setSettings((current) => ({
-        ...current,
-        sprite: { ...current.sprite, ...patch },
-      }));
-      setDirty(true);
-    },
-    [],
-  );
-
-  const updateUiDesign = useCallback(
-    (patch: Partial<ProjectSettings['uiDesign']>) => {
-      setSettings((current) => ({
-        ...current,
-        // `mode` is just the viewed category tab; `defaultChannelId` is a single
-        // project-wide choice that can point at either a commercial or free-open
-        // channel. They are independent — switching tabs never reassigns the
-        // default, and choosing a default never changes the viewed tab.
-        uiDesign: {
-          ...current.uiDesign,
-          ...patch,
-        },
-      }));
-      setDirty(true);
-    },
-    [],
-  );
 
   const updateSkills = useCallback(
     (patch: Partial<ProjectSettings['skills']>) => {
@@ -3495,14 +1807,18 @@ export default function ProjectSettingsModal({
       const baseSettings = projectSettingsFromMetadata(
         latestRecord?.metadata ?? workspace.metadata,
       );
+      const nextWorkspacePath = latestRecord?.path || workspace.path || '';
       let nextScan: ProjectEnvironmentScan | null = null;
-      if ((latestRecord?.path || workspace.path || '').trim()) {
-        nextScan = await scanProjectEnvironment(latestRecord?.path || workspace.path);
+      if (isRemoteWorkspacePath(nextWorkspacePath)) {
+        setScan(null);
+        setLanguageScan(fallbackLanguageScanForEngine(baseSettings.engine));
+      } else if (nextWorkspacePath.trim()) {
+        nextScan = await scanProjectEnvironment(nextWorkspacePath);
         setScan(nextScan);
         if (tauriAvailable()) {
           try {
             const nextLanguageScan = await scanWorkspaceLanguages(
-              latestRecord?.path || workspace.path,
+              nextWorkspacePath,
               nextScan,
             );
             setLanguageScan(nextLanguageScan);
@@ -3523,7 +1839,6 @@ export default function ProjectSettingsModal({
         ? settingsWithDetectedGameFeatures(baseSettings, nextScan)
         : baseSettings;
       setSettings(nextSettings);
-      syncProjectSettingsToRuntime(nextSettings);
       setDirty(false);
     } catch (err) {
       setStatus(
@@ -3562,138 +1877,6 @@ export default function ProjectSettingsModal({
     if (tab !== 'skills') return;
     void loadGlobalSkillTargets();
   }, [tab, loadGlobalSkillTargets]);
-
-  const loadCapturePerfTargets = useCallback(async () => {
-    if (!tauriAvailable()) {
-      setCapturePerfTargets([]);
-      return;
-    }
-    try {
-      setCapturePerfTargets(await skillInstallTargets(workspacePath));
-    } catch (err) {
-      setCapturePerfTargets([]);
-      setCapturePerfStatus({
-        tone: 'err',
-        msg:
-          locale === 'zh-CN'
-            ? `读取安装目标失败：${describeError(err)}`
-            : `Failed to read install targets: ${describeError(err)}`,
-      });
-    }
-  }, [workspacePath, locale]);
-
-  useEffect(() => {
-    if (tab !== 'capturePerf') return;
-    void loadCapturePerfTargets();
-  }, [tab, loadCapturePerfTargets]);
-
-  const installCapturePerfSkill = useCallback(
-    async (definition: CapturePerfSkillDefinition) => {
-      if (!tauriAvailable()) {
-        setCapturePerfStatus({
-          tone: 'err',
-          msg: tr('一键安装需要在桌面应用中运行。', locale),
-        });
-        return;
-      }
-      if (!capturePerfInstallTarget) {
-        setCapturePerfStatus({
-          tone: 'err',
-          msg: locale === 'zh-CN' ? '未找到可用安装目标。' : 'No install target found.',
-        });
-        return;
-      }
-      setCapturePerfBusyId(definition.id);
-      setCapturePerfStatus(null);
-      try {
-        const common = {
-          name: definition.name,
-          slug: definition.slug,
-          targetId: capturePerfInstallTarget.id,
-          overwrite: true,
-          sourceUrl: definition.sourceUrl,
-          projectRoot: workspacePath,
-        };
-        const installed =
-          definition.installKind === 'remote-skill'
-            ? await installSkillFromUrl({
-                ...common,
-                url: definition.skillUrl ?? definition.sourceUrl,
-              })
-            : await installSkillFromText({
-                ...common,
-                text: definition.skillText ?? '',
-              });
-        await loadCapturePerfTargets();
-        updateGameFeatures({ capturePerf: true });
-        setCapturePerfStatus({
-          tone: 'ok',
-          msg:
-            locale === 'zh-CN'
-              ? `${installed.overwritten ? '已更新' : '已安装'} ${definition.title} · ${definition.version}`
-              : `${installed.overwritten ? 'Updated' : 'Installed'} ${definition.title} · ${definition.version}`,
-        });
-      } catch (err) {
-        setCapturePerfStatus({
-          tone: 'err',
-          msg:
-            locale === 'zh-CN'
-              ? `安装失败：${describeError(err)}`
-              : `Install failed: ${describeError(err)}`,
-        });
-      } finally {
-        setCapturePerfBusyId((current) => (current === definition.id ? null : current));
-      }
-    },
-    [
-      capturePerfInstallTarget,
-      loadCapturePerfTargets,
-      locale,
-      updateGameFeatures,
-      workspacePath,
-    ],
-  );
-
-  const uninstallCapturePerfSkill = useCallback(
-    async (definition: CapturePerfSkillDefinition) => {
-      const target = installedCapturePerfSkills.get(definition.slug.toLowerCase());
-      if (!target) {
-        setCapturePerfStatus({
-          tone: 'err',
-          msg: locale === 'zh-CN' ? '未找到已安装目录。' : 'Installed folder not found.',
-        });
-        return;
-      }
-      setCapturePerfBusyId(definition.id);
-      setCapturePerfStatus(null);
-      try {
-        const result = await uninstallSkill({
-          targetId: target.id,
-          slug: definition.slug,
-          projectRoot: workspacePath,
-        });
-        await loadCapturePerfTargets();
-        setCapturePerfStatus({
-          tone: 'ok',
-          msg:
-            locale === 'zh-CN'
-              ? `${result.removed ? '已卸载' : '已移除记录'} ${definition.title}`
-              : `${result.removed ? 'Uninstalled' : 'Removed record for'} ${definition.title}`,
-        });
-      } catch (err) {
-        setCapturePerfStatus({
-          tone: 'err',
-          msg:
-            locale === 'zh-CN'
-              ? `卸载失败：${describeError(err)}`
-              : `Uninstall failed: ${describeError(err)}`,
-        });
-      } finally {
-        setCapturePerfBusyId((current) => (current === definition.id ? null : current));
-      }
-    },
-    [installedCapturePerfSkills, loadCapturePerfTargets, locale, workspacePath],
-  );
 
   const loadOnlineMcpServers = useCallback(async (signal?: AbortSignal, query = '') => {
     setOnlineMcpLoading(true);
@@ -3854,7 +2037,6 @@ export default function ProjectSettingsModal({
         setRecord(nextRecord);
         const savedSettings = projectSettingsFromMetadata(nextRecord.metadata);
         setSettings(savedSettings);
-        syncProjectSettingsToRuntime(savedSettings);
         useStore.setState((state) => ({
           workspaces: state.workspaces.map((item) =>
             item.id === summary.id ? summary : item,
@@ -3922,6 +2104,33 @@ export default function ProjectSettingsModal({
       setStatus(tr('已移除项目文件夹', locale));
     },
     [persistFolders, settings.folders, locale],
+  );
+
+  const handleRemoteSaved = useCallback(
+    (_remotePath: string, config: RemoteWorkspaceConfig) => {
+      setRemoteDialogOpen(false);
+      void historyStore
+        .renameWorkspace(workspace.id, config.label)
+        .then((nextRecord) => {
+          const summary = workspaceSummaryFromRecord(nextRecord);
+          setRecord(nextRecord);
+          useStore.setState((state) => ({
+            workspaces: state.workspaces.map((item) =>
+              item.id === summary.id ? summary : item,
+            ),
+          }));
+          onWorkspaceUpdated?.(summary);
+          setStatus(tr('已保存', locale));
+        })
+        .catch((err) => {
+          setStatus(
+            locale === 'zh-CN'
+              ? `保存失败：${describeError(err)}`
+              : `Save failed: ${describeError(err)}`,
+          );
+        });
+    },
+    [onWorkspaceUpdated, workspace.id, locale],
   );
 
   const addCustomServer = useCallback(() => {
@@ -4870,13 +3079,91 @@ export default function ProjectSettingsModal({
   const content = (() => {
     if (tab === 'overview') {
       const detectedEngine = scan?.engine.engine ?? 'unknown';
+      const projectTypeLabel = isRemoteWorkspace
+        ? locale === 'zh-CN'
+          ? '云端项目'
+          : 'Cloud project'
+        : (scan?.engine.label ?? projectEngineLabel(detectedEngine));
       const folderEntries = uniqueWorkspaceHistory([
         workspacePath,
         ...settings.folders,
       ]);
       return (
         <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
-          <section className="rounded-md border border-border bg-panel-2 p-4 lg:col-span-2">
+          {isRemoteWorkspace ? (
+            <section className="rounded-md border border-border bg-panel-2 p-4 lg:col-span-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-fg">
+                    <Terminal size={16} className="text-accent-2" />
+                    {locale === 'zh-CN' ? '云端项目' : 'Cloud project'}
+                  </div>
+                  <div className="mt-1 text-xs leading-relaxed text-fg-faint">
+                    {locale === 'zh-CN'
+                      ? '这个项目绑定到当前用户。服务端按项目分配独立工作目录/容器；本地只保存项目 ID、仓库、分支和模型。'
+                      : 'This project belongs to the current user. The server assigns an isolated workspace/container per project; the local app stores only project ID, repo, branch and model.'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRemoteDialogOpen(true)}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-fg hover:bg-accent/20"
+                >
+                  <SettingsIcon size={14} />
+                  {locale === 'zh-CN' ? '云端项目设置' : 'Cloud project settings'}
+                </button>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="rounded border border-border-soft bg-bg-alt p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {locale === 'zh-CN' ? '项目 ID' : 'Project ID'}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-xs text-fg" title={remoteConfig?.projectId ?? ''}>
+                    {remoteConfig?.projectId || tr('未指定', locale)}
+                  </div>
+                </div>
+                <div className="rounded border border-border-soft bg-bg-alt p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {locale === 'zh-CN' ? '云端服务' : 'Cloud service'}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-fg">
+                    {remoteConfig?.serverUrl
+                      ? locale === 'zh-CN'
+                        ? '已连接'
+                        : 'Connected'
+                      : tr('未指定', locale)}
+                  </div>
+                </div>
+                <div className="rounded border border-border-soft bg-bg-alt p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {locale === 'zh-CN' ? '项目仓库' : 'Project repo'}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-fg" title={remoteConfig?.repoUrl ?? ''}>
+                    {remoteConfig?.repoUrl || tr('未指定', locale)}
+                  </div>
+                </div>
+                <div className="rounded border border-border-soft bg-bg-alt p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {locale === 'zh-CN' ? '项目分支' : 'Project branch'}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-fg">
+                    {remoteConfig?.branch || tr('未指定', locale)}
+                  </div>
+                </div>
+                <div className="rounded border border-border-soft bg-bg-alt p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {locale === 'zh-CN' ? '执行模型' : 'Runner model'}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-fg">
+                    {remoteConfig
+                      ? `${remoteConfig.adapter}${remoteConfig.model ? ` · ${remoteConfig.model}` : ''}`
+                      : tr('未指定', locale)}
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : (
+            <section className="rounded-md border border-border bg-panel-2 p-4 lg:col-span-2">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-sm font-semibold text-fg">
@@ -4967,7 +3254,8 @@ export default function ProjectSettingsModal({
                 })
               )}
             </ul>
-          </section>
+            </section>
+          )}
 
           <section className="rounded-md border border-border bg-panel-2 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -4977,7 +3265,7 @@ export default function ProjectSettingsModal({
                 </div>
                 <div className="mt-1 flex items-center gap-2 text-lg font-semibold text-fg">
                   <Gamepad2 size={18} className="text-accent" />
-                  {scan?.engine.label ?? tr('检测中', locale)}
+                  {projectTypeLabel}
                 </div>
                 <div className="mt-1 text-xs text-fg-faint">
                   {scan?.engine.version ?? projectEngineLabel(detectedEngine)}
@@ -5006,8 +3294,8 @@ export default function ProjectSettingsModal({
                 label={locale === 'zh-CN' ? '这是游戏项目' : 'This is a game project'}
                 hint={
                   locale === 'zh-CN'
-                    ? '开启后显示 Mesh、在线模型库、UI、绑骨、抓帧/性能、UE 蓝图和游戏命令等游戏项目 Tab。团队组织在信息流旁的组织架构中查看，岗位属性与 Skill 可双击节点在文件内容页打开。自动检测会识别 Unity、Unreal Engine、Godot 和 Cocos；其他引擎可在这里手动开启。'
-                    : 'Shows game project tabs such as Mesh, online model library, UI, rigging, capture/performance, UE Blueprint, and game commands. Team organization lives beside the stream; double-click a role node to open its properties and Skills in the file content view. Auto-detect recognizes Unity, Unreal Engine, Godot, and Cocos; enable this manually for other engines.'
+                    ? '标记当前工作区为游戏项目，用于显示 UE 蓝图等项目级工具。命令、Mesh、在线模型库、Sprite、UI、绑骨和抓帧性能已迁移到全局设置。'
+                    : 'Marks this workspace as a game project so project-scoped tools such as UE Blueprint are shown. Commands, Mesh, model libraries, Sprite, UI, rigging, and capture/performance live in global Settings.'
                 }
                 checked={settings.gameFeatures.isGameProject}
                 onChange={setGameProjectEnabled}
@@ -5125,300 +3413,6 @@ export default function ProjectSettingsModal({
               </div>
             </div>
           </section>
-        </div>
-      );
-    }
-
-    if (tab === 'mesh') {
-      const detectedEngine = scan?.engine.engine ?? 'unknown';
-      const autoMode = settings.automation.autoDetect;
-      return (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-border bg-panel-2 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">{tr('Mesh 渠道', locale)}</div>
-                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? `当前检测：${scan?.engine.label ?? '未识别'}。自动检测开启时，UE / Unity / Godot / Cocos 项目会默认开启 Mesh 渠道；非游戏项目默认关闭。`
-                    : `Detected: ${scan?.engine.label ?? 'Unrecognized'}. When auto-detect is on, UE / Unity / Godot / Cocos projects enable the Mesh channel by default; non-game projects keep it off.`}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  'rounded border px-2 py-0.5 text-[11px]',
-                  detectedEngine === 'unknown'
-                    ? 'border-border-soft bg-bg-alt text-fg-faint'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-                )}
-              >
-                {autoMode ? tr('自动检测', locale) : tr('手动设置', locale)}
-              </span>
-            </div>
-          </section>
-
-          <ToggleRow
-            label={tr('启用 Mesh 渠道', locale)}
-            hint={tr('控制当前项目是否启用 3D 模型生成入口。', locale)}
-            checked={settings.gameFeatures.meshGeneration}
-            onChange={(checked) => updateGameFeatures({ meshGeneration: checked })}
-          />
-
-          <div className="rounded-md border border-border bg-panel-2 p-4 text-xs text-fg-faint">
-            <span className="inline-flex items-center gap-1 rounded border border-border-soft bg-bg-alt px-2 py-1">
-              <Box size={12} />
-              Mesh：
-              {settings.gameFeatures.meshGeneration
-                ? tr('开启', locale)
-                : locale === 'zh-CN'
-                  ? '关闭'
-                  : 'Off'}
-            </span>
-          </div>
-
-          <ThreeDGenerationSettingsPanel locale={locale} embedded />
-        </div>
-      );
-    }
-
-    if (tab === 'meshLibrary') {
-      return <MeshLibrarySettings />;
-    }
-
-    if (tab === 'sprite') {
-      return (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-border bg-panel-2 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">
-                  {locale === 'zh-CN' ? 'Sprite 动画' : 'Sprite animation'}
-                </div>
-                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? '控制当前项目是否启用 Sprite 生成入口。生成来源复用生图设置；这里维护 Sprite 合约参数、raw sheet 规格和后处理验收目标。'
-                    : 'Controls whether this project enables Sprite generation. The image source reuses image settings; this tab owns Sprite contract parameters, raw-sheet specs, and postprocess acceptance targets.'}
-                </div>
-              </div>
-              <span className="rounded border border-border-soft bg-bg-alt px-2 py-0.5 text-[11px] text-fg-faint">
-                /sprite-mode-start
-              </span>
-            </div>
-          </section>
-
-          <ToggleRow
-            label={tr('启用 Sprite 模式', locale)}
-            hint={tr(
-              '开启后，输入 /sprite-mode-start 或 /sprite 会按下方参数生成可规范化的 raw sheet，并为后处理与验收准备输入。',
-              locale,
-            )}
-            checked={settings.sprite.enabled}
-            onChange={(checked) => updateSprite({ enabled: checked })}
-          />
-
-          <SpritePipelineDiagram locale={locale} />
-
-          <SpriteGenerationSettingsPanel
-            locale={locale}
-            embedded
-          />
-        </div>
-      );
-    }
-
-    if (tab === 'uiDesign') {
-      const detectedEngine = scan?.engine.engine ?? 'unknown';
-      const autoMode = settings.automation.autoDetect;
-      return (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-border bg-panel-2 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">{tr('UI 渠道', locale)}</div>
-                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? '给游戏项目设计 UI 时使用的默认设计工具渠道。可在商用路线和免费开源路线之间切换，并为项目指定默认渠道。'
-                    : 'The default design-tool channel used when designing UI for game projects. Switch between commercial and free/open-source tracks and set a default channel for the project.'}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  'rounded border px-2 py-0.5 text-[11px]',
-                  detectedEngine === 'unknown'
-                    ? 'border-border-soft bg-bg-alt text-fg-faint'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-                )}
-              >
-                {autoMode
-                  ? locale === 'zh-CN'
-                    ? '游戏项目自动开启'
-                    : 'Auto-enabled for game projects'
-                  : tr('手动设置', locale)}
-              </span>
-            </div>
-          </section>
-
-          <ToggleRow
-            label={tr('启用 UI 渠道', locale)}
-            hint={tr('开启后，当前项目的游戏 UI 设计任务会优先使用这里选择的默认渠道。', locale)}
-            checked={settings.uiDesign.enabled}
-            onChange={(checked) => updateUiDesign({ enabled: checked })}
-          />
-
-          <UiDesignChannelSettingsPanel
-            projectUiDesign={settings.uiDesign}
-            onProjectUiDesignChange={updateUiDesign}
-          />
-        </div>
-      );
-    }
-
-    if (tab === 'rigging') {
-      const detectedEngine = scan?.engine.engine ?? 'unknown';
-      const autoMode = settings.automation.autoDetect;
-      return (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-border bg-panel-2 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">{tr('绑定渠道', locale)}</div>
-                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? `当前检测：${scan?.engine.label ?? '未识别'}。自动检测开启时，UE / Unity / Godot / Cocos 项目会默认开启自动骨骼绑定；非游戏项目默认关闭。`
-                    : `Detected: ${scan?.engine.label ?? 'Unrecognized'}. When auto-detect is on, UE / Unity / Godot / Cocos projects enable auto-rigging by default; non-game projects keep it off.`}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  'rounded border px-2 py-0.5 text-[11px]',
-                  detectedEngine === 'unknown'
-                    ? 'border-border-soft bg-bg-alt text-fg-faint'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-                )}
-              >
-                {autoMode ? tr('自动检测', locale) : tr('手动设置', locale)}
-              </span>
-            </div>
-          </section>
-
-          <ToggleRow
-            label={tr('启用绑定渠道', locale)}
-            hint={tr('控制当前项目是否启用自动绑骨流程。', locale)}
-            checked={settings.gameFeatures.rigging}
-            onChange={(checked) => updateGameFeatures({ rigging: checked })}
-          />
-
-          <div className="rounded-md border border-border bg-panel-2 p-4 text-xs text-fg-faint">
-            <span className="inline-flex items-center gap-1 rounded border border-border-soft bg-bg-alt px-2 py-1">
-              <Bone size={12} />
-              {locale === 'zh-CN' ? '绑定：' : 'Rigging: '}
-              {settings.gameFeatures.rigging
-                ? tr('开启', locale)
-                : locale === 'zh-CN'
-                  ? '关闭'
-                  : 'Off'}
-            </span>
-          </div>
-
-          <RiggingSettingsPanel locale={locale} embedded />
-        </div>
-      );
-    }
-
-    if (tab === 'capturePerf') {
-      const detectedEngine = scan?.engine.engine ?? 'unknown';
-      const autoMode = settings.automation.autoDetect;
-      const desktop = tauriAvailable();
-      return (
-        <div className="grid gap-4">
-          <section className="rounded-md border border-border bg-panel-2 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-fg">{tr('抓帧/性能', locale)}</div>
-                <div className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? `当前检测：${scan?.engine.label ?? '未识别'}。这里集中安装 RenderDoc、Nsight Graphics、Unreal Insights、Unity Profiler、Perfetto 和 Android 内存分析 Skill。`
-                    : `Detected: ${scan?.engine.label ?? 'Unrecognized'}. Install RenderDoc, Nsight Graphics, Unreal Insights, Unity Profiler, Perfetto, and Android memory analysis Skills here.`}
-                </div>
-              </div>
-              <span
-                className={cn(
-                  'rounded border px-2 py-0.5 text-[11px]',
-                  detectedEngine === 'unknown'
-                    ? 'border-border-soft bg-bg-alt text-fg-faint'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-                )}
-              >
-                {autoMode ? tr('自动检测', locale) : tr('手动设置', locale)}
-              </span>
-            </div>
-          </section>
-
-          <ToggleRow
-            label={tr('启用抓帧/性能', locale)}
-            hint={tr(
-              '控制当前项目是否启用抓帧、GPU/CPU Trace 和 Android 性能分析 Skill。',
-              locale,
-            )}
-            checked={settings.gameFeatures.capturePerf}
-            onChange={(checked) => updateGameFeatures({ capturePerf: checked })}
-          />
-
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-panel-2 px-4 py-3 text-xs text-fg-faint">
-            <div className="min-w-0">
-              {locale === 'zh-CN' ? '安装目标：' : 'Install target: '}
-              <span className="text-fg">
-                {capturePerfInstallTarget
-                  ? `${capturePerfInstallTarget.scope === 'project' ? tr('项目', locale) : tr('全局', locale)} · ${capturePerfInstallTarget.label}`
-                  : desktop
-                    ? locale === 'zh-CN'
-                      ? '未找到'
-                      : 'Not found'
-                    : locale === 'zh-CN'
-                      ? '桌面版可安装'
-                      : 'Desktop app required'}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => void loadCapturePerfTargets()}
-              disabled={!desktop}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg-alt px-2.5 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
-            >
-              <RefreshCw size={13} />
-              {tr('重新检测', locale)}
-            </button>
-          </div>
-
-          {capturePerfStatus ? (
-            <div
-              className={cn(
-                'rounded-md border px-3 py-2 text-[11px] leading-relaxed',
-                capturePerfStatus.tone === 'ok'
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'
-                  : 'border-red-500/30 bg-red-500/10 text-red-200',
-              )}
-            >
-              {capturePerfStatus.msg}
-            </div>
-          ) : null}
-
-          <div className="grid gap-3 lg:grid-cols-2">
-            {CAPTURE_PERF_SKILLS.map((definition) => (
-              <CapturePerfSkillCard
-                key={definition.id}
-                definition={definition}
-                locale={locale}
-                desktop={desktop}
-                installedTarget={installedCapturePerfSkills.get(
-                  definition.slug.toLowerCase(),
-                )}
-                installing={capturePerfBusyId === definition.id}
-                onInstall={() => void installCapturePerfSkill(definition)}
-                onUninstall={() => void uninstallCapturePerfSkill(definition)}
-              />
-            ))}
-          </div>
         </div>
       );
     }
@@ -5661,10 +3655,6 @@ export default function ProjectSettingsModal({
           </section>
         </div>
       );
-    }
-
-    if (tab === 'commands') {
-      return <ProjectCommandsSettings />;
     }
 
     if (tab === 'mcp') {
@@ -6908,7 +4898,7 @@ export default function ProjectSettingsModal({
                 : tr('配置已同步', locale))}
           </div>
           <div className="flex flex-wrap gap-2">
-            {workspacePath ? (
+            {workspacePath && !isRemoteWorkspace ? (
               <button
                 type="button"
                 onClick={() => void openLocalPath(workspacePath, { reveal: true })}
@@ -6930,6 +4920,14 @@ export default function ProjectSettingsModal({
           </div>
         </footer>
       </div>
+      {remoteDialogOpen && isRemoteWorkspace ? (
+        <RemoteWorkspaceDialog
+          locale={locale}
+          existing={editableRemoteConfig}
+          onClose={() => setRemoteDialogOpen(false)}
+          onSaved={handleRemoteSaved}
+        />
+      ) : null}
     </div>
   );
 }

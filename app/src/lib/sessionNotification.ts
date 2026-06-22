@@ -19,9 +19,9 @@ export interface SessionCompletionNotificationInput {
 }
 
 const FALLBACK_BODY: Record<SessionNotificationKind, string> = {
-  success: '可以回到 FreeUltraCode 查看结果。',
-  error: '请回到 FreeUltraCode 查看错误详情。',
-  waitingInput: '请回到 FreeUltraCode 选择或输入后继续。',
+  success: '可以回到 UltraGameStudio 查看结果。',
+  error: '请回到 UltraGameStudio 查看错误详情。',
+  waitingInput: '请回到 UltraGameStudio 选择或输入后继续。',
 };
 
 const WEB_NOTIFICATION_CLOSE_MS: Record<SessionNotificationKind, number> = {

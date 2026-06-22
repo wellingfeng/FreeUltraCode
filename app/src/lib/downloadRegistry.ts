@@ -98,6 +98,14 @@ export interface AssetEntry {
   meta?: Record<string, unknown>;
 }
 
+export function assetMatchesWorkspace(
+  entry: Pick<AssetEntry, 'workspaceId'>,
+  workspaceId: string | null | undefined,
+): boolean {
+  if (!workspaceId) return true;
+  return entry.workspaceId == null || entry.workspaceId === workspaceId;
+}
+
 /* ----------------------------- legacy aliases ----------------------------- */
 
 /** @deprecated Use {@link AssetStatus}. `downloading` maps to `pending`. */
@@ -117,8 +125,8 @@ export interface DownloadEntry {
   finishedAt?: number;
 }
 
-const STORAGE_KEY = 'freeultracode.assets.v1';
-const LEGACY_STORAGE_KEY = 'freeultracode.downloads.v1';
+const STORAGE_KEY = 'ultragamestudio.assets.v1';
+const LEGACY_STORAGE_KEY = 'ultragamestudio.downloads.v1';
 /**
  * Path keys the user explicitly cleared from the Asset Hub. The disk-cache poll
  * (`mergeCachedAssetsFromDisk`) would otherwise re-discover the still-on-disk
@@ -126,7 +134,7 @@ const LEGACY_STORAGE_KEY = 'freeultracode.downloads.v1';
  * keeps "清空已完成" sticky across the 15s poll and reloads, while a genuinely
  * new generation at the same path lifts the dismissal so the asset reappears.
  */
-const DISMISSED_STORAGE_KEY = 'freeultracode.assets.dismissed.v1';
+const DISMISSED_STORAGE_KEY = 'ultragamestudio.assets.dismissed.v1';
 const MAX_PERSISTED = 1000;
 const MAX_DISMISSED = 5000;
 /**
@@ -345,6 +353,10 @@ function normalizeLocalPath(path: string): string {
   return pathFromFileUrl(path) ?? path.trim();
 }
 
+function hasLocalDiskPath(path: string | undefined): boolean {
+  return Boolean(path && !/^https?:\/\//i.test(path.trim()));
+}
+
 let counter = 0;
 function nextId(): string {
   counter += 1;
@@ -370,7 +382,7 @@ export function getAssets(): AssetEntry[] {
 /**
  * Fold disk-backed cached files into the registry. This is the durable fallback
  * for assets whose localStorage row was lost while the file still exists under
- * the workspace `.freeultracode` cache.
+ * the workspace `.ultragamestudio` cache.
  */
 export function mergeCachedAssetsFromDisk(files: CachedAssetFileInput[]): void {
   hydrate();
@@ -526,7 +538,7 @@ const MANAGED_ASSET_TERMINATORS = new Set([
   '？',
 ]);
 const MANAGED_ASSET_PATH_RE =
-  /(?:file:\/\/\/)?(?:[A-Za-z]:[/\\]|[/\\]{1,2}|~[/\\]|\$\w+[/\\]|\.[/\\])?[^\s"'`<>()[\]{}]*?\.freeultracode[/\\][^\s"'`<>()[\]{}]*?\.(?:jpeg|pjpeg|apng|jfif|webp|avif|gltf|blend|html|jpg|jpe|pjp|gif|bmp|dib|ico|cur|svg|png|mp4|webm|mov|m4v|mp3|wav|ogg|flac|aac|m4a|glb|obj|stl|fbx|ply|usdz|zip|json|htm|md|txt|pdf)(?=$|[\s"'`<>()[\]{}.,;:!?，。；、！？])/gi;
+  /(?:file:\/\/\/)?(?:[A-Za-z]:[/\\]|[/\\]{1,2}|~[/\\]|\$\w+[/\\]|\.[/\\])?[^\s"'`<>()[\]{}]*?\.ultragamestudio[/\\][^\s"'`<>()[\]{}]*?\.(?:jpeg|pjpeg|apng|jfif|webp|avif|gltf|blend|html|jpg|jpe|pjp|gif|bmp|dib|ico|cur|svg|png|mp4|webm|mov|m4v|mp3|wav|ogg|flac|aac|m4a|glb|obj|stl|fbx|ply|usdz|zip|json|htm|md|txt|pdf)(?=$|[\s"'`<>()[\]{}.,;:!?，。；、！？])/gi;
 const ASSET_MESSAGE_LINK_MAX_DISTANCE_MS = 2 * 60 * 60 * 1000;
 
 function extensionFromPath(path: string): string {
@@ -548,8 +560,8 @@ function kindForManagedPath(path: string): AssetKind {
 
 function managedAssetPathEndIndex(path: string): number | null {
   const lower = path.toLowerCase();
-  const freeIdx = lower.indexOf('.freeultracode');
-  const start = freeIdx >= 0 ? freeIdx + '.freeultracode'.length : 0;
+  const freeIdx = lower.indexOf('.ultragamestudio');
+  const start = freeIdx >= 0 ? freeIdx + '.ultragamestudio'.length : 0;
 
   for (let i = start; i < lower.length; i += 1) {
     if (lower[i] !== '.') continue;
@@ -774,7 +786,7 @@ function messageCompatible(
  * This is the recovery path for durable cache files discovered from disk after
  * their localStorage row was lost, and for older generated images whose chat
  * markdown only contained an inline/remote preview rather than the final local
- * `.freeultracode` path.
+ * `.ultragamestudio` path.
  */
 export function linkKnownAssetsToNearestMessages(input: {
   messages: AssetMessageLinkCandidate[];
@@ -852,6 +864,8 @@ export function registerAsset(input: RegisterAssetInput): string {
   const id = nextId();
   const status = input.status ?? 'pending';
   const localPath = input.localPath ? normalizeLocalPath(input.localPath) : undefined;
+  const origin =
+    hasLocalDiskPath(localPath) ? 'local' : (input.origin ?? (input.remoteUrl ? 'remote' : 'local'));
   // A new registration at a previously-cleared path means the user produced a
   // fresh asset there; let it surface again.
   undismissPath(localPath);
@@ -864,7 +878,7 @@ export function registerAsset(input: RegisterAssetInput): string {
     id,
     kind: input.kind,
     source: input.source,
-    origin: input.origin ?? (input.remoteUrl ? 'remote' : 'local'),
+    origin,
     title,
     status,
     localPath,
@@ -898,14 +912,16 @@ export interface MarkAssetDoneInput {
 /** Mark a pending asset as completed. */
 export function markAssetDone(id: string, result?: MarkAssetDoneInput): void {
   hydrate();
-  if (result?.localPath) undismissPath(normalizeLocalPath(result.localPath));
+  const localPath = result?.localPath ? normalizeLocalPath(result.localPath) : undefined;
+  if (localPath) undismissPath(localPath);
   commit(
     entries.map((entry) =>
       entry.id === id
         ? {
             ...entry,
             status: 'success',
-            localPath: result?.localPath ? normalizeLocalPath(result.localPath) : entry.localPath,
+            origin: hasLocalDiskPath(localPath ?? entry.localPath) ? 'local' : entry.origin,
+            localPath: localPath ?? entry.localPath,
             remoteUrl: result?.remoteUrl ?? entry.remoteUrl,
             previewUrl: result?.previewUrl ?? entry.previewUrl,
             sizeBytes: result?.sizeBytes ?? entry.sizeBytes,
@@ -941,18 +957,24 @@ export function removeAsset(id: string): void {
   commit(entries.filter((entry) => entry.id !== id));
 }
 
-/** Clear every terminal entry, keeping anything still pending. */
-export function clearFinishedAssets(): void {
+/** Clear terminal entries matched by `predicate`, keeping anything still pending. */
+export function clearFinishedAssets(
+  predicate: (entry: AssetEntry) => boolean = () => true,
+): void {
   hydrate();
   let changed = false;
   for (const entry of entries) {
-    if (entry.status !== 'pending' && entry.localPath) {
+    if (entry.status !== 'pending' && predicate(entry) && entry.localPath) {
       dismissedPaths.add(pathKey(entry.localPath));
       changed = true;
     }
   }
   if (changed) persistDismissed();
-  commit(entries.filter((entry) => entry.status === 'pending'));
+  commit(
+    entries.filter(
+      (entry) => entry.status === 'pending' || !predicate(entry),
+    ),
+  );
 }
 
 /** @deprecated Use {@link removeAsset}. */

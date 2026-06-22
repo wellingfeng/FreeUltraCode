@@ -164,7 +164,7 @@ function toFlowEdge(
   const isData = edge.kind === DATA;
   const animated = shouldAnimateEdge(edge, runState);
   // Static gradient ids (mounted by <EdgeDefs/>) keep this projection pure.
-  const stroke = isData ? 'url(#fuc-edge-data)' : 'url(#fuc-edge-exec)';
+  const stroke = isData ? 'url(#ugs-edge-data)' : 'url(#ugs-edge-exec)';
   // Marker can't reference a gradient, so use each gradient's end-stop color.
   const markerColor = isData ? 'var(--accent)' : 'var(--accent-3)';
   return {
@@ -181,7 +181,7 @@ function toFlowEdge(
       strokeDasharray: isData ? '6 4' : undefined,
       strokeLinecap: 'round',
       // Glow only along the active run path so idle canvases stay calm.
-      filter: animated ? 'url(#fuc-edge-glow)' : undefined,
+      filter: animated ? 'url(#ugs-edge-glow)' : undefined,
     },
     markerEnd: {
       type: MarkerType.ArrowClosed,

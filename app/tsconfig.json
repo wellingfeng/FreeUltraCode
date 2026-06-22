@@ -17,9 +17,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@ugs/protocol": ["../packages/protocol/index.ts"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "../packages/protocol/index.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

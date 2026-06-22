@@ -53,7 +53,7 @@ export function ExecIn({ id, top }: PinProps) {
       type="target"
       position={Position.Left}
       id={id}
-      className="fuc-pin-exec"
+      className="ugs-pin-exec"
       style={{ ...execStyle, top, left: -6 }}
     />
   );
@@ -66,7 +66,7 @@ export function ExecOut({ id, top }: PinProps) {
       type="source"
       position={Position.Right}
       id={id}
-      className="fuc-pin-exec"
+      className="ugs-pin-exec"
       style={{ ...execStyle, top, right: -6 }}
     />
   );
@@ -79,7 +79,7 @@ export function DataIn({ id, top }: PinProps) {
       type="target"
       position={Position.Left}
       id={id}
-      className="fuc-pin-data"
+      className="ugs-pin-data"
       style={{ ...dataStyle, top, left: -6 }}
     />
   );
@@ -92,7 +92,7 @@ export function DataOut({ id, top }: PinProps) {
       type="source"
       position={Position.Right}
       id={id}
-      className="fuc-pin-data"
+      className="ugs-pin-data"
       style={{ ...dataStyle, top, right: -6 }}
     />
   );

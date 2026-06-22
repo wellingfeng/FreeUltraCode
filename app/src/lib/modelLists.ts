@@ -11,12 +11,12 @@ import {
 import { listLocalModels, listRemoteModels, tauriAvailable } from '@/lib/tauri';
 import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
 
-const MODEL_LIST_CACHE_STORAGE = 'fuc_model_list_cache_v1';
+const MODEL_LIST_CACHE_STORAGE = 'ugs_model_list_cache_v1';
 const MODEL_LIST_CACHE_REL_PATH = 'settings/modelListCache.v1.json';
 // Models the user explicitly removed (via the × button), keyed by the same cache
 // key. These stay hidden even if they are built-in catalog entries or come back
 // from a later "fetch models" call, so a deleted/outdated model does not reappear.
-const MODEL_LIST_HIDDEN_STORAGE = 'fuc_model_list_hidden_v1';
+const MODEL_LIST_HIDDEN_STORAGE = 'ugs_model_list_hidden_v1';
 const MODEL_LIST_HIDDEN_REL_PATH = 'settings/modelListHidden.v1.json';
 
 interface CachedModelList {
@@ -77,7 +77,7 @@ function writeCache(cache: Record<string, CachedModelList>): void {
     console.error('[modelLists] failed to persist model cache');
     return;
   }
-  window.dispatchEvent(new Event('fuc:model-list-changed'));
+  window.dispatchEvent(new Event('ugs:model-list-changed'));
 }
 
 function sameModels(a: string[], b: string[]): boolean {
@@ -183,7 +183,7 @@ function writeHidden(hidden: Record<string, string[]>): void {
     console.error('[modelLists] failed to persist hidden models');
     return;
   }
-  window.dispatchEvent(new Event('fuc:model-list-changed'));
+  window.dispatchEvent(new Event('ugs:model-list-changed'));
 }
 
 function hiddenSet(key: string): Set<string> {

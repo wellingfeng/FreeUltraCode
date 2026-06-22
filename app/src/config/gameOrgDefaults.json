@@ -3,8 +3,8 @@
   "label": "制作人",
   "icon": "producer",
   "expertIds": ["producer"],
-  "summary": "项目总负责人，统一目标、范围、排期、风险和跨部门协作。",
-  "role": "把需求拆成可交付阶段，协调策划、技术、美术、音频、QA 和发行运营。",
+  "summary": "项目总视角，统一目标、范围、排期、风险和跨职能约束。",
+  "role": "把需求整理成可交付阶段，融合策划、技术、美术、音频、QA 和发行运营视角。",
   "skills": [
     {
       "id": "start-new-game",
@@ -23,7 +23,7 @@
       "id": "scope-change",
       "label": "修改项目目标",
       "summary": "评估范围变更对设计、技术、美术、排期和质量门禁的影响。",
-      "prompt": "修改游戏项目目标：请评估范围变化、受影响团队、必须重做的产物、延期风险和新的验收口径。",
+      "prompt": "修改游戏项目目标：请评估范围变化、受影响视角、必须重做的产物、延期风险和新的验收口径。",
       "collaboratorExpertIds": [
         "producer",
         "creative-director",
@@ -78,14 +78,23 @@
               "label": "设计玩法机制",
               "summary": "把一个玩法点拆成规则、状态、输入和反馈闭环。",
               "prompt": "设计玩法机制：请把这个玩法点拆成规则、状态机、玩家输入、即时反馈、失败/胜利条件和边界情况，并给出最小可玩验证方案。",
-              "collaboratorExpertIds": ["game-designer", "systems-designer", "gameplay-programmer"]
+              "collaboratorExpertIds": [
+                "game-designer",
+                "systems-designer",
+                "gameplay-programmer"
+              ]
             },
             {
               "id": "tune-game-feel",
               "label": "打磨手感",
               "summary": "调输入响应、节奏、反馈曲线和打击感。",
               "prompt": "打磨玩法手感：请列出影响手感的参数（输入延迟、动画取消、命中反馈、镜头/震动），给出建议数值区间、调参顺序和验证方法。",
-              "collaboratorExpertIds": ["game-designer", "gameplay-programmer", "visual-effects-artist", "sound-designer"]
+              "collaboratorExpertIds": [
+                "game-designer",
+                "gameplay-programmer",
+                "visual-effects-artist",
+                "sound-designer"
+              ]
             }
           ]
         },
@@ -100,14 +109,22 @@
               "label": "设计系统循环",
               "summary": "搭建资源产出—消耗—成长的系统闭环和依赖关系。",
               "prompt": "设计系统循环：请给出资源/状态、产出与消耗路径、系统间依赖、成长动机和长期留存钩子，并标出可能失衡的耦合点。",
-              "collaboratorExpertIds": ["systems-designer", "economy-designer", "game-designer"]
+              "collaboratorExpertIds": [
+                "systems-designer",
+                "economy-designer",
+                "game-designer"
+              ]
             },
             {
               "id": "systems-review",
               "label": "评审系统设计",
               "summary": "检查系统复杂度、耦合、调参面和可扩展性。",
               "prompt": "评审系统设计：请从规则清晰度、系统耦合、调参面、边界与作弊空间、可扩展性检查风险，并给出简化或拆分建议。",
-              "collaboratorExpertIds": ["systems-designer", "economy-designer", "qa-tester"]
+              "collaboratorExpertIds": [
+                "systems-designer",
+                "economy-designer",
+                "qa-tester"
+              ]
             }
           ]
         },
@@ -122,14 +139,22 @@
               "label": "搭建经济模型",
               "summary": "定义货币、产出、消耗、通胀控制和回收路径。",
               "prompt": "搭建经济模型：请给出货币种类、产出与消耗来源、回收/沉淀机制、通胀控制策略和关键平衡指标，并附可调参表结构。",
-              "collaboratorExpertIds": ["economy-designer", "systems-designer", "analytics-engineer"]
+              "collaboratorExpertIds": [
+                "economy-designer",
+                "systems-designer",
+                "analytics-engineer"
+              ]
             },
             {
               "id": "tune-balance-curve",
               "label": "调平衡曲线",
               "summary": "拟合成长曲线、难度曲线和掉落/付费概率。",
               "prompt": "调平衡曲线：请给出成长/难度曲线的目标形状、关键节点数值、掉落或付费概率设计和验证用的数据指标，并说明如何回归校验。",
-              "collaboratorExpertIds": ["economy-designer", "systems-designer", "analytics-engineer"]
+              "collaboratorExpertIds": [
+                "economy-designer",
+                "systems-designer",
+                "analytics-engineer"
+              ]
             }
           ]
         },
@@ -144,14 +169,22 @@
               "label": "设计关卡蓝图",
               "summary": "规划节奏、引导、难度曲线和空间可读性。",
               "prompt": "设计关卡蓝图：请给出关卡目标、节奏图、玩家路径与引导信号、难度曲线、奖励点和可读性要点，并标出需要 blockout 验证的环节。",
-              "collaboratorExpertIds": ["level-designer", "game-designer", "art-director"]
+              "collaboratorExpertIds": [
+                "level-designer",
+                "game-designer",
+                "art-director"
+              ]
             },
             {
               "id": "level-review",
               "label": "评审关卡",
               "summary": "检查玩家路径、卡点、引导和难度跳变。",
               "prompt": "评审关卡：请从玩家路径清晰度、卡点与迷路风险、引导信号、难度跳变和镜头可读性检查问题，并给出修改建议。",
-              "collaboratorExpertIds": ["level-designer", "game-designer", "qa-tester"]
+              "collaboratorExpertIds": [
+                "level-designer",
+                "game-designer",
+                "qa-tester"
+              ]
             }
           ]
         },
@@ -166,14 +199,24 @@
               "label": "搭建叙事主线",
               "summary": "把世界观、主线和角色弧线整合成可推进的结构。",
               "prompt": "搭建叙事主线：请给出故事主线结构、关键转折、角色弧线、世界观规则约束和与玩法节奏的对应关系，并标出叙事与系统的衔接点。",
-              "collaboratorExpertIds": ["narrative-director", "writer", "world-builder", "level-designer"]
+              "collaboratorExpertIds": [
+                "narrative-director",
+                "writer",
+                "world-builder",
+                "level-designer"
+              ]
             },
             {
               "id": "narrative-gameplay-sync",
               "label": "叙事与玩法对齐",
               "summary": "让剧情节点、关卡和系统进度互相支撑。",
               "prompt": "叙事与玩法对齐：请把剧情节点映射到关卡/系统进度，检查叙事节奏与玩法节奏是否冲突，并给出过场、触发和回报点的安排。",
-              "collaboratorExpertIds": ["narrative-director", "game-designer", "level-designer", "writer"]
+              "collaboratorExpertIds": [
+                "narrative-director",
+                "game-designer",
+                "level-designer",
+                "writer"
+              ]
             }
           ],
           "children": [
@@ -187,8 +230,12 @@
                   "id": "narrative-bible",
                   "label": "制定叙事圣经",
                   "summary": "统一基调、主题、角色与叙事呈现规则。",
-                  "prompt": "制定叙事圣经：请给出主题与基调、核心冲突、主要角色弧线、叙事呈现规则（过场/环境叙事/对白）和团队执行约束，并标出与玩法的衔接。",
-                  "collaboratorExpertIds": ["narrative-director", "writer", "world-builder"]
+                  "prompt": "制定叙事圣经：请给出主题与基调、核心冲突、主要角色弧线、叙事呈现规则（过场/环境叙事/对白）和跨职能约束，并标出与玩法的衔接。",
+                  "collaboratorExpertIds": [
+                    "narrative-director",
+                    "writer",
+                    "world-builder"
+                  ]
                 }
               ]
             },
@@ -203,7 +250,11 @@
                   "label": "撰写对白脚本",
                   "summary": "产出角色一致、可分支的对白与文本。",
                   "prompt": "撰写对白脚本：请按角色声音和情境产出对白，标注分支条件、情绪节拍和需要本地化的变量，并保持与世界观设定一致。",
-                  "collaboratorExpertIds": ["writer", "narrative-director", "localization-lead"]
+                  "collaboratorExpertIds": [
+                    "writer",
+                    "narrative-director",
+                    "localization-lead"
+                  ]
                 }
               ]
             },
@@ -218,7 +269,11 @@
                   "label": "定义世界规则",
                   "summary": "整理地理、势力、历史和设定一致性规则。",
                   "prompt": "定义世界规则：请给出地理/势力/历史框架、内部一致性规则、可视化与玩法可利用的设定钩子，并标出需要美术和关卡承接的元素。",
-                  "collaboratorExpertIds": ["world-builder", "narrative-director", "art-director"]
+                  "collaboratorExpertIds": [
+                    "world-builder",
+                    "narrative-director",
+                    "art-director"
+                  ]
                 }
               ]
             }
@@ -236,8 +291,8 @@
         {
           "id": "feature-development",
           "label": "发起功能开发",
-          "summary": "让客户端、引擎、后端、技术美术和 QA 协同拆解功能。",
-          "prompt": "发起功能开发：请以技术总监牵头，拆解客户端、引擎、后端、技术美术和 QA 的分工、接口、风险和验收标准。",
+          "summary": "从客户端、引擎、后端、技术美术和 QA 视角分析功能落地。",
+          "prompt": "发起功能开发：请参考技术总监视角，分析客户端、引擎、后端、技术美术和 QA 的关注点、接口、风险和验收标准。只提供视角建议；具体是否拆分任务由当前编程模型决定。",
           "collaboratorExpertIds": [
             "technical-director",
             "gameplay-programmer",
@@ -300,7 +355,11 @@
               "label": "客户端性能排查",
               "summary": "定位客户端卡顿、GC 和加载问题并给出修复方向。",
               "prompt": "客户端性能排查：请定位帧率波动、GC/内存分配、加载与实例化开销，给出复现场景、量测数据和按收益排序的修复方向。",
-              "collaboratorExpertIds": ["gameplay-programmer", "performance-analyst", "ui-programmer"]
+              "collaboratorExpertIds": [
+                "gameplay-programmer",
+                "performance-analyst",
+                "ui-programmer"
+              ]
             }
           ]
         },
@@ -321,7 +380,11 @@
               "label": "引擎选型与适配",
               "summary": "对比引擎能力、平台支持和团队成本给出选型建议。",
               "prompt": "引擎选型与适配：请对比候选引擎在渲染、性能、平台支持、生态和团队熟悉度上的差异，给出选型建议、迁移/适配成本和关键风险。",
-              "collaboratorExpertIds": ["engine-programmer", "technical-director", "performance-analyst"]
+              "collaboratorExpertIds": [
+                "engine-programmer",
+                "technical-director",
+                "performance-analyst"
+              ]
             }
           ],
           "children": [
@@ -336,7 +399,11 @@
                   "label": "设计引擎子系统",
                   "summary": "规划渲染/资源/框架层能力的接口与生命周期。",
                   "prompt": "设计引擎子系统：请给出子系统职责、对外接口、生命周期与线程模型、内存与资源策略，以及对上层玩法的暴露方式和测试入口。",
-                  "collaboratorExpertIds": ["engine-programmer", "technical-director", "performance-analyst"]
+                  "collaboratorExpertIds": [
+                    "engine-programmer",
+                    "technical-director",
+                    "performance-analyst"
+                  ]
                 }
               ]
             },
@@ -351,7 +418,11 @@
                   "label": "Unity 方案落地",
                   "summary": "结合 Unity 生命周期、序列化和资源管线给出实现路径。",
                   "prompt": "Unity 方案落地：请结合 MonoBehaviour 生命周期、序列化、Addressables/资源管线和性能特性，给出实现结构、易错点和验证步骤。",
-                  "collaboratorExpertIds": ["unity-specialist", "gameplay-programmer", "technical-artist"]
+                  "collaboratorExpertIds": [
+                    "unity-specialist",
+                    "gameplay-programmer",
+                    "technical-artist"
+                  ]
                 }
               ]
             },
@@ -366,7 +437,11 @@
                   "label": "Unreal 方案落地",
                   "summary": "结合 Actor/GAS/复制模型给出 UE 实现路径。",
                   "prompt": "Unreal 方案落地：请结合 Actor 生命周期、GAS、网络复制和 Blueprint/C++ 分工，给出实现结构、复制与权威边界以及验证步骤。",
-                  "collaboratorExpertIds": ["unreal-specialist", "gameplay-programmer", "network-programmer"]
+                  "collaboratorExpertIds": [
+                    "unreal-specialist",
+                    "gameplay-programmer",
+                    "network-programmer"
+                  ]
                 }
               ]
             },
@@ -381,7 +456,10 @@
                   "label": "Godot 方案落地",
                   "summary": "结合节点树、信号和场景实例化给出实现路径。",
                   "prompt": "Godot 方案落地：请结合节点树、信号机制、场景实例化和 GDScript/C# 选择，给出实现结构、解耦方式和验证步骤。",
-                  "collaboratorExpertIds": ["godot-specialist", "gameplay-programmer"]
+                  "collaboratorExpertIds": [
+                    "godot-specialist",
+                    "gameplay-programmer"
+                  ]
                 }
               ]
             }
@@ -403,14 +481,23 @@
               "label": "设计联机同步",
               "summary": "选定同步模型、权威边界、延迟补偿和作弊防护。",
               "prompt": "设计联机同步：请给出同步模型（状态/帧同步）、服务端权威边界、延迟补偿与回滚策略、带宽预算和作弊防护要点，并标出测试方法。",
-              "collaboratorExpertIds": ["network-programmer", "security-engineer", "qa-tester"]
+              "collaboratorExpertIds": [
+                "network-programmer",
+                "security-engineer",
+                "qa-tester"
+              ]
             },
             {
               "id": "backend-service-plan",
               "label": "规划后端服务",
               "summary": "拆账号、存档、匹配、排行等服务的接口与容量。",
               "prompt": "规划后端服务：请拆解账号/存档/匹配/排行等服务的接口、数据模型、容量与扩展策略、失败降级和监控指标。",
-              "collaboratorExpertIds": ["network-programmer", "analytics-engineer", "security-engineer", "devops-engineer"]
+              "collaboratorExpertIds": [
+                "network-programmer",
+                "analytics-engineer",
+                "security-engineer",
+                "devops-engineer"
+              ]
             }
           ]
         },
@@ -425,14 +512,22 @@
               "label": "搭建美术管线",
               "summary": "定义资产规格、导入流程、命名和自动校验。",
               "prompt": "搭建美术管线：请给出资产规格（面数/贴图/骨骼）、导入与命名规范、自动校验点和与引擎的对接方式，并标出常见返工原因。",
-              "collaboratorExpertIds": ["technical-artist", "art-director", "tools-programmer"]
+              "collaboratorExpertIds": [
+                "technical-artist",
+                "art-director",
+                "tools-programmer"
+              ]
             },
             {
               "id": "shader-optimization",
               "label": "优化 Shader / 渲染",
               "summary": "在画质与性能预算间权衡材质和渲染开销。",
               "prompt": "优化 Shader / 渲染：请定位渲染开销来源，给出材质、批次、Overdraw、分辨率与特效的优化手段，并按性能预算排出优先级和回归方法。",
-              "collaboratorExpertIds": ["technical-artist", "performance-analyst", "visual-effects-artist"]
+              "collaboratorExpertIds": [
+                "technical-artist",
+                "performance-analyst",
+                "visual-effects-artist"
+              ]
             }
           ]
         },
@@ -447,7 +542,11 @@
               "label": "搭建构建发布管线",
               "summary": "规划自动构建、多平台打包和版本分发。",
               "prompt": "搭建构建发布管线：请给出自动构建触发、多平台打包步骤、产物校验、版本号与发布渠道策略，以及失败回滚和通知机制。",
-              "collaboratorExpertIds": ["devops-engineer", "tools-programmer", "release-manager"]
+              "collaboratorExpertIds": [
+                "devops-engineer",
+                "tools-programmer",
+                "release-manager"
+              ]
             },
             {
               "id": "editor-tooling",
@@ -469,14 +568,22 @@
               "label": "设计存档系统",
               "summary": "规划序列化、版本迁移、防损坏和云同步。",
               "prompt": "设计存档系统：请给出存档数据结构、序列化格式、版本迁移策略、防损坏/原子写入和云同步冲突处理，并标出测试场景。",
-              "collaboratorExpertIds": ["save-systems-engineer", "network-programmer", "qa-tester"]
+              "collaboratorExpertIds": [
+                "save-systems-engineer",
+                "network-programmer",
+                "qa-tester"
+              ]
             },
             {
               "id": "game-ai-behavior",
               "label": "设计游戏 AI 行为",
               "summary": "选定行为树/状态机/寻路方案并控制可调性与性能。",
               "prompt": "设计游戏 AI 行为：请给出决策结构（行为树/状态机/GOAP）、感知与寻路方案、可调参数、性能预算和调试可视化方式。",
-              "collaboratorExpertIds": ["ai-programmer", "gameplay-programmer", "game-designer"]
+              "collaboratorExpertIds": [
+                "ai-programmer",
+                "gameplay-programmer",
+                "game-designer"
+              ]
             }
           ]
         }
@@ -493,7 +600,7 @@
           "id": "style-change",
           "label": "修改美术风格",
           "summary": "让 2D、角色、场景、UI、技术美术按新风格同步调整。",
-          "prompt": "修改游戏美术风格：请以美术总监牵头，给出风格支柱、色彩/材质/剪影规则，并拆解 2D、角色、场景、UI、技术美术和 QA 的修改清单。",
+          "prompt": "修改游戏美术风格：请参考美术总监视角，给出风格支柱、色彩/材质/剪影规则，并从 2D、角色、场景、UI、技术美术和 QA 视角列出修改清单。只提供视角建议；具体是否拆分任务由当前编程模型决定。",
           "collaboratorExpertIds": [
             "art-director",
             "technical-artist",
@@ -529,7 +636,11 @@
               "label": "概念探索",
               "summary": "围绕主题快速产出方向、色板和形状语言。",
               "prompt": "概念探索：请围绕主题给出 2-3 个视觉方向、色板、形状语言和参考意象，并说明每个方向的情绪定位和落地到 3D/关卡的难点。",
-              "collaboratorExpertIds": ["art-director", "world-builder", "level-designer"]
+              "collaboratorExpertIds": [
+                "art-director",
+                "world-builder",
+                "level-designer"
+              ]
             }
           ]
         },
@@ -545,7 +656,11 @@
               "label": "制定角色规范",
               "summary": "定义剪影、配色、材质和装备的统一规格。",
               "prompt": "制定角色规范：请给出剪影与辨识度要点、配色与材质规则、装备/部件拆分、面数与骨骼预算，并标出动画与技术美术的对接要求。",
-              "collaboratorExpertIds": ["art-director", "technical-artist", "visual-effects-artist"]
+              "collaboratorExpertIds": [
+                "art-director",
+                "technical-artist",
+                "visual-effects-artist"
+              ]
             }
           ]
         },
@@ -561,7 +676,11 @@
               "label": "搭建场景资产库",
               "summary": "规划模块化资产、复用规则和镜头可读性。",
               "prompt": "搭建场景资产库：请给出模块化拆分、复用与拼接规则、光照与材质基调、镜头可读性要点和性能预算，并对接关卡设计的空间需求。",
-              "collaboratorExpertIds": ["art-director", "level-designer", "technical-artist"]
+              "collaboratorExpertIds": [
+                "art-director",
+                "level-designer",
+                "technical-artist"
+              ]
             }
           ]
         },
@@ -576,7 +695,11 @@
               "label": "设计 UI 流程",
               "summary": "梳理界面层级、状态、反馈和可访问性。",
               "prompt": "设计 UI 流程：请给出界面层级与导航、状态与空/错/载入态、反馈与动效、输入设备适配和可访问性要点，并标出与程序的数据绑定。",
-              "collaboratorExpertIds": ["ux-designer", "ui-programmer", "accessibility-specialist"]
+              "collaboratorExpertIds": [
+                "ux-designer",
+                "ui-programmer",
+                "accessibility-specialist"
+              ]
             }
           ]
         },
@@ -591,7 +714,11 @@
               "label": "制定特效规范",
               "summary": "统一特效风格、可读性与性能预算。",
               "prompt": "制定特效规范：请给出特效风格与可读性规则（区分敌我/状态）、粒子与材质预算、复用模板和性能降级策略，并标出与玩法反馈的对应。",
-              "collaboratorExpertIds": ["visual-effects-artist", "technical-artist", "performance-analyst"]
+              "collaboratorExpertIds": [
+                "visual-effects-artist",
+                "technical-artist",
+                "performance-analyst"
+              ]
             }
           ]
         }
@@ -609,7 +736,11 @@
           "label": "制定音频方向",
           "summary": "定义音乐风格、音效基调、动态混音和反馈层级。",
           "prompt": "制定音频方向：请给出音乐风格、音效基调、动态混音与优先级层级、关键玩法反馈音和与场景情绪的对应，并标出制作与接入规范。",
-          "collaboratorExpertIds": ["audio-director", "sound-designer", "audio-designer"]
+          "collaboratorExpertIds": [
+            "audio-director",
+            "sound-designer",
+            "audio-designer"
+          ]
         }
       ],
       "children": [
@@ -624,7 +755,11 @@
               "label": "设计反馈音效",
               "summary": "为玩法事件做即时、可读、不疲劳的音效反馈。",
               "prompt": "设计反馈音效：请把关键玩法事件映射到音效，给出层次与变化（避免重复疲劳）、混音优先级和触发实现要点，并对接动态混音规则。",
-              "collaboratorExpertIds": ["sound-designer", "audio-director", "gameplay-programmer"]
+              "collaboratorExpertIds": [
+                "sound-designer",
+                "audio-director",
+                "gameplay-programmer"
+              ]
             }
           ]
         }
@@ -642,7 +777,11 @@
           "label": "制定测试计划",
           "summary": "按风险拆出测试范围、用例、回归和准入门禁。",
           "prompt": "制定测试计划：请按风险拆出测试范围、关键用例、回归集、覆盖盲区、缺陷分级标准和发布准入门禁，并指明可自动化的部分。",
-          "collaboratorExpertIds": ["qa-lead", "qa-tester", "performance-analyst"]
+          "collaboratorExpertIds": [
+            "qa-lead",
+            "qa-tester",
+            "performance-analyst"
+          ]
         }
       ],
       "children": [
@@ -672,7 +811,11 @@
               "label": "性能剖析与定位",
               "summary": "对照性能预算量测帧率、内存、加载并定位瓶颈。",
               "prompt": "性能剖析与定位：请对照性能预算量测帧率、内存、加载和卡顿，定位 CPU/GPU/IO 瓶颈，给出复现场景、量测数据和优化优先级。",
-              "collaboratorExpertIds": ["performance-analyst", "technical-artist", "qa-tester"]
+              "collaboratorExpertIds": [
+                "performance-analyst",
+                "technical-artist",
+                "qa-tester"
+              ]
             }
           ]
         },
@@ -687,7 +830,11 @@
               "label": "可访问性审查",
               "summary": "检查色彩、字幕、操作重映射和辅助选项。",
               "prompt": "可访问性审查：请按色彩对比/色盲、字幕与音频提示、操作重映射、难度与辅助选项、动效敏感等维度检查问题，并给出改进项与优先级。",
-              "collaboratorExpertIds": ["accessibility-specialist", "ux-designer", "qa-tester"]
+              "collaboratorExpertIds": [
+                "accessibility-specialist",
+                "ux-designer",
+                "qa-tester"
+              ]
             }
           ]
         }
@@ -705,7 +852,11 @@
           "label": "评估发布准入",
           "summary": "检查质量门禁、商店素材、合规和回滚预案。",
           "prompt": "评估发布准入：请检查质量门禁、阻塞缺陷、商店素材与分级合规、灰度与回滚预案、监控与应急流程，并给出 go/no-go 结论。",
-          "collaboratorExpertIds": ["release-manager", "qa-lead", "live-ops-designer"]
+          "collaboratorExpertIds": [
+            "release-manager",
+            "qa-lead",
+            "live-ops-designer"
+          ]
         }
       ],
       "children": [
@@ -720,7 +871,11 @@
               "label": "规划发布节奏",
               "summary": "排出版本、灰度、平台审核和回滚窗口。",
               "prompt": "规划发布节奏：请排出版本里程碑、灰度比例、各平台审核时间、热修复与回滚窗口和对外沟通节点，并标出关键风险。",
-              "collaboratorExpertIds": ["release-manager", "devops-engineer", "community-manager"]
+              "collaboratorExpertIds": [
+                "release-manager",
+                "devops-engineer",
+                "community-manager"
+              ]
             }
           ]
         },
@@ -734,7 +889,7 @@
               "id": "community-plan",
               "label": "策划社区沟通",
               "summary": "规划公告、反馈收集和上线期舆情应对。",
-              "prompt": "策划社区沟通：请给出版本公告要点、反馈收集渠道、上线期舆情监控与应对话术，以及把玩家反馈回流到团队的流程。",
+              "prompt": "策划社区沟通：请给出版本公告要点、反馈收集渠道、上线期舆情监控与应对话术，以及把玩家反馈转成产品问题和验收标准的流程。",
               "collaboratorExpertIds": ["community-manager", "release-manager"]
             }
           ]
@@ -750,7 +905,11 @@
               "label": "规划本地化",
               "summary": "梳理文本抽取、变量、字体、文化审查和回归。",
               "prompt": "规划本地化：请给出文本抽取与键管理、变量/复数/性别处理、字体与排版扩展、文化与合规审查和本地化回归测试方案。",
-              "collaboratorExpertIds": ["localization-lead", "writer", "ui-programmer"]
+              "collaboratorExpertIds": [
+                "localization-lead",
+                "writer",
+                "ui-programmer"
+              ]
             }
           ]
         },
@@ -765,7 +924,11 @@
               "label": "搭建数据埋点与漏斗",
               "summary": "定义关键指标、埋点事件和留存/转化漏斗。",
               "prompt": "搭建数据埋点与漏斗：请给出北极星指标与关键事件、埋点设计与命名规范、留存/转化漏斗、A/B 实验口径和数据校验方法。",
-              "collaboratorExpertIds": ["analytics-engineer", "economy-designer", "live-ops-designer"]
+              "collaboratorExpertIds": [
+                "analytics-engineer",
+                "economy-designer",
+                "live-ops-designer"
+              ]
             }
           ]
         }

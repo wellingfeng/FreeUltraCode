@@ -81,9 +81,9 @@ const NODE_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
     'en-US': {
       label: 'Producer',
       summary:
-        'Owns project goals, scope, schedule, risk, and cross-discipline coordination.',
+        'Project-level lens for goals, scope, schedule, risk, and cross-discipline constraints.',
       role:
-        'Break requirements into shippable phases and coordinate design, engineering, art, audio, QA, release, and live ops.',
+        'Turns requirements into shippable phases and blends design, engineering, art, audio, QA, release, and live-ops perspectives.',
     },
   },
   'creative-director': {
@@ -336,7 +336,7 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
       summary:
         'Assess how scope changes affect design, engineering, art, schedule, and quality gates.',
       prompt:
-        'Revise game project goals: assess the scope change, affected teams, assets that must be redone, schedule risk, and the new acceptance criteria.',
+        'Revise game project goals: assess the scope change, affected lenses, assets that must be redone, schedule risk, and the new acceptance criteria.',
     },
   },
   'creative-director:design-direction': {
@@ -440,7 +440,7 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
       label: 'Create Narrative Bible',
       summary: 'Unify tone, theme, characters, and narrative presentation rules.',
       prompt:
-        'Create the narrative bible: provide theme, tone, core conflict, main character arcs, narrative presentation rules, team execution constraints, and gameplay integration points.',
+        'Create the narrative bible: provide theme, tone, core conflict, main character arcs, narrative presentation rules, cross-functional constraints, and gameplay integration points.',
     },
   },
   'writer:write-dialogue': {
@@ -462,9 +462,9 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
   'technical-director:feature-development': {
     'en-US': {
       label: 'Start Feature Development',
-      summary: 'Coordinate client, engine, backend, technical art, and QA feature breakdown.',
+      summary: 'Analyze a feature through client, engine, backend, technical art, and QA lenses.',
       prompt:
-        'Start feature development: as Technical Director, break down responsibilities, interfaces, risks, and acceptance criteria across client, engine, backend, technical art, and QA.',
+        'Start feature development: use the Technical Director lens to analyze client, engine, backend, technical art, and QA concerns, interfaces, risks, and acceptance criteria. Provide lens guidance only; the current coding model decides whether to split the task.',
     },
   },
   'technical-director:architecture-review': {
@@ -606,9 +606,9 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
   'art-director:style-change': {
     'en-US': {
       label: 'Change Art Style',
-      summary: 'Coordinate 2D, character, environment, UI, technical art, and QA for a new style.',
+      summary: 'Analyze a new style through 2D, character, environment, UI, technical art, and QA lenses.',
       prompt:
-        'Change the game art style: as Art Director, define style pillars, color/material/silhouette rules, and break down changes for 2D, character, environment, UI, technical art, and QA.',
+        'Change the game art style: use the Art Director lens to define style pillars, color/material/silhouette rules, and list changes from 2D, character, environment, UI, technical art, and QA lenses. Provide lens guidance only; the current coding model decides whether to split the task.',
     },
   },
   'art-director:asset-review': {
@@ -728,7 +728,7 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
       label: 'Plan Community Communication',
       summary: 'Plan announcements, feedback intake, and launch sentiment response.',
       prompt:
-        'Plan community communication: provide release announcement points, feedback intake channels, launch sentiment monitoring and response language, and the process for routing player feedback back to the team.',
+        'Plan community communication: provide release announcement points, feedback intake channels, launch sentiment monitoring and response language, and a process for turning player feedback into product issues and acceptance checks.',
     },
   },
   'localization-lead:localization-plan': {

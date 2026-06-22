@@ -10,9 +10,9 @@ import {
   savePersonalInstructionsByModel,
 } from '@/lib/composerStorage';
 
-const COMPOSER_KEY = 'freeultracode.composer.v1';
+const COMPOSER_KEY = 'ultragamestudio.composer.v1';
 const PERSONAL_INSTRUCTIONS_BY_MODEL_KEY =
-  'freeultracode.personalInstructionsByModel.v1';
+  'ultragamestudio.personalInstructionsByModel.v1';
 
 afterEach(() => {
   window.localStorage.clear();
@@ -27,7 +27,7 @@ describe('composer workspace history persistence', () => {
         workspaceHistory: [
           'E:\\Game',
           'e:/Game/',
-          'E:\\FreeUltraCode',
+          'E:\\UltraGameStudio',
           'E:\\Game\\',
         ],
       }),
@@ -35,7 +35,7 @@ describe('composer workspace history persistence', () => {
 
     expect(loadComposer()?.workspaceHistory).toEqual([
       'E:\\Game',
-      'E:\\FreeUltraCode',
+      'E:\\UltraGameStudio',
     ]);
   });
 
@@ -43,14 +43,14 @@ describe('composer workspace history persistence', () => {
     saveComposer({
       composer: defaultComposer,
       composerBySession: {},
-      workspaceHistory: ['E:\\Game', 'e:/Game/', 'E:\\FreeUltraCode'],
+      workspaceHistory: ['E:\\Game', 'e:/Game/', 'E:\\UltraGameStudio'],
     });
 
     const raw = window.localStorage.getItem(COMPOSER_KEY);
     expect(raw).toBeTruthy();
     expect(JSON.parse(raw!).workspaceHistory).toEqual([
       'E:\\Game',
-      'E:\\FreeUltraCode',
+      'E:\\UltraGameStudio',
     ]);
   });
 });

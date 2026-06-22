@@ -24,13 +24,25 @@ export default function RawCodeBlock({
   maxLines?: number;
 }) {
   const [wrap, setWrap] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const locale = useStore((s) => s.locale);
   const code = raw.replace(/\n$/, '');
   const lineCount = useMemo(() => code.split('\n').length, [code]);
-  const tall = lineCount > maxLines;
   const lang = normalizeLabel(language);
   const isDiff = lang === 'diff';
+  const isPlainText = isPlainTextLanguage(lang);
+  // Diff/plain-text blocks default to fully folded (body hidden) so patches and
+  // long command transcripts never dominate the message stream; the user opts in
+  // to the full view via the expand toggle. Tall typed code keeps a capped
+  // preview instead, so a glance still shows what the block is.
+  const [expanded, setExpanded] = useState(false);
+  // Collapsible when the block is tall, or always for bodies we keep tucked away
+  // by default regardless of length.
+  const foldsBodyByDefault = isDiff || isPlainText;
+  const collapsible = lineCount > maxLines || foldsBodyByDefault;
+  const collapsed = collapsible && !expanded;
+  // A default-folded block hides its body entirely behind the toggle; a folded
+  // tall typed-code block keeps a height-capped preview.
+  const folded = foldsBodyByDefault && collapsed;
   const highlighted = useMemo(
     () => (children ? null : highlightCode(code, lang)),
     [children, code, lang],
@@ -47,12 +59,12 @@ export default function RawCodeBlock({
       <div className="flex items-center justify-between border-b border-[var(--code-border)] bg-[var(--code-header-bg)] px-3 py-1.5">
         <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
           {lang ?? 'text'}
-          {tall && (
+          {(lineCount > maxLines || foldsBodyByDefault) && (
             <span className="ml-2 text-fg-faint/70">{lineCount} {t(locale, 'chat.lines')}</span>
           )}
         </span>
         <div className="flex items-center gap-2">
-          {tall && (
+          {collapsible && (
             <button
               type="button"
               onClick={() => setExpanded((e) => !e)}
@@ -78,24 +90,35 @@ export default function RawCodeBlock({
           <CopyButton value={code} label={t(locale, 'chat.copy')} className="px-1 py-0.5" />
         </div>
       </div>
-      <div
-        className={
-          'ai-code__scroll overflow-auto bg-[var(--code-bg)] leading-relaxed ' +
-          (compact ? 'text-[11.5px] ' : 'text-[12.5px] ') +
-          (wrap ? 'ai-code--wrap ' : '') +
-          (isDiff ? 'ai-code--diff ' : '')
-        }
-        style={tall && !expanded ? { maxHeight: compact ? '16rem' : '24rem' } : undefined}
-      >
-        {children ?? (
-          <pre>
-            <code
-              className={highlighted?.className}
-              dangerouslySetInnerHTML={{ __html: highlighted?.html ?? escapeHtml(code) }}
-            />
-          </pre>
-        )}
-      </div>
+      {folded ? (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="ai-code__folded flex w-full items-center gap-1.5 bg-[var(--code-bg)] px-3 py-2 text-left font-mono text-[11px] text-fg-faint transition-colors hover:text-fg"
+        >
+          <ChevronsUpDown size={12} className="shrink-0" />
+          <span>{t(locale, isDiff ? 'chat.diffFolded' : 'chat.textFolded')}</span>
+        </button>
+      ) : (
+        <div
+          className={
+            'ai-code__scroll overflow-auto bg-[var(--code-bg)] leading-relaxed ' +
+            (compact ? 'text-[11.5px] ' : 'text-[12.5px] ') +
+            (wrap ? 'ai-code--wrap ' : '') +
+            (isDiff ? 'ai-code--diff ' : '')
+          }
+          style={collapsed ? { maxHeight: compact ? '16rem' : '24rem' } : undefined}
+        >
+          {children ?? (
+            <pre>
+              <code
+                className={highlighted?.className}
+                dangerouslySetInnerHTML={{ __html: highlighted?.html ?? escapeHtml(code) }}
+              />
+            </pre>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -103,6 +126,16 @@ export default function RawCodeBlock({
 function normalizeLabel(language: string | null | undefined): string | null {
   const value = language?.trim().toLowerCase();
   return value || null;
+}
+
+function isPlainTextLanguage(language: string | null): boolean {
+  return (
+    language === null ||
+    language === 'text' ||
+    language === 'txt' ||
+    language === 'plain' ||
+    language === 'plaintext'
+  );
 }
 
 function escapeHtml(value: string): string {

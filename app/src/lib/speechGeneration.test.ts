@@ -39,7 +39,7 @@ describe('speech generation settings and routing', () => {
       providerKeys: { elevenlabs: ' key ', bogus: 'x' },
       providerVoices: { elevenlabs: ' Rachel ' },
     });
-    expect(normalized.enabled).toBe(false);
+    expect(normalized.enabled).toBe(true);
     expect(normalized.preferredProviderId).toBe(
       DEFAULT_SPEECH_GENERATION_SETTINGS.preferredProviderId,
     );
@@ -199,15 +199,6 @@ describe('speech generation settings and routing', () => {
     );
 
     expect(result.audios[0]).toBe(`data:audio/mpeg;base64,${btoa('ABC')}`);
-  });
-
-  it('throws when generation is disabled', async () => {
-    await expect(
-      generateSpeech(
-        { prompt: 'hello', providerId: 'openai-tts' },
-        { ...DEFAULT_SPEECH_GENERATION_SETTINGS, enabled: false },
-      ),
-    ).rejects.toThrow('SPEECH_GENERATION_DISABLED');
   });
 
   it('resolves provider metadata by id with a safe fallback', () => {

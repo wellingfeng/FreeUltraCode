@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent, ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent, ReactNode } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -15,7 +15,7 @@ import {
   type Node,
   type NodeProps,
   type NodeTypes,
-} from '@xyflow/react';
+} from "@xyflow/react";
 import {
   Accessibility,
   AudioLines,
@@ -62,8 +62,8 @@ import {
   X,
   Wrench,
   type LucideIcon,
-} from 'lucide-react';
-import { cn } from '@/lib/cn';
+} from "lucide-react";
+import { cn } from "@/lib/cn";
 import {
   cloneGameOrgDefinition,
   collectGameOrgSkillBindings,
@@ -83,197 +83,207 @@ import {
   type GameOrgSkillProtocol,
   type ResolvedGameOrgNode,
   type ResolvedGameOrgSkill,
-} from '@/lib/gameOrg';
-import { localizedGameExpertName } from '@/lib/gameExpertI18n';
-import type { Locale } from '@/lib/i18n';
-import { useStore } from '@/store/useStore';
+} from "@/lib/gameOrg";
+import { normalizeGameAssetCapabilityIds } from "@/lib/gameAssetCapabilities";
+import { localizedGameExpertName } from "@/lib/gameExpertI18n";
+import type { Locale } from "@/lib/i18n";
+import { useStore } from "@/store/useStore";
 
-const SELECTED_NODE_STORAGE_KEY = 'freeultracode.gameTeam.selectedNode.v1';
-export const OPEN_GAME_TEAM_DETAILS_EVENT = 'fuc:open-game-team-details';
+const SELECTED_NODE_STORAGE_KEY = "ultragamestudio.gameTeam.selectedNode.v1";
+export const OPEN_GAME_TEAM_DETAILS_EVENT = "ugs:open-game-team-details";
 export interface OpenGameTeamDetailsEventDetail {
   nodeId?: string;
 }
 
 const GAME_TEAM_TEXT = {
-  'zh-CN': {
-    add: '新增',
-    addChildRoleButton: '添加下级岗位',
-    addChildRoleTitle: '添加下级岗位',
-    addSkillTitle: '新增 Skill',
-    bindingChildren: '下级岗位',
-    bindingCollaborators: 'Skill 协作对象',
-    bindingEmpty: '暂无',
-    bindingIncoming: '被其它岗位调用',
-    bindingIncomingCount: '{count} 调用',
-    bindingOverview: '绑定关系',
-    bindingSkills: '岗位绑定 Skill',
-    cancel: '取消',
-    chartAria: '组织架构蓝图',
-    childCountCollapsed: '已收起 {count}',
-    childCountExpanded: '{count} 下级',
-    close: '关闭',
-    closeNodeEditorAria: '关闭岗位编辑',
-    closeSkillEditorAria: '关闭 Skill 编辑',
-    collaboratorIds: '协作人员 ID（逗号分隔）',
-    collapseChildren: '收起下级',
-    copySkillCommand: '复制 Skill 命令',
-    copySkillCommandAria: '复制 {label} 命令',
-    deleteRoleButton: '删除岗位',
-    deleteSkill: '删除 Skill',
-    deleteSkillAria: '删除 {label}',
-    editRoleButton: '编辑岗位',
-    editRoleTitle: '编辑岗位',
-    editSkill: '编辑 Skill',
-    editSkillAria: '编辑 {label}',
-    editSkillTitle: '编辑 Skill',
-    expandChildren: '展开下级',
-    expertIds: '关联人员 ID（逗号分隔）',
-    experts: '关联人员',
-    icon: '图标',
-    insertCommand: '插入命令：{command}',
-    levelDeveloper: '基层开发',
-    levelDirector: '直属总监',
-    levelGroup: '小组长 / 职能组',
-    levelLead: '制作负责人',
-    locateAria: '定位 {label}',
-    name: '名称',
-    newRole: '新岗位',
-    newSkill: '新 Skill',
-    noMatches: '没有匹配的岗位',
-    noSkills: '暂无 Skill',
-    nodeRolePlaceholder: '更完整的职责说明',
-    nodeSummaryPlaceholder: '这个岗位在团队中的职责摘要',
-    peopleCount: '{count} 人',
-    promptPlaceholder: '插入输入框时使用的完整提示词',
-    profileCollaborators: '协作对象',
-    profileCollaboratorsPlaceholder: '每行一个协作岗位或专家',
-    profileDeliverables: '主要产出',
-    profileDeliverablesPlaceholder: '每行一个交付物或检查结果',
-    profilePosition: '岗位定位',
-    profilePositionPlaceholder: '这个岗位在组织中的定位',
-    profileResponsibilities: '核心职责',
-    profileResponsibilitiesPlaceholder: '每行一条核心职责',
-    profileScenarios: '适用场景',
-    profileScenariosPlaceholder: '每行一个适用任务场景',
-    protocolAcceptance: '验收标准',
-    protocolAcceptancePlaceholder: '怎样判断这个 Skill 的结果合格',
-    protocolInputs: '输入',
-    protocolInputsPlaceholder: '需要用户需求、项目上下文、文件、素材或约束',
-    protocolOutputs: '输出',
-    protocolOutputsPlaceholder: '方案、代码变更、素材清单、测试结果或其它交付物',
-    protocolSteps: '执行步骤',
-    protocolStepsPlaceholder: '每行一个步骤',
-    protocolTools: '工具/资源',
-    protocolToolsPlaceholder: '当前工作区、引擎工具、文件系统、联网检索等',
-    protocolTrigger: '触发条件',
-    protocolTriggerPlaceholder: '什么情况应该调用这个 Skill',
-    resetTemplateButton: '恢复默认组织模板',
-    responsibilities: '职责',
-    role: '职责',
-    roleId: '岗位 ID',
-    roleName: '岗位名称',
-    roleNamePlaceholder: '技术总监',
-    rootDeleteDisabled: '根岗位不能删除',
-    save: '保存',
+  "zh-CN": {
+    add: "新增",
+    addChildRoleButton: "添加下级视角",
+    addChildRoleTitle: "添加下级视角",
+    addSkillTitle: "新增 Skill",
+    bindingChildren: "下级视角",
+    bindingCollaborators: "Skill 关联视角",
+    bindingEmpty: "暂无",
+    bindingIncoming: "被其它视角参考",
+    bindingIncomingCount: "{count} 引用",
+    bindingOverview: "绑定关系",
+    bindingSkills: "视角绑定 Skill",
+    cancel: "取消",
+    capabilities: "可用能力",
+    capabilitiesPlaceholder: "image, sprite, mesh, ui, music, speech, video",
+    chartAria: "专家视角蓝图",
+    childCountCollapsed: "已收起 {count}",
+    childCountExpanded: "{count} 下级",
+    close: "关闭",
+    closeNodeEditorAria: "关闭岗位编辑",
+    closeSkillEditorAria: "关闭 Skill 编辑",
+    collaboratorIds: "关联视角 ID（逗号分隔）",
+    collapseChildren: "收起下级",
+    copySkillCommand: "复制 Skill 命令",
+    copySkillCommandAria: "复制 {label} 命令",
+    deleteRoleButton: "删除岗位",
+    deleteSkill: "删除 Skill",
+    deleteSkillAria: "删除 {label}",
+    editRoleButton: "编辑岗位",
+    editRoleTitle: "编辑岗位",
+    editSkill: "编辑 Skill",
+    editSkillAria: "编辑 {label}",
+    editSkillTitle: "编辑 Skill",
+    expandChildren: "展开下级",
+    expertIds: "关联视角 ID（逗号分隔）",
+    experts: "关联视角",
+    icon: "图标",
+    insertCommand: "插入命令：{command}",
+    levelDeveloper: "基层开发",
+    levelDirector: "直属总监",
+    levelGroup: "小组长 / 职能组",
+    levelLead: "制作人视角",
+    locateAria: "定位 {label}",
+    name: "名称",
+    newRole: "新岗位",
+    newSkill: "新 Skill",
+    noMatches: "没有匹配的岗位",
+    noSkills: "暂无 Skill",
+    nodeRolePlaceholder: "更完整的职责说明",
+    nodeSummaryPlaceholder: "这个岗位视角的职责摘要",
+    peopleCount: "{count} 视角",
+    promptPlaceholder: "插入输入框时使用的完整提示词",
+    profileCollaborators: "关联视角",
+    profileCollaboratorsPlaceholder: "每行一个相关岗位或专家视角",
+    profileDeliverables: "主要产出",
+    profileDeliverablesPlaceholder: "每行一个交付物或检查结果",
+    profilePosition: "岗位定位",
+    profilePositionPlaceholder: "这个岗位在组织中的定位",
+    profileResponsibilities: "核心职责",
+    profileResponsibilitiesPlaceholder: "每行一条核心职责",
+    profileScenarios: "适用场景",
+    profileScenariosPlaceholder: "每行一个适用任务场景",
+    protocolAcceptance: "验收标准",
+    protocolAcceptancePlaceholder: "怎样判断这个 Skill 的结果合格",
+    protocolInputs: "输入",
+    protocolInputsPlaceholder: "需要用户需求、项目上下文、文件、素材或约束",
+    protocolOutputs: "输出",
+    protocolOutputsPlaceholder:
+      "方案、代码变更、素材清单、测试结果或其它交付物",
+    protocolSteps: "建议步骤",
+    protocolStepsPlaceholder: "每行一个建议步骤",
+    protocolTools: "工具/资源",
+    protocolToolsPlaceholder: "当前工作区、引擎工具、文件系统、联网检索等",
+    protocolTrigger: "触发条件",
+    protocolTriggerPlaceholder: "什么情况应该参考这个 Skill",
+    resetTemplateButton: "恢复默认组织模板",
+    responsibilities: "职责",
+    role: "职责",
+    roleId: "岗位 ID",
+    roleName: "岗位名称",
+    roleNamePlaceholder: "技术总监",
+    rootDeleteDisabled: "根岗位不能删除",
+    save: "保存",
     saveFallbackPrompt:
-      '请执行 {label}，并给出可执行建议、风险和验收标准。',
-    searchAria: '搜索组织岗位',
-    searchPlaceholder: '搜索岗位、职责、人员或 Skill',
-    skillNamePlaceholder: '发起功能开发',
-    skillSummaryPlaceholder: '这个 Skill 的用途',
-    summary: '摘要',
+      "请参考 {label} 视角，并给出可执行建议、风险和验收标准。",
+    searchAria: "搜索组织岗位",
+    searchPlaceholder: "搜索岗位、职责、视角或 Skill",
+    skillNamePlaceholder: "发起功能开发",
+    skillSummaryPlaceholder: "这个 Skill 的用途",
+    summary: "摘要",
   },
-  'en-US': {
-    add: 'Add',
-    addChildRoleButton: 'Add child role',
-    addChildRoleTitle: 'Add Child Role',
-    addSkillTitle: 'New Skill',
-    bindingChildren: 'Child Roles',
-    bindingCollaborators: 'Skill Collaborators',
-    bindingEmpty: 'None',
-    bindingIncoming: 'Referenced By Other Roles',
-    bindingIncomingCount: '{count} refs',
-    bindingOverview: 'Bindings',
-    bindingSkills: 'Bound Skills',
-    cancel: 'Cancel',
-    chartAria: 'Organization blueprint',
-    childCountCollapsed: 'Hidden {count}',
-    childCountExpanded: '{count} child roles',
-    close: 'Close',
-    closeNodeEditorAria: 'Close role editor',
-    closeSkillEditorAria: 'Close Skill editor',
-    collaboratorIds: 'Collaborator IDs (comma separated)',
-    collapseChildren: 'Collapse child roles',
-    copySkillCommand: 'Copy Skill command',
-    copySkillCommandAria: 'Copy {label} command',
-    deleteRoleButton: 'Delete role',
-    deleteSkill: 'Delete Skill',
-    deleteSkillAria: 'Delete {label}',
-    editRoleButton: 'Edit role',
-    editRoleTitle: 'Edit Role',
-    editSkill: 'Edit Skill',
-    editSkillAria: 'Edit {label}',
-    editSkillTitle: 'Edit Skill',
-    expandChildren: 'Expand child roles',
-    expertIds: 'Expert IDs (comma separated)',
-    experts: 'Linked Experts',
-    icon: 'Icon',
-    insertCommand: 'Insert command: {command}',
-    levelDeveloper: 'Individual Contributor',
-    levelDirector: 'Direct Director',
-    levelGroup: 'Lead / Functional Group',
-    levelLead: 'Production Lead',
-    locateAria: 'Locate {label}',
-    name: 'Name',
-    newRole: 'New Role',
-    newSkill: 'New Skill',
-    noMatches: 'No matching roles',
-    noSkills: 'No Skills',
-    nodeRolePlaceholder: 'Full responsibility description',
-    nodeSummaryPlaceholder: 'Short summary of this role in the team',
-    peopleCount: '{count} people',
-    promptPlaceholder: 'Full prompt inserted into the composer',
-    profileCollaborators: 'Collaborators',
-    profileCollaboratorsPlaceholder: 'One collaborator role or expert per line',
-    profileDeliverables: 'Deliverables',
-    profileDeliverablesPlaceholder: 'One deliverable or check result per line',
-    profilePosition: 'Positioning',
-    profilePositionPlaceholder: 'Where this role sits in the organization',
-    profileResponsibilities: 'Core Responsibilities',
-    profileResponsibilitiesPlaceholder: 'One core responsibility per line',
-    profileScenarios: 'Use Cases',
-    profileScenariosPlaceholder: 'One task scenario per line',
-    protocolAcceptance: 'Acceptance Criteria',
-    protocolAcceptancePlaceholder: 'How to decide this Skill result is good enough',
-    protocolInputs: 'Inputs',
-    protocolInputsPlaceholder: 'User request, project context, files, assets, or constraints',
-    protocolOutputs: 'Outputs',
-    protocolOutputsPlaceholder: 'Plan, code changes, asset list, test result, or other deliverable',
-    protocolSteps: 'Execution Steps',
-    protocolStepsPlaceholder: 'One step per line',
-    protocolTools: 'Tools / Resources',
-    protocolToolsPlaceholder: 'Workspace, engine tools, filesystem, web research, etc.',
-    protocolTrigger: 'Trigger Conditions',
-    protocolTriggerPlaceholder: 'When this Skill should be invoked',
-    resetTemplateButton: 'Restore default organization template',
-    responsibilities: 'Responsibilities',
-    role: 'Role',
-    roleId: 'Role ID',
-    roleName: 'Role Name',
-    roleNamePlaceholder: 'Technical Director',
-    rootDeleteDisabled: 'The root role cannot be deleted',
-    save: 'Save',
+  "en-US": {
+    add: "Add",
+    addChildRoleButton: "Add child lens",
+    addChildRoleTitle: "Add Child Lens",
+    addSkillTitle: "New Skill",
+    bindingChildren: "Child Lenses",
+    bindingCollaborators: "Related Skill Lenses",
+    bindingEmpty: "None",
+    bindingIncoming: "Referenced By Other Lenses",
+    bindingIncomingCount: "{count} refs",
+    bindingOverview: "Bindings",
+    bindingSkills: "Lens-bound Skills",
+    cancel: "Cancel",
+    capabilities: "Capabilities",
+    capabilitiesPlaceholder: "image, sprite, mesh, ui, music, speech, video",
+    chartAria: "Expert lens blueprint",
+    childCountCollapsed: "Hidden {count}",
+    childCountExpanded: "{count} child lenses",
+    close: "Close",
+    closeNodeEditorAria: "Close role editor",
+    closeSkillEditorAria: "Close Skill editor",
+    collaboratorIds: "Related lens IDs (comma separated)",
+    collapseChildren: "Collapse child lenses",
+    copySkillCommand: "Copy Skill command",
+    copySkillCommandAria: "Copy {label} command",
+    deleteRoleButton: "Delete role",
+    deleteSkill: "Delete Skill",
+    deleteSkillAria: "Delete {label}",
+    editRoleButton: "Edit role",
+    editRoleTitle: "Edit Role",
+    editSkill: "Edit Skill",
+    editSkillAria: "Edit {label}",
+    editSkillTitle: "Edit Skill",
+    expandChildren: "Expand child lenses",
+    expertIds: "Lens IDs (comma separated)",
+    experts: "Linked Lenses",
+    icon: "Icon",
+    insertCommand: "Insert command: {command}",
+    levelDeveloper: "Individual Contributor",
+    levelDirector: "Direct Director",
+    levelGroup: "Lead / Functional Group",
+    levelLead: "Producer Lens",
+    locateAria: "Locate {label}",
+    name: "Name",
+    newRole: "New Role",
+    newSkill: "New Skill",
+    noMatches: "No matching roles",
+    noSkills: "No Skills",
+    nodeRolePlaceholder: "Full responsibility description",
+    nodeSummaryPlaceholder: "Short summary of this role lens",
+    peopleCount: "{count} lenses",
+    promptPlaceholder: "Full prompt inserted into the composer",
+    profileCollaborators: "Related Lenses",
+    profileCollaboratorsPlaceholder: "One related role or expert lens per line",
+    profileDeliverables: "Deliverables",
+    profileDeliverablesPlaceholder: "One deliverable or check result per line",
+    profilePosition: "Positioning",
+    profilePositionPlaceholder: "Where this role sits in the organization",
+    profileResponsibilities: "Core Responsibilities",
+    profileResponsibilitiesPlaceholder: "One core responsibility per line",
+    profileScenarios: "Use Cases",
+    profileScenariosPlaceholder: "One task scenario per line",
+    protocolAcceptance: "Acceptance Criteria",
+    protocolAcceptancePlaceholder:
+      "How to decide this Skill result is good enough",
+    protocolInputs: "Inputs",
+    protocolInputsPlaceholder:
+      "User request, project context, files, assets, or constraints",
+    protocolOutputs: "Outputs",
+    protocolOutputsPlaceholder:
+      "Plan, code changes, asset list, test result, or other deliverable",
+    protocolSteps: "Suggested Steps",
+    protocolStepsPlaceholder: "One suggested step per line",
+    protocolTools: "Tools / Resources",
+    protocolToolsPlaceholder:
+      "Workspace, engine tools, filesystem, web research, etc.",
+    protocolTrigger: "Trigger Conditions",
+    protocolTriggerPlaceholder: "When this Skill should be referenced",
+    resetTemplateButton: "Restore default organization template",
+    responsibilities: "Responsibilities",
+    role: "Role",
+    roleId: "Role ID",
+    roleName: "Role Name",
+    roleNamePlaceholder: "Technical Director",
+    rootDeleteDisabled: "The root role cannot be deleted",
+    save: "Save",
     saveFallbackPrompt:
-      'Execute {label} and provide actionable recommendations, risks, and acceptance criteria.',
-    searchAria: 'Search organization roles',
-    searchPlaceholder: 'Search roles, responsibilities, experts, or Skills',
-    skillNamePlaceholder: 'Start Feature Development',
-    skillSummaryPlaceholder: 'What this Skill is used for',
-    summary: 'Summary',
+      "Use the {label} lens and provide actionable recommendations, risks, and acceptance criteria.",
+    searchAria: "Search organization roles",
+    searchPlaceholder: "Search roles, responsibilities, experts, or Skills",
+    skillNamePlaceholder: "Start Feature Development",
+    skillSummaryPlaceholder: "What this Skill is used for",
+    summary: "Summary",
   },
 } as const;
 
-type GameTeamTextKey = keyof (typeof GAME_TEAM_TEXT)['zh-CN'];
+type GameTeamTextKey = keyof (typeof GAME_TEAM_TEXT)["zh-CN"];
 
 function gameTeamText(
   locale: Locale,
@@ -281,9 +291,11 @@ function gameTeamText(
   values: Record<string, string | number> = {},
 ): string {
   const dictionary =
-    locale === 'zh-CN' ? GAME_TEAM_TEXT['zh-CN'] : GAME_TEAM_TEXT['en-US'];
+    locale === "zh-CN" ? GAME_TEAM_TEXT["zh-CN"] : GAME_TEAM_TEXT["en-US"];
   return dictionary[key].replace(/\{(\w+)\}/g, (match, name) =>
-    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match,
+    Object.prototype.hasOwnProperty.call(values, name)
+      ? String(values[name])
+      : match,
   );
 }
 
@@ -301,7 +313,7 @@ const NODE_ICON_BY_KIND: Record<GameOrgNodeIcon, LucideIcon> = {
   client: Monitor,
   engine: Code2,
   backend: Server,
-  'technical-art': Wand2,
+  "technical-art": Wand2,
   tools: Wrench,
   data: Database,
   art: Paintbrush,
@@ -323,38 +335,38 @@ const NODE_ICON_BY_KIND: Record<GameOrgNodeIcon, LucideIcon> = {
 };
 
 const NODE_ICON_TONE_BY_KIND: Record<GameOrgNodeIcon, string> = {
-  producer: 'text-accent',
-  design: 'text-accent-3',
-  gameplay: 'text-accent-3',
-  systems: 'text-accent-3',
-  economy: 'text-accent-3',
-  level: 'text-accent-3',
-  narrative: 'text-accent-3',
-  writing: 'text-accent-3',
-  world: 'text-accent-3',
-  tech: 'text-accent-2',
-  client: 'text-accent-2',
-  engine: 'text-accent-2',
-  backend: 'text-accent-2',
-  'technical-art': 'text-accent-4',
-  tools: 'text-accent-2',
-  data: 'text-accent-2',
-  art: 'text-accent-4',
-  concept: 'text-accent-4',
-  character: 'text-accent-4',
-  environment: 'text-accent-4',
-  ui: 'text-accent-4',
-  vfx: 'text-accent-4',
-  audio: 'text-accent-3',
-  sound: 'text-accent-3',
-  qa: 'text-fg-dim',
-  performance: 'text-accent-3',
-  accessibility: 'text-accent-2',
-  release: 'text-accent',
-  community: 'text-accent',
-  localization: 'text-accent',
-  analytics: 'text-accent-2',
-  team: 'text-accent',
+  producer: "text-accent",
+  design: "text-accent-3",
+  gameplay: "text-accent-3",
+  systems: "text-accent-3",
+  economy: "text-accent-3",
+  level: "text-accent-3",
+  narrative: "text-accent-3",
+  writing: "text-accent-3",
+  world: "text-accent-3",
+  tech: "text-accent-2",
+  client: "text-accent-2",
+  engine: "text-accent-2",
+  backend: "text-accent-2",
+  "technical-art": "text-accent-4",
+  tools: "text-accent-2",
+  data: "text-accent-2",
+  art: "text-accent-4",
+  concept: "text-accent-4",
+  character: "text-accent-4",
+  environment: "text-accent-4",
+  ui: "text-accent-4",
+  vfx: "text-accent-4",
+  audio: "text-accent-3",
+  sound: "text-accent-3",
+  qa: "text-fg-dim",
+  performance: "text-accent-3",
+  accessibility: "text-accent-2",
+  release: "text-accent",
+  community: "text-accent",
+  localization: "text-accent",
+  analytics: "text-accent-2",
+  team: "text-accent",
 };
 
 function GameOrgIcon({
@@ -371,7 +383,7 @@ function GameOrgIcon({
     <Icon
       size={size}
       strokeWidth={2}
-      className={cn('shrink-0', NODE_ICON_TONE_BY_KIND[node.icon], className)}
+      className={cn("shrink-0", NODE_ICON_TONE_BY_KIND[node.icon], className)}
     />
   );
 }
@@ -385,7 +397,7 @@ function Chip({ children }: { children: ReactNode }) {
 }
 
 function readSelectedNodeId(): string | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof window === "undefined") return null;
   try {
     return window.localStorage.getItem(SELECTED_NODE_STORAGE_KEY);
   } catch {
@@ -395,13 +407,13 @@ function readSelectedNodeId(): string | null {
 }
 
 function writeSelectedNodeId(id: string): void {
-  if (typeof window === 'undefined') return;
+  if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(SELECTED_NODE_STORAGE_KEY, id);
   } catch {
     // 配额写满（QuotaExceededError）等异常下静默忽略：持久化选中节点只是“记住上次
     // 选择”的锦上添花，绝不能因为它抛错而中断点击处理函数里后续的 onSelect /
-    // 派发 fuc:open-game-team-details，否则桌面端 localStorage 一满，点岗位节点就
+    // 派发 ugs:open-game-team-details，否则桌面端 localStorage 一满，点岗位节点就
     // 整个没反应、右侧详情面板永远打不开。
   }
 }
@@ -445,9 +457,13 @@ function uniqueId(
   preferred: string,
   currentId?: string,
 ): string {
-  const base = (preferred.trim() || currentId || `item-${Date.now().toString(36)}`)
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
+  const base = (
+    preferred.trim() ||
+    currentId ||
+    `item-${Date.now().toString(36)}`
+  )
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
   if (base === currentId || !existing.has(base)) return base;
   let index = 2;
   while (existing.has(`${base}-${index}`)) index += 1;
@@ -481,7 +497,7 @@ function removeNodeDefinition(
 }
 
 function csvFromStrings(values: readonly string[] | undefined): string {
-  return (values ?? []).join(', ');
+  return (values ?? []).join(", ");
 }
 
 function stringsFromCsv(value: string): string[] {
@@ -509,7 +525,7 @@ function linesFromText(value: string): string[] {
 }
 
 function textFromLines(values: readonly string[] | undefined): string {
-  return (values ?? []).join('\n');
+  return (values ?? []).join("\n");
 }
 
 interface NodeDraft {
@@ -532,6 +548,7 @@ interface SkillDraft {
   summary: string;
   prompt: string;
   collaboratorExpertIds: string;
+  allowedCapabilities: string;
   triggerConditions: string;
   inputs: string;
   executionSteps: string;
@@ -574,9 +591,9 @@ function nodeDraftFromDefinition(
   return {
     id: definition.id,
     label: definition.label,
-    icon: definition.icon ?? 'team',
-    summary: definition.summary ?? '',
-    role: definition.role ?? '',
+    icon: definition.icon ?? "team",
+    summary: definition.summary ?? "",
+    role: definition.role ?? "",
     position: profile.position,
     responsibilities: textFromLines(profile.responsibilities),
     scenarios: textFromLines(profile.scenarios),
@@ -587,7 +604,7 @@ function nodeDraftFromDefinition(
 }
 
 function completeSkillProtocol(
-  skill: Pick<GameOrgSkillDefinition, 'label' | 'summary' | 'prompt'> & {
+  skill: Pick<GameOrgSkillDefinition, "label" | "summary" | "prompt"> & {
     protocol?: GameOrgSkillProtocol;
   },
   locale: Locale,
@@ -604,7 +621,8 @@ function completeSkillProtocol(
         : fallback.executionSteps,
     toolsAndResources: protocol.toolsAndResources || fallback.toolsAndResources,
     outputs: protocol.outputs || fallback.outputs,
-    acceptanceCriteria: protocol.acceptanceCriteria || fallback.acceptanceCriteria,
+    acceptanceCriteria:
+      protocol.acceptanceCriteria || fallback.acceptanceCriteria,
   };
 }
 
@@ -619,16 +637,19 @@ function skillDraftFromDefinition(
     summary: skill.summary,
     prompt: skill.prompt,
     collaboratorExpertIds: csvFromStrings(skill.collaboratorExpertIds),
+    allowedCapabilities: csvFromStrings(skill.allowedCapabilities),
     triggerConditions: protocol.triggerConditions,
     inputs: protocol.inputs,
-    executionSteps: protocol.executionSteps.join('\n'),
+    executionSteps: protocol.executionSteps.join("\n"),
     toolsAndResources: protocol.toolsAndResources,
     outputs: protocol.outputs,
     acceptanceCriteria: protocol.acceptanceCriteria,
   };
 }
 
-function skillDefinitionFromResolved(skill: ResolvedGameOrgSkill): GameOrgSkillDefinition {
+function skillDefinitionFromResolved(
+  skill: ResolvedGameOrgSkill,
+): GameOrgSkillDefinition {
   return {
     id: skill.id,
     label: skill.label,
@@ -639,14 +660,15 @@ function skillDefinitionFromResolved(skill: ResolvedGameOrgSkill): GameOrgSkillD
       executionSteps: [...skill.protocol.executionSteps],
     },
     collaboratorExpertIds: [...(skill.collaboratorExpertIds ?? [])],
+    allowedCapabilities: [...skill.allowedCapabilities],
   };
 }
 
 function orgLevelLabel(level: number, locale: Locale): string {
-  if (level === 0) return gameTeamText(locale, 'levelLead');
-  if (level === 1) return gameTeamText(locale, 'levelDirector');
-  if (level === 2) return gameTeamText(locale, 'levelGroup');
-  return gameTeamText(locale, 'levelDeveloper');
+  if (level === 0) return gameTeamText(locale, "levelLead");
+  if (level === 1) return gameTeamText(locale, "levelDirector");
+  if (level === 2) return gameTeamText(locale, "levelGroup");
+  return gameTeamText(locale, "levelDeveloper");
 }
 
 function SkillButton({
@@ -673,7 +695,9 @@ function SkillButton({
           type="button"
           onClick={() => onInsert(skill)}
           className="flex min-h-[46px] min-w-0 flex-1 items-start gap-2 px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
-          title={gameTeamText(locale, 'insertCommand', { command: skill.commandText })}
+          title={gameTeamText(locale, "insertCommand", {
+            command: skill.commandText,
+          })}
         >
           <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded bg-accent/10 text-accent">
             <Wand2 size={13} />
@@ -690,19 +714,25 @@ function SkillButton({
         <button
           type="button"
           onClick={() => onCopy(skill)}
-          title={gameTeamText(locale, 'copySkillCommand')}
-          aria-label={gameTeamText(locale, 'copySkillCommandAria', {
+          title={gameTeamText(locale, "copySkillCommand")}
+          aria-label={gameTeamText(locale, "copySkillCommandAria", {
             label: skill.label,
           })}
           className="flex w-9 shrink-0 items-center justify-center border-l border-border-soft text-fg-faint transition-colors hover:bg-panel hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         >
-          {copied ? <Check size={14} className="text-accent" /> : <Copy size={14} />}
+          {copied ? (
+            <Check size={14} className="text-accent" />
+          ) : (
+            <Copy size={14} />
+          )}
         </button>
         <button
           type="button"
           onClick={() => onEdit(skill)}
-          title={gameTeamText(locale, 'editSkill')}
-          aria-label={gameTeamText(locale, 'editSkillAria', { label: skill.label })}
+          title={gameTeamText(locale, "editSkill")}
+          aria-label={gameTeamText(locale, "editSkillAria", {
+            label: skill.label,
+          })}
           className="flex w-9 shrink-0 items-center justify-center border-l border-border-soft text-fg-faint transition-colors hover:bg-panel hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
         >
           <Pencil size={14} />
@@ -710,8 +740,10 @@ function SkillButton({
         <button
           type="button"
           onClick={() => onRemove(skill)}
-          title={gameTeamText(locale, 'deleteSkill')}
-          aria-label={gameTeamText(locale, 'deleteSkillAria', { label: skill.label })}
+          title={gameTeamText(locale, "deleteSkill")}
+          aria-label={gameTeamText(locale, "deleteSkillAria", {
+            label: skill.label,
+          })}
           className="flex w-9 shrink-0 items-center justify-center border-l border-border-soft text-fg-faint transition-colors hover:bg-panel hover:text-status-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-status-error"
         >
           <Trash2 size={14} />
@@ -725,6 +757,13 @@ function SkillButton({
           {skill.collaboratorLabels.length > 5 && (
             <Chip>+{skill.collaboratorLabels.length - 5}</Chip>
           )}
+        </div>
+      )}
+      {skill.capabilityLabels.length > 0 && (
+        <div className="flex flex-wrap gap-1 border-t border-border-soft/70 px-2.5 py-1.5">
+          {skill.capabilityLabels.map((label) => (
+            <Chip key={label}>{label}</Chip>
+          ))}
         </div>
       )}
     </div>
@@ -771,7 +810,9 @@ function BindingList({
 }) {
   return (
     <div>
-      <div className="mb-1 text-[10px] font-semibold text-fg-faint">{label}</div>
+      <div className="mb-1 text-[10px] font-semibold text-fg-faint">
+        {label}
+      </div>
       <div className="flex flex-wrap gap-1">{children}</div>
     </div>
   );
@@ -793,14 +834,17 @@ function RoleBindingOverview({
   const collaboratorLabels = Array.from(
     new Set(ownBindings.flatMap((binding) => binding.collaboratorLabels)),
   );
+  const capabilityLabels = Array.from(
+    new Set(ownBindings.flatMap((binding) => binding.capabilityLabels)),
+  );
 
   return (
     <section>
       <h4 className="mb-1.5 text-[11px] font-semibold text-fg-faint">
-        {gameTeamText(locale, 'bindingOverview')}
+        {gameTeamText(locale, "bindingOverview")}
       </h4>
       <div className="space-y-2 rounded-md border border-border-soft bg-bg/20 p-2">
-        <BindingList label={gameTeamText(locale, 'bindingSkills')}>
+        <BindingList label={gameTeamText(locale, "bindingSkills")}>
           {ownBindings.length > 0 ? (
             ownBindings.map((binding) => (
               <BindingChip
@@ -811,19 +855,28 @@ function RoleBindingOverview({
               </BindingChip>
             ))
           ) : (
-            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+            <BindingChip>{gameTeamText(locale, "bindingEmpty")}</BindingChip>
           )}
         </BindingList>
-        <BindingList label={gameTeamText(locale, 'bindingCollaborators')}>
+        <BindingList label={gameTeamText(locale, "bindingCollaborators")}>
           {collaboratorLabels.length > 0 ? (
             collaboratorLabels.map((label) => (
               <BindingChip key={label}>{label}</BindingChip>
             ))
           ) : (
-            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+            <BindingChip>{gameTeamText(locale, "bindingEmpty")}</BindingChip>
           )}
         </BindingList>
-        <BindingList label={gameTeamText(locale, 'bindingIncoming')}>
+        <BindingList label={gameTeamText(locale, "capabilities")}>
+          {capabilityLabels.length > 0 ? (
+            capabilityLabels.map((label) => (
+              <BindingChip key={label}>{label}</BindingChip>
+            ))
+          ) : (
+            <BindingChip>{gameTeamText(locale, "bindingEmpty")}</BindingChip>
+          )}
+        </BindingList>
+        <BindingList label={gameTeamText(locale, "bindingIncoming")}>
           {incomingBindings.length > 0 ? (
             incomingBindings.map((binding) => (
               <BindingChip
@@ -835,22 +888,22 @@ function RoleBindingOverview({
               </BindingChip>
             ))
           ) : (
-            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+            <BindingChip>{gameTeamText(locale, "bindingEmpty")}</BindingChip>
           )}
         </BindingList>
-        <BindingList label={gameTeamText(locale, 'bindingChildren')}>
+        <BindingList label={gameTeamText(locale, "bindingChildren")}>
           {selectedNode.children.length > 0 ? (
             selectedNode.children.map((child) => (
               <BindingChip
                 key={child.id}
                 onClick={() => onSelectNode(child.id)}
-                title={child.path.join(' / ')}
+                title={child.path.join(" / ")}
               >
                 {child.label}
               </BindingChip>
             ))
           ) : (
-            <BindingChip>{gameTeamText(locale, 'bindingEmpty')}</BindingChip>
+            <BindingChip>{gameTeamText(locale, "bindingEmpty")}</BindingChip>
           )}
         </BindingList>
       </div>
@@ -858,13 +911,7 @@ function RoleBindingOverview({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-[10px] font-semibold text-fg-faint">
@@ -876,9 +923,9 @@ function Field({
 }
 
 const inputClassName =
-  'h-8 w-full rounded-md border border-border-soft bg-bg px-2 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent';
+  "h-8 w-full rounded-md border border-border-soft bg-bg px-2 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent";
 const textareaClassName =
-  'min-h-[58px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent';
+  "min-h-[58px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent";
 
 function NodeEditor({
   draft,
@@ -889,7 +936,7 @@ function NodeEditor({
   locale,
 }: {
   draft: NodeDraft;
-  mode: 'edit' | 'add';
+  mode: "edit" | "add";
   onChange: (patch: Partial<NodeDraft>) => void;
   onCancel: () => void;
   onSave: () => void;
@@ -899,13 +946,16 @@ function NodeEditor({
     <section className="rounded-md border border-border-soft bg-bg/30 p-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h4 className="text-[11px] font-semibold text-fg">
-          {gameTeamText(locale, mode === 'edit' ? 'editRoleTitle' : 'addChildRoleTitle')}
+          {gameTeamText(
+            locale,
+            mode === "edit" ? "editRoleTitle" : "addChildRoleTitle",
+          )}
         </h4>
         <button
           type="button"
           onClick={onCancel}
-          title={gameTeamText(locale, 'close')}
-          aria-label={gameTeamText(locale, 'closeNodeEditorAria')}
+          title={gameTeamText(locale, "close")}
+          aria-label={gameTeamText(locale, "closeNodeEditorAria")}
           className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:bg-panel-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           <X size={13} />
@@ -913,7 +963,7 @@ function NodeEditor({
       </div>
       <div className="space-y-2">
         <div className="grid grid-cols-[1fr_110px] gap-2">
-          <Field label={gameTeamText(locale, 'roleId')}>
+          <Field label={gameTeamText(locale, "roleId")}>
             <input
               value={draft.id}
               onChange={(event) => onChange({ id: event.target.value })}
@@ -921,7 +971,7 @@ function NodeEditor({
               placeholder="technical-director"
             />
           </Field>
-          <Field label={gameTeamText(locale, 'icon')}>
+          <Field label={gameTeamText(locale, "icon")}>
             <select
               value={draft.icon}
               onChange={(event) =>
@@ -937,77 +987,90 @@ function NodeEditor({
             </select>
           </Field>
         </div>
-        <Field label={gameTeamText(locale, 'roleName')}>
+        <Field label={gameTeamText(locale, "roleName")}>
           <input
             value={draft.label}
             onChange={(event) => onChange({ label: event.target.value })}
             className={inputClassName}
-            placeholder={gameTeamText(locale, 'roleNamePlaceholder')}
+            placeholder={gameTeamText(locale, "roleNamePlaceholder")}
           />
         </Field>
-        <Field label={gameTeamText(locale, 'summary')}>
+        <Field label={gameTeamText(locale, "summary")}>
           <textarea
             value={draft.summary}
             onChange={(event) => onChange({ summary: event.target.value })}
             className={textareaClassName}
-            placeholder={gameTeamText(locale, 'nodeSummaryPlaceholder')}
+            placeholder={gameTeamText(locale, "nodeSummaryPlaceholder")}
           />
         </Field>
-        <Field label={gameTeamText(locale, 'role')}>
+        <Field label={gameTeamText(locale, "role")}>
           <textarea
             value={draft.role}
             onChange={(event) => onChange({ role: event.target.value })}
             className={textareaClassName}
-            placeholder={gameTeamText(locale, 'nodeRolePlaceholder')}
+            placeholder={gameTeamText(locale, "nodeRolePlaceholder")}
           />
         </Field>
-        <Field label={gameTeamText(locale, 'profilePosition')}>
+        <Field label={gameTeamText(locale, "profilePosition")}>
           <textarea
             value={draft.position}
             onChange={(event) => onChange({ position: event.target.value })}
             className={textareaClassName}
-            placeholder={gameTeamText(locale, 'profilePositionPlaceholder')}
+            placeholder={gameTeamText(locale, "profilePositionPlaceholder")}
           />
         </Field>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Field label={gameTeamText(locale, 'profileResponsibilities')}>
+          <Field label={gameTeamText(locale, "profileResponsibilities")}>
             <textarea
               value={draft.responsibilities}
               onChange={(event) =>
                 onChange({ responsibilities: event.target.value })
               }
               className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-              placeholder={gameTeamText(locale, 'profileResponsibilitiesPlaceholder')}
+              placeholder={gameTeamText(
+                locale,
+                "profileResponsibilitiesPlaceholder",
+              )}
             />
           </Field>
-          <Field label={gameTeamText(locale, 'profileScenarios')}>
+          <Field label={gameTeamText(locale, "profileScenarios")}>
             <textarea
               value={draft.scenarios}
               onChange={(event) => onChange({ scenarios: event.target.value })}
               className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-              placeholder={gameTeamText(locale, 'profileScenariosPlaceholder')}
+              placeholder={gameTeamText(locale, "profileScenariosPlaceholder")}
             />
           </Field>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Field label={gameTeamText(locale, 'profileDeliverables')}>
+          <Field label={gameTeamText(locale, "profileDeliverables")}>
             <textarea
               value={draft.deliverables}
-              onChange={(event) => onChange({ deliverables: event.target.value })}
+              onChange={(event) =>
+                onChange({ deliverables: event.target.value })
+              }
               className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-              placeholder={gameTeamText(locale, 'profileDeliverablesPlaceholder')}
+              placeholder={gameTeamText(
+                locale,
+                "profileDeliverablesPlaceholder",
+              )}
             />
           </Field>
-          <Field label={gameTeamText(locale, 'profileCollaborators')}>
+          <Field label={gameTeamText(locale, "profileCollaborators")}>
             <textarea
               value={draft.collaborators}
-              onChange={(event) => onChange({ collaborators: event.target.value })}
+              onChange={(event) =>
+                onChange({ collaborators: event.target.value })
+              }
               className="min-h-[76px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-              placeholder={gameTeamText(locale, 'profileCollaboratorsPlaceholder')}
+              placeholder={gameTeamText(
+                locale,
+                "profileCollaboratorsPlaceholder",
+              )}
             />
           </Field>
         </div>
-        <Field label={gameTeamText(locale, 'expertIds')}>
+        <Field label={gameTeamText(locale, "expertIds")}>
           <input
             value={draft.expertIds}
             onChange={(event) => onChange({ expertIds: event.target.value })}
@@ -1022,7 +1085,7 @@ function NodeEditor({
             className="inline-flex h-7 items-center gap-1 rounded border border-border-soft bg-panel px-2 text-[11px] text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             <X size={12} />
-            {gameTeamText(locale, 'cancel')}
+            {gameTeamText(locale, "cancel")}
           </button>
           <button
             type="button"
@@ -1030,7 +1093,7 @@ function NodeEditor({
             className="inline-flex h-7 items-center gap-1 rounded border border-accent/50 bg-accent/15 px-2 text-[11px] text-accent transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             <Check size={12} />
-            {gameTeamText(locale, 'save')}
+            {gameTeamText(locale, "save")}
           </button>
         </div>
       </div>
@@ -1047,7 +1110,7 @@ function SkillEditor({
   locale,
 }: {
   draft: SkillDraft;
-  mode: 'edit' | 'add';
+  mode: "edit" | "add";
   onChange: (patch: Partial<SkillDraft>) => void;
   onCancel: () => void;
   onSave: () => void;
@@ -1057,13 +1120,16 @@ function SkillEditor({
     <section className="rounded-md border border-border-soft bg-bg/30 p-2.5">
       <div className="mb-2 flex items-center justify-between gap-2">
         <h4 className="text-[11px] font-semibold text-fg">
-          {gameTeamText(locale, mode === 'edit' ? 'editSkillTitle' : 'addSkillTitle')}
+          {gameTeamText(
+            locale,
+            mode === "edit" ? "editSkillTitle" : "addSkillTitle",
+          )}
         </h4>
         <button
           type="button"
           onClick={onCancel}
-          title={gameTeamText(locale, 'close')}
-          aria-label={gameTeamText(locale, 'closeSkillEditorAria')}
+          title={gameTeamText(locale, "close")}
+          aria-label={gameTeamText(locale, "closeSkillEditorAria")}
           className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:bg-panel-2 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
           <X size={13} />
@@ -1079,21 +1145,21 @@ function SkillEditor({
               placeholder="feature-development"
             />
           </Field>
-          <Field label={gameTeamText(locale, 'name')}>
+          <Field label={gameTeamText(locale, "name")}>
             <input
               value={draft.label}
               onChange={(event) => onChange({ label: event.target.value })}
               className={inputClassName}
-              placeholder={gameTeamText(locale, 'skillNamePlaceholder')}
+              placeholder={gameTeamText(locale, "skillNamePlaceholder")}
             />
           </Field>
         </div>
-        <Field label={gameTeamText(locale, 'summary')}>
+        <Field label={gameTeamText(locale, "summary")}>
           <textarea
             value={draft.summary}
             onChange={(event) => onChange({ summary: event.target.value })}
             className={textareaClassName}
-            placeholder={gameTeamText(locale, 'skillSummaryPlaceholder')}
+            placeholder={gameTeamText(locale, "skillSummaryPlaceholder")}
           />
         </Field>
         <Field label="Prompt">
@@ -1101,68 +1167,80 @@ function SkillEditor({
             value={draft.prompt}
             onChange={(event) => onChange({ prompt: event.target.value })}
             className="min-h-[86px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-            placeholder={gameTeamText(locale, 'promptPlaceholder')}
+            placeholder={gameTeamText(locale, "promptPlaceholder")}
+          />
+        </Field>
+        <Field label={gameTeamText(locale, "capabilities")}>
+          <input
+            value={draft.allowedCapabilities}
+            onChange={(event) =>
+              onChange({ allowedCapabilities: event.target.value })
+            }
+            className={inputClassName}
+            placeholder={gameTeamText(locale, "capabilitiesPlaceholder")}
           />
         </Field>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Field label={gameTeamText(locale, 'protocolTrigger')}>
+          <Field label={gameTeamText(locale, "protocolTrigger")}>
             <textarea
               value={draft.triggerConditions}
               onChange={(event) =>
                 onChange({ triggerConditions: event.target.value })
               }
               className={textareaClassName}
-              placeholder={gameTeamText(locale, 'protocolTriggerPlaceholder')}
+              placeholder={gameTeamText(locale, "protocolTriggerPlaceholder")}
             />
           </Field>
-          <Field label={gameTeamText(locale, 'protocolInputs')}>
+          <Field label={gameTeamText(locale, "protocolInputs")}>
             <textarea
               value={draft.inputs}
               onChange={(event) => onChange({ inputs: event.target.value })}
               className={textareaClassName}
-              placeholder={gameTeamText(locale, 'protocolInputsPlaceholder')}
+              placeholder={gameTeamText(locale, "protocolInputsPlaceholder")}
             />
           </Field>
         </div>
-        <Field label={gameTeamText(locale, 'protocolSteps')}>
+        <Field label={gameTeamText(locale, "protocolSteps")}>
           <textarea
             value={draft.executionSteps}
-            onChange={(event) => onChange({ executionSteps: event.target.value })}
+            onChange={(event) =>
+              onChange({ executionSteps: event.target.value })
+            }
             className="min-h-[92px] w-full resize-y rounded-md border border-border-soft bg-bg px-2 py-1.5 text-xs leading-relaxed text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
-            placeholder={gameTeamText(locale, 'protocolStepsPlaceholder')}
+            placeholder={gameTeamText(locale, "protocolStepsPlaceholder")}
           />
         </Field>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Field label={gameTeamText(locale, 'protocolTools')}>
+          <Field label={gameTeamText(locale, "protocolTools")}>
             <textarea
               value={draft.toolsAndResources}
               onChange={(event) =>
                 onChange({ toolsAndResources: event.target.value })
               }
               className={textareaClassName}
-              placeholder={gameTeamText(locale, 'protocolToolsPlaceholder')}
+              placeholder={gameTeamText(locale, "protocolToolsPlaceholder")}
             />
           </Field>
-          <Field label={gameTeamText(locale, 'protocolOutputs')}>
+          <Field label={gameTeamText(locale, "protocolOutputs")}>
             <textarea
               value={draft.outputs}
               onChange={(event) => onChange({ outputs: event.target.value })}
               className={textareaClassName}
-              placeholder={gameTeamText(locale, 'protocolOutputsPlaceholder')}
+              placeholder={gameTeamText(locale, "protocolOutputsPlaceholder")}
             />
           </Field>
         </div>
-        <Field label={gameTeamText(locale, 'protocolAcceptance')}>
+        <Field label={gameTeamText(locale, "protocolAcceptance")}>
           <textarea
             value={draft.acceptanceCriteria}
             onChange={(event) =>
               onChange({ acceptanceCriteria: event.target.value })
             }
             className={textareaClassName}
-            placeholder={gameTeamText(locale, 'protocolAcceptancePlaceholder')}
+            placeholder={gameTeamText(locale, "protocolAcceptancePlaceholder")}
           />
         </Field>
-        <Field label={gameTeamText(locale, 'collaboratorIds')}>
+        <Field label={gameTeamText(locale, "collaboratorIds")}>
           <input
             value={draft.collaboratorExpertIds}
             onChange={(event) =>
@@ -1179,7 +1257,7 @@ function SkillEditor({
             className="inline-flex h-7 items-center gap-1 rounded border border-border-soft bg-panel px-2 text-[11px] text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             <X size={12} />
-            {gameTeamText(locale, 'cancel')}
+            {gameTeamText(locale, "cancel")}
           </button>
           <button
             type="button"
@@ -1187,7 +1265,7 @@ function SkillEditor({
             className="inline-flex h-7 items-center gap-1 rounded border border-accent/50 bg-accent/15 px-2 text-[11px] text-accent transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             <Check size={12} />
-            {gameTeamText(locale, 'save')}
+            {gameTeamText(locale, "save")}
           </button>
         </div>
       </div>
@@ -1256,10 +1334,10 @@ function measureOrgLayout(
 }
 
 function orgLevelAccent(level: number): string {
-  if (level === 0) return 'var(--accent)';
-  if (level === 1) return 'var(--accent-2)';
-  if (level === 2) return 'var(--accent-3)';
-  return 'var(--accent-4)';
+  if (level === 0) return "var(--accent)";
+  if (level === 1) return "var(--accent-2)";
+  if (level === 2) return "var(--accent-3)";
+  return "var(--accent-4)";
 }
 
 function findOrgAncestorIds(
@@ -1319,7 +1397,7 @@ function orgSearchText(node: ResolvedGameOrgNode): string {
     node.summary,
     node.role,
     ...roleProfileSearchParts(node),
-    node.path.join(' '),
+    node.path.join(" "),
     ...node.experts.flatMap((expert) => [
       expert.id,
       expert.name,
@@ -1329,16 +1407,24 @@ function orgSearchText(node: ResolvedGameOrgNode): string {
     ]),
     ...node.expertIds,
     ...node.groupLabels,
-    ...node.skills.flatMap((skill) => [skill.label, skill.summary, skill.id]),
+    ...node.capabilityLabels,
+    ...node.allowedCapabilities,
+    ...node.skills.flatMap((skill) => [
+      skill.label,
+      skill.summary,
+      skill.id,
+      ...skill.capabilityLabels,
+      ...skill.allowedCapabilities,
+    ]),
   ]
-    .join(' ')
+    .join(" ")
     .toLocaleLowerCase();
 }
 
 function orgSearchScore(node: ResolvedGameOrgNode, query: string): number {
   const label = node.label.toLocaleLowerCase();
   const id = node.id.toLocaleLowerCase();
-  const path = node.path.join(' ').toLocaleLowerCase();
+  const path = node.path.join(" ").toLocaleLowerCase();
   const expertText = [
     ...node.expertIds,
     ...node.experts.flatMap((expert) => [
@@ -1347,21 +1433,31 @@ function orgSearchScore(node: ResolvedGameOrgNode, query: string): number {
       ...expert.triggers,
     ]),
   ]
-    .join(' ')
+    .join(" ")
     .toLocaleLowerCase();
   const skillText = node.skills
-    .flatMap((skill) => [skill.label, skill.id])
-    .join(' ')
+    .flatMap((skill) => [
+      skill.label,
+      skill.id,
+      ...skill.capabilityLabels,
+      ...skill.allowedCapabilities,
+    ])
+    .join(" ")
     .toLocaleLowerCase();
   const bodyText = [
     node.summary,
     node.role,
     ...roleProfileSearchParts(node),
     ...node.groupLabels,
+    ...node.capabilityLabels,
+    ...node.allowedCapabilities,
     ...node.experts.flatMap((expert) => [expert.summary, expert.role]),
-    ...node.skills.map((skill) => skill.summary),
+    ...node.skills.flatMap((skill) => [
+      skill.summary,
+      ...skill.capabilities.map((capability) => capability.useWhen),
+    ]),
   ]
-    .join(' ')
+    .join(" ")
     .toLocaleLowerCase();
 
   let score = 0;
@@ -1408,7 +1504,7 @@ function buildOrgFlow({
     const y = item.level * ORG_Y_GAP;
     nodes.push({
       id: item.node.id,
-      type: 'org',
+      type: "org",
       position: { x, y },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
@@ -1418,7 +1514,8 @@ function buildOrgFlow({
         node: item.node,
         level: item.level,
         collapsed: item.hiddenChildCount > 0,
-        incomingBindingCount: incomingBindingCountByNodeId.get(item.node.id) ?? 0,
+        incomingBindingCount:
+          incomingBindingCountByNodeId.get(item.node.id) ?? 0,
         locale,
         onSelect,
         onToggleCollapse,
@@ -1431,9 +1528,9 @@ function buildOrgFlow({
         id: `${parentId}->${item.node.id}`,
         source: parentId,
         target: item.node.id,
-        sourceHandle: 'bottom',
-        targetHandle: 'top',
-        type: 'smoothstep',
+        sourceHandle: "bottom",
+        targetHandle: "top",
+        type: "smoothstep",
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: orgLevelAccent(item.level),
@@ -1481,16 +1578,16 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-md border bg-panel/95 text-left shadow-[var(--node-shadow)] backdrop-blur transition-colors',
+        "group relative overflow-hidden rounded-md border bg-panel/95 text-left shadow-[var(--node-shadow)] backdrop-blur transition-colors",
         selected
-          ? 'border-accent bg-panel-2 shadow-[0_0_0_1px_var(--accent),0_12px_34px_-16px_var(--accent)]'
-          : 'border-border-soft hover:border-accent/55 hover:bg-panel-2',
+          ? "border-accent bg-panel-2 shadow-[0_0_0_1px_var(--accent),0_12px_34px_-16px_var(--accent)]"
+          : "border-border-soft hover:border-accent/55 hover:bg-panel-2",
       )}
       style={{ width: ORG_CARD_WIDTH, minHeight: ORG_CARD_HEIGHT }}
       role="treeitem"
       aria-level={level + 1}
       aria-selected={selected}
-      title={`${node.path.join(' / ')}\n${node.summary}`}
+      title={`${node.path.join(" / ")}\n${node.summary}`}
     >
       <Handle
         id="top"
@@ -1523,10 +1620,10 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
         <span className="flex w-full min-w-0 items-start gap-2.5">
           <span
             className={cn(
-              'flex h-9 w-9 shrink-0 items-center justify-center rounded border',
+              "flex h-9 w-9 shrink-0 items-center justify-center rounded border",
               selected
-                ? 'border-accent/55 bg-accent/15'
-                : 'border-border-soft bg-bg/60 group-hover:border-accent/40',
+                ? "border-accent/55 bg-accent/15"
+                : "border-border-soft bg-bg/60 group-hover:border-accent/40",
             )}
           >
             <GameOrgIcon node={node} size={18} className="stroke-[2.35]" />
@@ -1546,7 +1643,9 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
         <span className="mt-auto flex min-w-0 flex-wrap items-center gap-1.5">
           {node.experts.length > 0 && (
             <span className="rounded border border-border-soft bg-bg/50 px-1.5 py-0.5 text-[10px] leading-none text-fg-faint">
-              {gameTeamText(locale, 'peopleCount', { count: node.experts.length })}
+              {gameTeamText(locale, "peopleCount", {
+                count: node.experts.length,
+              })}
             </span>
           )}
           {node.skills.length > 0 && (
@@ -1556,7 +1655,7 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
           )}
           {incomingBindingCount > 0 && (
             <span className="rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] leading-none text-accent">
-              {gameTeamText(locale, 'bindingIncomingCount', {
+              {gameTeamText(locale, "bindingIncomingCount", {
                 count: incomingBindingCount,
               })}
             </span>
@@ -1565,7 +1664,7 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
             <span className="rounded border border-border-soft bg-bg/50 px-1.5 py-0.5 text-[10px] leading-none text-fg-faint">
               {gameTeamText(
                 locale,
-                collapsed ? 'childCountCollapsed' : 'childCountExpanded',
+                collapsed ? "childCountCollapsed" : "childCountExpanded",
                 { count: childCount },
               )}
             </span>
@@ -1581,17 +1680,17 @@ function OrgFlowNodeCard({ data, selected }: NodeProps) {
           }}
           title={gameTeamText(
             locale,
-            collapsed ? 'expandChildren' : 'collapseChildren',
+            collapsed ? "expandChildren" : "collapseChildren",
           )}
           aria-label={`${gameTeamText(
             locale,
-            collapsed ? 'expandChildren' : 'collapseChildren',
+            collapsed ? "expandChildren" : "collapseChildren",
           )}: ${node.label}`}
           className={cn(
-            'absolute -bottom-3 left-1/2 z-10 flex h-6 min-w-6 -translate-x-1/2 items-center justify-center gap-1 rounded border px-1.5 text-[10px] shadow-sm transition-colors nodrag nopan',
+            "absolute -bottom-3 left-1/2 z-10 flex h-6 min-w-6 -translate-x-1/2 items-center justify-center gap-1 rounded border px-1.5 text-[10px] shadow-sm transition-colors nodrag nopan",
             collapsed
-              ? 'border-accent/60 bg-accent text-bg hover:bg-accent/90'
-              : 'border-border-soft bg-panel-2 text-fg-faint hover:border-accent hover:text-fg',
+              ? "border-accent/60 bg-accent text-bg hover:bg-accent/90"
+              : "border-border-soft bg-panel-2 text-fg-faint hover:border-accent hover:text-fg",
           )}
         >
           {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
@@ -1621,9 +1720,11 @@ function OrganizationChartCanvas({
   onOpenDetails?: (id: string) => void;
   locale: Locale;
 }) {
-  const { getZoom, setCenter, getInternalNode } =
-    useReactFlow<OrgFlowNode, OrgFlowEdge>();
-  const [searchQuery, setSearchQuery] = useState('');
+  const { getZoom, setCenter, getInternalNode } = useReactFlow<
+    OrgFlowNode,
+    OrgFlowEdge
+  >();
+  const [searchQuery, setSearchQuery] = useState("");
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(
     () => new Set<string>(),
   );
@@ -1656,8 +1757,13 @@ function OrganizationChartCanvas({
         node,
         score: orgSearchScore(node, normalizedQuery),
       }))
-      .filter((item) => item.score > 0 || orgSearchText(item.node).includes(normalizedQuery))
-      .sort((a, b) => b.score - a.score || a.node.path.length - b.node.path.length)
+      .filter(
+        (item) =>
+          item.score > 0 || orgSearchText(item.node).includes(normalizedQuery),
+      )
+      .sort(
+        (a, b) => b.score - a.score || a.node.path.length - b.node.path.length,
+      )
       .map((item) => item.node)
       .slice(0, ORG_SEARCH_LIMIT);
   }, [normalizedQuery, orgNodes]);
@@ -1728,7 +1834,10 @@ function OrganizationChartCanvas({
       locale,
     ],
   );
-  const visibleNodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
+  const visibleNodeIds = useMemo(
+    () => new Set(nodes.map((node) => node.id)),
+    [nodes],
+  );
   const nodePositionById = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     for (const node of nodes) map.set(node.id, node.position);
@@ -1814,7 +1923,7 @@ function OrganizationChartCanvas({
   const focusNode = useCallback(
     (id: string) => {
       activateNode(id, { zoom: 0.95 });
-      setSearchQuery('');
+      setSearchQuery("");
     },
     [activateNode],
   );
@@ -1862,7 +1971,7 @@ function OrganizationChartCanvas({
           maskColor="color-mix(in srgb, var(--bg) 62%, transparent)"
           className="!bottom-3 !right-3 !h-24 !w-36 !rounded-md !border !border-border-soft !bg-panel/90 !shadow-lg"
         />
-        <Controls showInteractive={false} style={{ color: 'var(--fg)' }} />
+        <Controls showInteractive={false} style={{ color: "var(--fg)" }} />
       </ReactFlow>
       <div className="pointer-events-none absolute left-3 right-3 top-3 z-20 flex items-start gap-3">
         <div className="pointer-events-auto w-[min(320px,100%)] shrink-0 rounded-md border border-border-soft bg-panel/95 shadow-lg backdrop-blur">
@@ -1872,8 +1981,8 @@ function OrganizationChartCanvas({
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-fg-faint"
-              placeholder={gameTeamText(locale, 'searchPlaceholder')}
-              aria-label={gameTeamText(locale, 'searchAria')}
+              placeholder={gameTeamText(locale, "searchPlaceholder")}
+              aria-label={gameTeamText(locale, "searchAria")}
             />
           </label>
           {!normalizedQuery && tree.children.length > 0 && (
@@ -1885,14 +1994,14 @@ function OrganizationChartCanvas({
                     key={node.id}
                     type="button"
                     onClick={() => focusNode(node.id)}
-                    aria-label={gameTeamText(locale, 'locateAria', {
+                    aria-label={gameTeamText(locale, "locateAria", {
                       label: node.label,
                     })}
                     className={cn(
-                      'inline-flex h-7 max-w-full items-center gap-1.5 rounded border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+                      "inline-flex h-7 max-w-full items-center gap-1.5 rounded border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
                       selected
-                        ? 'border-accent/60 bg-accent/15 text-accent'
-                        : 'border-border-soft bg-bg/50 text-fg-faint hover:border-accent hover:text-fg',
+                        ? "border-accent/60 bg-accent/15 text-accent"
+                        : "border-border-soft bg-bg/50 text-fg-faint hover:border-accent hover:text-fg",
                     )}
                   >
                     <GameOrgIcon node={node} size={12} />
@@ -1920,17 +2029,20 @@ function OrganizationChartCanvas({
                         <span className="truncate text-xs font-semibold text-fg">
                           {node.label}
                         </span>
-                        <LocateFixed size={12} className="shrink-0 text-accent" />
+                        <LocateFixed
+                          size={12}
+                          className="shrink-0 text-accent"
+                        />
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-fg-faint">
-                        {node.path.join(' / ')}
+                        {node.path.join(" / ")}
                       </span>
                     </span>
                   </button>
                 ))
               ) : (
                 <div className="px-2.5 py-3 text-xs text-fg-faint">
-                  {gameTeamText(locale, 'noMatches')}
+                  {gameTeamText(locale, "noMatches")}
                 </div>
               )}
             </div>
@@ -1954,14 +2066,14 @@ function OrganizationChartCanvas({
                       key={node.id}
                       type="button"
                       onClick={() => focusNode(node.id)}
-                      aria-label={gameTeamText(locale, 'locateAria', {
+                      aria-label={gameTeamText(locale, "locateAria", {
                         label: node.label,
                       })}
                       className={cn(
-                        'inline-flex h-7 max-w-full items-center gap-1.5 rounded border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent',
+                        "inline-flex h-7 max-w-full items-center gap-1.5 rounded border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
                         selected
-                          ? 'border-accent/60 bg-accent/15 text-accent'
-                          : 'border-border-soft bg-bg/50 text-fg-faint hover:border-accent hover:text-fg',
+                          ? "border-accent/60 bg-accent/15 text-accent"
+                          : "border-border-soft bg-bg/50 text-fg-faint hover:border-accent hover:text-fg",
                       )}
                     >
                       <GameOrgIcon node={node} size={12} />
@@ -1995,7 +2107,9 @@ function OrganizationChart({
     (event: PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
       const element = event.target as Element | null;
-      const nodeElement = element?.closest<HTMLElement>('.react-flow__node[data-id]');
+      const nodeElement = element?.closest<HTMLElement>(
+        ".react-flow__node[data-id]",
+      );
       const id = nodeElement?.dataset.id;
       if (!id || !findGameOrgNode(tree, id)) return;
       onSelect(id);
@@ -2008,7 +2122,7 @@ function OrganizationChart({
     <div
       className="relative h-full min-h-0 overflow-hidden bg-bg"
       role="tree"
-      aria-label={gameTeamText(locale, 'chartAria')}
+      aria-label={gameTeamText(locale, "chartAria")}
       onPointerDownCapture={activateNodeFromPointer}
     >
       <ReactFlowProvider>
@@ -2024,10 +2138,10 @@ function OrganizationChart({
   );
 }
 
-type GameTeamPanelMode = 'organization' | 'details';
+type GameTeamPanelMode = "organization" | "details";
 
 export default function GameTeamPanel({
-  mode = 'details',
+  mode = "details",
   onOpenDetails,
   selectedNodeId,
 }: {
@@ -2050,21 +2164,25 @@ export default function GameTeamPanel({
   );
   const [copiedSkillId, setCopiedSkillId] = useState<string | null>(null);
   const selectedNode = findGameOrgNode(tree, selectedId) ?? tree;
-  const selectedDefinition = findNodeDefinition(definition, selectedNode.id) ?? definition;
-  const selectedParentDefinition = findParentNodeDefinition(definition, selectedNode.id);
+  const selectedDefinition =
+    findNodeDefinition(definition, selectedNode.id) ?? definition;
+  const selectedParentDefinition = findParentNodeDefinition(
+    definition,
+    selectedNode.id,
+  );
   const selectedIsRoot = selectedNode.id === definition.id;
   const roleSkillBindings = useMemo(
     () => collectGameOrgSkillBindings(tree, selectedNode.id),
     [selectedNode.id, tree],
   );
   const [nodeEditor, setNodeEditor] = useState<{
-    mode: 'edit' | 'add';
+    mode: "edit" | "add";
     parentId?: string;
     originalId?: string;
     draft: NodeDraft;
   } | null>(null);
   const [skillEditor, setSkillEditor] = useState<{
-    mode: 'edit' | 'add';
+    mode: "edit" | "add";
     originalId?: string;
     draft: SkillDraft;
   } | null>(null);
@@ -2130,7 +2248,7 @@ export default function GameTeamPanel({
   const startEditNode = () => {
     setSkillEditor(null);
     setNodeEditor({
-      mode: 'edit',
+      mode: "edit",
       originalId: selectedDefinition.id,
       draft: nodeDraftFromDefinition(selectedDefinition, selectedNode),
     });
@@ -2141,20 +2259,20 @@ export default function GameTeamPanel({
     const base = uniqueId(existing, `${selectedNode.id}-role`);
     setSkillEditor(null);
     setNodeEditor({
-      mode: 'add',
+      mode: "add",
       parentId: selectedNode.id,
       draft: {
         id: base,
-        label: gameTeamText(locale, 'newRole'),
-        icon: 'team',
-        summary: '',
-        role: '',
-        position: '',
-        responsibilities: '',
-        scenarios: '',
-        deliverables: '',
-        collaborators: '',
-        expertIds: '',
+        label: gameTeamText(locale, "newRole"),
+        icon: "team",
+        summary: "",
+        role: "",
+        position: "",
+        responsibilities: "",
+        scenarios: "",
+        deliverables: "",
+        collaborators: "",
+        expertIds: "",
       },
     });
   };
@@ -2163,7 +2281,11 @@ export default function GameTeamPanel({
     if (!nodeEditor) return;
     const existing = collectNodeDefinitionIds(definition);
     if (nodeEditor.originalId) existing.delete(nodeEditor.originalId);
-    const nextId = uniqueId(existing, nodeEditor.draft.id, nodeEditor.originalId);
+    const nextId = uniqueId(
+      existing,
+      nodeEditor.draft.id,
+      nodeEditor.originalId,
+    );
     const nextNode: GameOrgNodeDefinition = {
       id: nextId,
       label: nodeEditor.draft.label.trim() || nextId,
@@ -2180,7 +2302,7 @@ export default function GameTeamPanel({
       expertIds: stringsFromCsv(nodeEditor.draft.expertIds),
     };
 
-    if (nodeEditor.mode === 'add') {
+    if (nodeEditor.mode === "add") {
       const parentId = nodeEditor.parentId ?? selectedNode.id;
       const next = updateNodeDefinition(definition, parentId, (node) => ({
         ...node,
@@ -2189,13 +2311,20 @@ export default function GameTeamPanel({
       persistDefinition(next);
       selectNode(nextId);
     } else {
-      const original = findNodeDefinition(definition, nodeEditor.originalId ?? '');
-      const next = updateNodeDefinition(definition, nodeEditor.originalId ?? selectedNode.id, (node) => ({
-        ...node,
-        ...nextNode,
-        children: original?.children ?? node.children,
-        skills: original?.skills ?? node.skills,
-      }));
+      const original = findNodeDefinition(
+        definition,
+        nodeEditor.originalId ?? "",
+      );
+      const next = updateNodeDefinition(
+        definition,
+        nodeEditor.originalId ?? selectedNode.id,
+        (node) => ({
+          ...node,
+          ...nextNode,
+          children: original?.children ?? node.children,
+          skills: original?.skills ?? node.skills,
+        }),
+      );
       persistDefinition(next);
       selectNode(nextId);
     }
@@ -2224,27 +2353,28 @@ export default function GameTeamPanel({
   const startAddSkill = () => {
     const existing = new Set(selectedNode.skills.map((skill) => skill.id));
     const base = uniqueId(existing, `${selectedNode.id}:skill`);
-    const label = gameTeamText(locale, 'newSkill');
+    const label = gameTeamText(locale, "newSkill");
     const protocol = createDefaultGameOrgSkillProtocol(
       {
         label,
-        summary: '',
-        prompt: '',
+        summary: "",
+        prompt: "",
       },
       locale,
     );
     setNodeEditor(null);
     setSkillEditor({
-      mode: 'add',
+      mode: "add",
       draft: {
         id: base,
         label,
-        summary: '',
-        prompt: '',
+        summary: "",
+        prompt: "",
         collaboratorExpertIds: csvFromStrings(selectedNode.expertIds),
+        allowedCapabilities: csvFromStrings(selectedNode.allowedCapabilities),
         triggerConditions: protocol.triggerConditions,
         inputs: protocol.inputs,
-        executionSteps: protocol.executionSteps.join('\n'),
+        executionSteps: protocol.executionSteps.join("\n"),
         toolsAndResources: protocol.toolsAndResources,
         outputs: protocol.outputs,
         acceptanceCriteria: protocol.acceptanceCriteria,
@@ -2255,9 +2385,12 @@ export default function GameTeamPanel({
   const startEditSkill = (skill: ResolvedGameOrgSkill) => {
     setNodeEditor(null);
     setSkillEditor({
-      mode: 'edit',
+      mode: "edit",
       originalId: skill.id,
-      draft: skillDraftFromDefinition(skillDefinitionFromResolved(skill), locale),
+      draft: skillDraftFromDefinition(
+        skillDefinitionFromResolved(skill),
+        locale,
+      ),
     });
   };
 
@@ -2265,14 +2398,19 @@ export default function GameTeamPanel({
     if (!skillEditor) return;
     const existing = new Set(selectedNode.skills.map((skill) => skill.id));
     if (skillEditor.originalId) existing.delete(skillEditor.originalId);
-    const nextId = uniqueId(existing, skillEditor.draft.id, skillEditor.originalId);
+    const nextId = uniqueId(
+      existing,
+      skillEditor.draft.id,
+      skillEditor.originalId,
+    );
     const nextSkill: GameOrgSkillDefinition = {
       id: nextId,
       label: skillEditor.draft.label.trim() || nextId,
-      summary: skillEditor.draft.summary.trim() || skillEditor.draft.prompt.trim(),
+      summary:
+        skillEditor.draft.summary.trim() || skillEditor.draft.prompt.trim(),
       prompt:
         skillEditor.draft.prompt.trim() ||
-        gameTeamText(locale, 'saveFallbackPrompt', {
+        gameTeamText(locale, "saveFallbackPrompt", {
           label: skillEditor.draft.label.trim() || nextId,
         }),
       protocol: {
@@ -2283,14 +2421,20 @@ export default function GameTeamPanel({
         outputs: skillEditor.draft.outputs.trim(),
         acceptanceCriteria: skillEditor.draft.acceptanceCriteria.trim(),
       },
-      collaboratorExpertIds: stringsFromCsv(skillEditor.draft.collaboratorExpertIds),
+      collaboratorExpertIds: stringsFromCsv(
+        skillEditor.draft.collaboratorExpertIds,
+      ),
+      allowedCapabilities: normalizeGameAssetCapabilityIds(
+        stringsFromCsv(skillEditor.draft.allowedCapabilities),
+      ),
     };
     const next = updateNodeDefinition(definition, selectedNode.id, (node) => {
-      const skills = node.skills ?? selectedNode.skills.map(skillDefinitionFromResolved);
+      const skills =
+        node.skills ?? selectedNode.skills.map(skillDefinitionFromResolved);
       return {
         ...node,
         skills:
-          skillEditor.mode === 'edit'
+          skillEditor.mode === "edit"
             ? skills.map((skill) =>
                 skill.id === skillEditor.originalId ? nextSkill : skill,
               )
@@ -2304,15 +2448,15 @@ export default function GameTeamPanel({
   const removeSkill = (skill: ResolvedGameOrgSkill) => {
     const next = updateNodeDefinition(definition, selectedNode.id, (node) => ({
       ...node,
-      skills: (node.skills ?? selectedNode.skills.map(skillDefinitionFromResolved)).filter(
-        (item) => item.id !== skill.id,
-      ),
+      skills: (
+        node.skills ?? selectedNode.skills.map(skillDefinitionFromResolved)
+      ).filter((item) => item.id !== skill.id),
     }));
     persistDefinition(next);
     if (skillEditor?.originalId === skill.id) setSkillEditor(null);
   };
 
-  if (mode === 'organization') {
+  if (mode === "organization") {
     return (
       <OrganizationChart
         tree={tree}
@@ -2341,15 +2485,15 @@ export default function GameTeamPanel({
                 {selectedNode.label}
               </div>
               <div className="mt-0.5 truncate text-[11px] text-fg-faint">
-                {selectedNode.path.join(' / ')}
+                {selectedNode.path.join(" / ")}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <button
                 type="button"
                 onClick={startEditNode}
-                title={gameTeamText(locale, 'editRoleButton')}
-                aria-label={gameTeamText(locale, 'editRoleButton')}
+                title={gameTeamText(locale, "editRoleButton")}
+                aria-label={gameTeamText(locale, "editRoleButton")}
                 className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg/40 text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <Pencil size={13} />
@@ -2357,8 +2501,8 @@ export default function GameTeamPanel({
               <button
                 type="button"
                 onClick={startAddChildNode}
-                title={gameTeamText(locale, 'addChildRoleButton')}
-                aria-label={gameTeamText(locale, 'addChildRoleButton')}
+                title={gameTeamText(locale, "addChildRoleButton")}
+                aria-label={gameTeamText(locale, "addChildRoleButton")}
                 className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg/40 text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <Plus size={14} />
@@ -2369,10 +2513,10 @@ export default function GameTeamPanel({
                 disabled={selectedIsRoot}
                 title={
                   selectedIsRoot
-                    ? gameTeamText(locale, 'rootDeleteDisabled')
-                    : gameTeamText(locale, 'deleteRoleButton')
+                    ? gameTeamText(locale, "rootDeleteDisabled")
+                    : gameTeamText(locale, "deleteRoleButton")
                 }
-                aria-label={gameTeamText(locale, 'deleteRoleButton')}
+                aria-label={gameTeamText(locale, "deleteRoleButton")}
                 className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg/40 text-fg-faint transition-colors hover:border-status-error hover:text-status-error focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-status-error disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-border-soft disabled:hover:text-fg-faint"
               >
                 <Trash2 size={13} />
@@ -2380,8 +2524,8 @@ export default function GameTeamPanel({
               <button
                 type="button"
                 onClick={resetOrg}
-                title={gameTeamText(locale, 'resetTemplateButton')}
-                aria-label={gameTeamText(locale, 'resetTemplateButton')}
+                title={gameTeamText(locale, "resetTemplateButton")}
+                aria-label={gameTeamText(locale, "resetTemplateButton")}
                 className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-bg/40 text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               >
                 <RotateCcw size={13} />
@@ -2401,7 +2545,9 @@ export default function GameTeamPanel({
                 mode={nodeEditor.mode}
                 onChange={(patch) =>
                   setNodeEditor((current) =>
-                    current ? { ...current, draft: { ...current.draft, ...patch } } : current,
+                    current
+                      ? { ...current, draft: { ...current.draft, ...patch } }
+                      : current,
                   )
                 }
                 onCancel={() => setNodeEditor(null)}
@@ -2421,11 +2567,14 @@ export default function GameTeamPanel({
             <section>
               <div className="mb-1.5 flex items-center justify-between gap-2">
                 <h4 className="text-[11px] font-semibold text-fg-faint">
-                  {gameTeamText(locale, 'responsibilities')}
+                  {gameTeamText(locale, "responsibilities")}
                 </h4>
                 {selectedNode.groupLabels.length > 0 && (
-                  <span className="truncate text-[10px] text-fg-faint" title={selectedNode.groupLabels.join(' / ')}>
-                    {selectedNode.groupLabels.join(' / ')}
+                  <span
+                    className="truncate text-[10px] text-fg-faint"
+                    title={selectedNode.groupLabels.join(" / ")}
+                  >
+                    {selectedNode.groupLabels.join(" / ")}
                   </span>
                 )}
               </div>
@@ -2433,23 +2582,23 @@ export default function GameTeamPanel({
                 {[
                   selectedNode.profile.position,
                   selectedNode.profile.responsibilities.length > 0 &&
-                    `${gameTeamText(locale, 'profileResponsibilities')}：${selectedNode.profile.responsibilities.join('；')}`,
+                    `${gameTeamText(locale, "profileResponsibilities")}：${selectedNode.profile.responsibilities.join("；")}`,
                   selectedNode.profile.scenarios.length > 0 &&
-                    `${gameTeamText(locale, 'profileScenarios')}：${selectedNode.profile.scenarios.join('；')}`,
+                    `${gameTeamText(locale, "profileScenarios")}：${selectedNode.profile.scenarios.join("；")}`,
                   selectedNode.profile.deliverables.length > 0 &&
-                    `${gameTeamText(locale, 'profileDeliverables')}：${selectedNode.profile.deliverables.join('；')}`,
+                    `${gameTeamText(locale, "profileDeliverables")}：${selectedNode.profile.deliverables.join("；")}`,
                   selectedNode.profile.collaborators.length > 0 &&
-                    `${gameTeamText(locale, 'profileCollaborators')}：${selectedNode.profile.collaborators.join('、')}`,
+                    `${gameTeamText(locale, "profileCollaborators")}：${selectedNode.profile.collaborators.join("、")}`,
                 ]
                   .filter((part): part is string => Boolean(part))
-                  .join(' · ')}
+                  .join(" · ")}
               </p>
             </section>
 
             {selectedExpertNames.length > 0 && (
               <section>
                 <h4 className="mb-1.5 text-[11px] font-semibold text-fg-faint">
-                  {gameTeamText(locale, 'experts')}
+                  {gameTeamText(locale, "experts")}
                 </h4>
                 <div className="flex flex-wrap gap-1">
                   {selectedNode.experts.map((expert, index) => (
@@ -2457,12 +2606,16 @@ export default function GameTeamPanel({
                       key={expert.id}
                       type="button"
                       onClick={() =>
-                        appendComposerDraft(`${selectedNode.commandText ?? ''}`.trim())
+                        appendComposerDraft(
+                          `${selectedNode.commandText ?? ""}`.trim(),
+                        )
                       }
                       className="max-w-full rounded border border-border-soft bg-panel-2/70 px-1.5 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                       title={expert.summary}
                     >
-                      <span className="block truncate">{selectedExpertNames[index]}</span>
+                      <span className="block truncate">
+                        {selectedExpertNames[index]}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -2471,7 +2624,9 @@ export default function GameTeamPanel({
 
             <section>
               <div className="mb-1.5 flex items-center justify-between gap-2">
-                <h4 className="text-[11px] font-semibold text-fg-faint">Skill</h4>
+                <h4 className="text-[11px] font-semibold text-fg-faint">
+                  Skill
+                </h4>
                 <div className="flex items-center gap-1.5">
                   <span className="rounded border border-border-soft bg-bg/50 px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-faint">
                     {selectedNode.skills.length}
@@ -2479,12 +2634,12 @@ export default function GameTeamPanel({
                   <button
                     type="button"
                     onClick={startAddSkill}
-                    title={gameTeamText(locale, 'addSkillTitle')}
-                    aria-label={gameTeamText(locale, 'addSkillTitle')}
+                    title={gameTeamText(locale, "addSkillTitle")}
+                    aria-label={gameTeamText(locale, "addSkillTitle")}
                     className="inline-flex h-6 items-center gap-1 rounded border border-border-soft bg-bg/40 px-1.5 text-[10px] text-fg-faint transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                   >
                     <Plus size={12} />
-                    {gameTeamText(locale, 'add')}
+                    {gameTeamText(locale, "add")}
                   </button>
                 </div>
               </div>
@@ -2496,7 +2651,10 @@ export default function GameTeamPanel({
                     onChange={(patch) =>
                       setSkillEditor((current) =>
                         current
-                          ? { ...current, draft: { ...current.draft, ...patch } }
+                          ? {
+                              ...current,
+                              draft: { ...current.draft, ...patch },
+                            }
                           : current,
                       )
                     }
@@ -2521,7 +2679,7 @@ export default function GameTeamPanel({
                 ))}
                 {selectedNode.skills.length === 0 && (
                   <div className="rounded-md border border-dashed border-border-soft bg-bg/20 px-2.5 py-3 text-center text-[11px] text-fg-faint">
-                    {gameTeamText(locale, 'noSkills')}
+                    {gameTeamText(locale, "noSkills")}
                   </div>
                 )}
               </div>

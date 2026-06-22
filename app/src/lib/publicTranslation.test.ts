@@ -40,7 +40,7 @@ describe('translatePublicText', () => {
       const q = new URL(String(input)).searchParams.get('q') ?? '';
       expect(q).not.toContain('npm run build');
       expect(q).not.toContain('https://example.com/a');
-      expect(q).not.toContain('E:\\OpenWorkflows\\file.ts');
+      expect(q).not.toContain('E:\\UltraGameStudio\\file.ts');
       return new Response(JSON.stringify([[[`Translated ${q}`, q]]]), {
         status: 200,
       });
@@ -51,14 +51,14 @@ describe('translatePublicText', () => {
       [
         '运行 `npm run build`。',
         '见 https://example.com/a。',
-        '路径 E:\\OpenWorkflows\\file.ts。',
+        '路径 E:\\UltraGameStudio\\file.ts。',
       ].join('\n'),
       'en-US',
     );
 
     expect(translated).toContain('`npm run build`');
     expect(translated).toContain('https://example.com/a');
-    expect(translated).toContain('E:\\OpenWorkflows\\file.ts');
+    expect(translated).toContain('E:\\UltraGameStudio\\file.ts');
   });
 
   it('falls back to MyMemory when Google translation fails and source is known', async () => {

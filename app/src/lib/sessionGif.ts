@@ -14,7 +14,7 @@
  *   3. Quantize each frame to a 256-colour palette and encode with gifenc.
  *
  * Saving mirrors the PNG path: automatic desktop save under
- * `.freeultracode/session-captures`, blob download in the browser.
+ * `.ultragamestudio/session-captures`, blob download in the browser.
  *
  * As with the static capture, faithful frames require every message to already
  * be mounted with its rich renderer — the caller forces eager rendering and
@@ -32,6 +32,7 @@ import {
   withCaptureExcludedElementsHidden,
   withCaptureReadyImages,
   withExpandedContainer,
+  withTimeout,
   type CaptureCrop,
   type CaptureOptions,
 } from '@/lib/sessionScreenshot';
@@ -54,6 +55,9 @@ const FRAME_DELAY_MS = 80;
 
 /** Trailing frames that hold on the final view so the end doesn't snap away. */
 const TAIL_HOLD_FRAMES = 8;
+
+const GIF_ENCODER_LOAD_TIMEOUT_MS = 20000;
+const SESSION_CAPTURE_SAVE_TIMEOUT_MS = 20000;
 
 export interface GifResult {
   /** Number of frames encoded. */
@@ -95,9 +99,9 @@ function defaultBaseName(): string {
 
 function normalizeCaptureOptions(
   input?: string | CaptureOptions,
-): Required<Pick<CaptureOptions, 'baseName'>> & Pick<CaptureOptions, 'cwd'> {
-  if (typeof input === 'string') return { baseName: input, cwd: undefined };
-  return { baseName: input?.baseName ?? '', cwd: input?.cwd };
+): Required<Pick<CaptureOptions, 'baseName'>> & Pick<CaptureOptions, 'cwd' | 'save'> {
+  if (typeof input === 'string') return { baseName: input, cwd: undefined, save: undefined };
+  return { baseName: input?.baseName ?? '', cwd: input?.cwd, save: input?.save };
 }
 
 /** Trigger a browser download for the GIF. */
@@ -192,7 +196,7 @@ export async function recordConversationGif(
   const totalHeight = Math.max(target.scrollHeight, target.clientHeight);
   if (totalHeight <= 0) throw new Error('EMPTY_CONVERSATION');
 
-  const { baseName, cwd } = normalizeCaptureOptions(options);
+  const { baseName, cwd, save } = normalizeCaptureOptions(options);
   const background = resolveBackground(target);
   // The playback viewport height is the container's normal (collapsed) height.
   const viewportCssHeight = Math.max(target.clientHeight, 1);
@@ -220,7 +224,11 @@ export async function recordConversationGif(
   const offsets = planScrollOffsets(source.height, frameHeight);
 
   // Lazy-load the encoder so it stays out of the initial bundle.
-  const { GIFEncoder, quantize, applyPalette } = await import('gifenc');
+  const { GIFEncoder, quantize, applyPalette } = await withTimeout(
+    import('gifenc'),
+    GIF_ENCODER_LOAD_TIMEOUT_MS,
+    'GIF_ENCODER_LOAD_TIMEOUT',
+  );
   const gif = GIFEncoder();
 
   // Reusable frame canvas — we crop a viewport-sized window out of the tall
@@ -263,7 +271,7 @@ export async function recordConversationGif(
   const previewDataUrl =
     bytes.length <= 1_500_000 ? gifBytesToDataUrl(bytes) : '';
 
-  if (!tauriAvailable()) {
+  if (!save && !tauriAvailable()) {
     browserDownloadGif(fileName, bytes);
     return {
       frames: offsets.length,
@@ -273,12 +281,16 @@ export async function recordConversationGif(
     };
   }
 
-  const path = await saveSessionCapture({
-    bytesBase64: captureBytesToBase64(bytes),
-    mime: 'image/gif',
-    fileName,
-    cwd: cwd ?? null,
-  });
+  const path = await withTimeout(
+    (save ?? saveSessionCapture)({
+      bytesBase64: captureBytesToBase64(bytes),
+      mime: 'image/gif',
+      fileName,
+      cwd: cwd ?? null,
+    }),
+    SESSION_CAPTURE_SAVE_TIMEOUT_MS,
+    'SESSION_CAPTURE_SAVE_TIMEOUT',
+  );
   return {
     frames: offsets.length,
     destination: path,

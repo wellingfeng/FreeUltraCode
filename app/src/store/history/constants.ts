@@ -1,5 +1,5 @@
-/** Display fallback for the FreeUltraCode history root; Tauri resolves the real path. */
-export const HISTORY_ROOT_DIR = '~/.freeultracode';
+/** Display fallback for the UltraGameStudio history root; Tauri resolves the real path. */
+export const HISTORY_ROOT_DIR = '~/.ultragamestudio';
 
 /** Alias used by code that talks about the physical global history root. */
 export const WORKTREE_ROOT_DIR = HISTORY_ROOT_DIR;

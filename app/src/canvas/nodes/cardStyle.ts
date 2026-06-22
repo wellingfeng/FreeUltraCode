@@ -41,13 +41,13 @@ export const ACCENT_END: CardAccent = {
 
 /** Base classes for the glass card wrapper (min-width supplied per node). */
 export const CARD_BASE =
-  'fuc-card relative overflow-visible rounded-2xl border font-sans ' +
+  'ugs-card relative overflow-visible rounded-2xl border font-sans ' +
   'transition-[box-shadow,border-color,transform] duration-150 ease-out ' +
   'hover:-translate-y-px';
 
 /** Append the selected marker class (drives the CSS hover rule) when focused. */
 export function cardClass(selected: boolean): string {
-  return selected ? `${CARD_BASE} fuc-card-selected` : CARD_BASE;
+  return selected ? `${CARD_BASE} ugs-card-selected` : CARD_BASE;
 }
 
 export interface CardChromeArgs {
@@ -100,7 +100,7 @@ export function cardWrapperStyle({
   // Expose the accent to the CSS hover rule without prop drilling. Custom CSS
   // properties aren't part of React's CSSProperties type, so set via a widened
   // view of the object rather than the typed literal.
-  (style as Record<string, string | number | undefined>)['--fuc-node-accent'] =
+  (style as Record<string, string | number | undefined>)['--ugs-node-accent'] =
     accent;
 
   return style;

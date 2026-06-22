@@ -19,10 +19,11 @@
 //      user can launch externally once a provider session is available.
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
-const STORAGE_KEY = 'freeultracode.worldModelGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.worldModelGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/worldModelGeneration.v1.json';
 
 export type BuiltInWorldModelProviderId =
@@ -277,7 +278,7 @@ export interface WorldModelGenerationResult {
 }
 
 export const DEFAULT_WORLD_MODEL_GENERATION_SETTINGS: WorldModelGenerationSettings = {
-  enabled: false,
+  enabled: true,
   preferredProviderId: 'decart-oasis',
   customProviders: [],
   providerKeys: {},
@@ -388,10 +389,7 @@ export function normalizeWorldModelGenerationSettings(
   const validKey = (key: string): key is WorldModelProviderId =>
     isKnownWorldModelProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_WORLD_MODEL_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     customProviders,
     providerKeys: cleanStringRecord(source.providerKeys, validKey),
@@ -400,9 +398,11 @@ export function normalizeWorldModelGenerationSettings(
   };
 }
 
-export function loadWorldModelGenerationSettings(): WorldModelGenerationSettings {
+export function loadWorldModelGenerationSettings(
+  options: SettingsProfileOptions = {},
+): WorldModelGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeWorldModelGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_WORLD_MODEL_GENERATION_SETTINGS;
@@ -411,14 +411,15 @@ export function loadWorldModelGenerationSettings(): WorldModelGenerationSettings
 
 export function saveWorldModelGenerationSettings(
   settings: WorldModelGenerationSettings,
+  options: SettingsProfileOptions = {},
 ): boolean {
   const payload = JSON.stringify(normalizeWorldModelGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[worldModel] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:world-model-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:world-model-generation-settings-changed'));
   return true;
 }
 
@@ -469,7 +470,6 @@ export function worldModelProviderReady(
 export function preferredReadyWorldModelProviderId(
   settings = loadWorldModelGenerationSettings(),
 ): WorldModelProviderId | null {
-  if (!settings.enabled) return null;
   if (worldModelProviderReady(settings.preferredProviderId, settings)) {
     return settings.preferredProviderId;
   }
@@ -580,7 +580,6 @@ export async function generateWorldModel(
   request: WorldModelGenerationRequest,
   settings = loadWorldModelGenerationSettings(),
 ): Promise<WorldModelGenerationResult> {
-  if (!settings.enabled) throw new Error('WORLD_MODEL_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyWorldModelProviderId(settings);
   if (!providerId) throw new Error('NO_READY_WORLD_MODEL_PROVIDER');
   if (!worldModelProviderReady(providerId, settings)) {

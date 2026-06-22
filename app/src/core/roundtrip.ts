@@ -14,8 +14,8 @@ import { parseClaudeScript } from './parser';
  * structure survive a full emit→parse cycle thanks to the `// @node <id>`
  * annotations the emitter embeds.
  *
- * Callable from the browser console (in dev): `FreeUltraCode.roundtrip()` /
- * `FreeUltraCode.roundtripAll()`.
+ * Callable from the browser console (in dev): `UltraGameStudio.roundtrip()` /
+ * `UltraGameStudio.roundtripAll()`.
  */
 
 export interface RoundtripReport {
@@ -108,7 +108,7 @@ export function runRoundtripDemo(ir: IRGraph = sampleWorkflow): RoundtripReport 
   const report = roundtrip(ir);
 
   /* eslint-disable no-console */
-  console.group(`%cFreeUltraCode round-trip — ${ir.meta.name ?? 'workflow'}`, 'font-weight:bold');
+  console.group(`%cUltraGameStudio round-trip — ${ir.meta.name ?? 'workflow'}`, 'font-weight:bold');
   console.log('Emitted Claude Code script:\n');
   console.log(report.script);
   console.log('Node counts:', report.counts);
@@ -150,7 +150,7 @@ export function roundtripAll(): SuiteReport {
   const ok = results.every((r) => r.ok && r.idempotent);
 
   /* eslint-disable no-console */
-  console.group('%cFreeUltraCode round-trip suite', 'font-weight:bold');
+  console.group('%cUltraGameStudio round-trip suite', 'font-weight:bold');
   for (const r of results) {
     const tag = r.ok && r.idempotent ? '✓' : '✗';
     const note = !r.ok ? ' (structure)' : !r.idempotent ? ' (not idempotent)' : '';
@@ -165,7 +165,7 @@ export function roundtripAll(): SuiteReport {
 }
 
 /**
- * Dev convenience: expose the harness on `window.FreeUltraCode` so it can be
+ * Dev convenience: expose the harness on `window.UltraGameStudio` so it can be
  * invoked from the browser console. No-op outside a browser environment.
  */
 export function installRoundtripConsole(): void {
@@ -179,5 +179,5 @@ export function installRoundtripConsole(): void {
     sample: sampleWorkflow,
     fixtures: roundtripFixtures,
   };
-  (window as unknown as { FreeUltraCode?: typeof api }).FreeUltraCode = api;
+  (window as unknown as { UltraGameStudio?: typeof api }).UltraGameStudio = api;
 }

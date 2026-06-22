@@ -33,8 +33,8 @@ class ResizeObserverStub {
 function resetStore(): void {
   const workspace = {
     id: 'ws_game_team_details',
-    path: 'E:\\FreeUltraCode',
-    name: 'FreeUltraCode',
+    path: 'E:\\UltraGameStudio',
+    name: 'UltraGameStudio',
     updatedAt: 1,
     sessionCount: 1,
     lastActiveSessionId: 's_game_team_details',
@@ -102,9 +102,9 @@ describe('ProjectFileTree game team details', () => {
       const previewDrawer = asides[1];
 
       expect(filePanel?.textContent).toContain('项目文件');
-      expect(filePanel?.textContent).not.toContain('岗位属性和 Skill');
-      expect(previewDrawer?.textContent).toContain('岗位属性和 Skill');
-      expect(previewDrawer?.textContent).toContain('游戏团队 / 岗位描述、人员与 Skill');
+      expect(filePanel?.textContent).not.toContain('岗位视角和 Skill');
+      expect(previewDrawer?.textContent).toContain('岗位视角和 Skill');
+      expect(previewDrawer?.textContent).toContain('专家视角库 / 岗位视角与 Skill');
       expect(previewDrawer?.textContent).toContain('技术总监');
       expect(previewDrawer?.textContent).toContain('职责');
       expect(previewDrawer?.textContent).toContain('发起功能开发');

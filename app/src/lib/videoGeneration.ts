@@ -1,5 +1,6 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
@@ -117,7 +118,7 @@ export interface VideoGenerationRequest {
   signal?: AbortSignal;
 }
 
-const STORAGE_KEY = 'freeultracode.videoGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.videoGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/videoGeneration.v1.json';
 const DEFAULT_DURATION_SECONDS = 5;
 const MIN_DURATION_SECONDS = 1;
@@ -786,10 +787,7 @@ export function normalizeVideoGenerationSettings(value: unknown): VideoGeneratio
   const validKey = (key: unknown): key is VideoProviderId =>
     isKnownVideoProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_VIDEO_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     customProviders,
     providerKeys: cleanRecord(source.providerKeys, validKey),
@@ -799,23 +797,28 @@ export function normalizeVideoGenerationSettings(value: unknown): VideoGeneratio
   };
 }
 
-export function loadVideoGenerationSettings(): VideoGenerationSettings {
+export function loadVideoGenerationSettings(
+  options: SettingsProfileOptions = {},
+): VideoGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeVideoGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_VIDEO_GENERATION_SETTINGS;
   }
 }
 
-export function saveVideoGenerationSettings(settings: VideoGenerationSettings): boolean {
+export function saveVideoGenerationSettings(
+  settings: VideoGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeVideoGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[videoGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:video-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:video-generation-settings-changed'));
   return true;
 }
 
@@ -927,7 +930,6 @@ export async function generateVideo(
   request: VideoGenerationRequest,
   settings = loadVideoGenerationSettings(),
 ): Promise<VideoGenerationResult> {
-  if (!settings.enabled) throw new Error('VIDEO_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyVideoProviderId(settings);
   if (!providerId) throw new Error('NO_READY_VIDEO_PROVIDER');
   if (!videoProviderReady(providerId, settings)) {

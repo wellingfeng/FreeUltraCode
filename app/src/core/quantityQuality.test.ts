@@ -1,8 +1,8 @@
 /**
  * Tests for the "quantity-for-quality" helpers (multi-angle research +
- * divergence-driven adaptive escalation). Defaults are now (min=2, max=16):
- * out of the box every covered node cross-checks with 2 agents and escalates
- * only on real disagreement. A feature is disabled by setting its *Max to 1.
+ * divergence-driven adaptive escalation). Defaults are now conservative
+ * (min=1, max=1): out of the box every covered node stays single-model.
+ * Users can opt in by raising a feature's *Max above 1.
  */
 import { describe, expect, it } from 'vitest';
 import { EXEC, type IRGraph } from './ir';
@@ -148,21 +148,21 @@ describe('normalizeForBucket', () => {
 });
 
 describe('consensus settings defaults (adaptive escalation)', () => {
-  it('defaults each feature to start=2 / ceiling=16', () => {
+  it('defaults each feature to start=1 / ceiling=1', () => {
     const s = getConsensusSettings();
-    expect(s.researchAnglesMin).toBe(2);
-    expect(s.researchAnglesMax).toBe(16);
-    expect(s.nodeGenCandidatesMin).toBe(2);
-    expect(s.nodeGenCandidatesMax).toBe(16);
-    expect(s.runtimeVoteSamplesMin).toBe(2);
-    expect(s.runtimeVoteSamplesMax).toBe(16);
-    expect(s.terminalVoteSamplesMin).toBe(2);
-    expect(s.terminalVoteSamplesMax).toBe(16);
+    expect(s.researchAnglesMin).toBe(1);
+    expect(s.researchAnglesMax).toBe(1);
+    expect(s.nodeGenCandidatesMin).toBe(1);
+    expect(s.nodeGenCandidatesMax).toBe(1);
+    expect(s.runtimeVoteSamplesMin).toBe(1);
+    expect(s.runtimeVoteSamplesMax).toBe(1);
+    expect(s.terminalVoteSamplesMin).toBe(1);
+    expect(s.terminalVoteSamplesMax).toBe(1);
   });
 
-  it('defaults complexityScaling to 1 (no scaling) and the master switch ON', () => {
+  it('defaults complexityScaling to 1 (no scaling) and the master switch OFF', () => {
     const s = getConsensusSettings();
     expect(s.complexityScaling).toBe(1);
-    expect(s.adaptiveEscalation).toBe(true);
+    expect(s.adaptiveEscalation).toBe(false);
   });
 });

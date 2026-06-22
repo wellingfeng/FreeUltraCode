@@ -67,7 +67,7 @@ export const GENERATION_ANGLES = [
 
 /** Pick `count` generation angles (cycling with a variation suffix when count exceeds the base set). */
 export function generationAngles(count: number): string[] {
-  const n = Math.max(2, Math.min(16, Math.floor(count) || 3));
+  const n = Math.max(1, Math.min(16, Math.floor(count) || 1));
   const out: string[] = [];
   for (let i = 0; i < n; i += 1) {
     out.push(
@@ -79,16 +79,16 @@ export function generationAngles(count: number): string[] {
   return out;
 }
 
-/** Generation-time consensus is on unless disabled via localStorage fuc_gen_consensus=0. */
+/** Generation-time consensus is off unless explicitly enabled via localStorage ugs_gen_consensus=1. */
 export function genConsensusEnabled(): boolean {
   try {
     if (typeof window !== 'undefined') {
-      return window.localStorage.getItem('fuc_gen_consensus') !== '0';
+      return window.localStorage.getItem('ugs_gen_consensus') === '1';
     }
   } catch {
     /* ignore */
   }
-  return true;
+  return false;
 }
 
 /**

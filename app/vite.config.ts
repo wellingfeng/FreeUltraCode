@@ -15,6 +15,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@ugs/protocol': fileURLToPath(
+        new URL('../packages/protocol/index.ts', import.meta.url),
+      ),
     },
   },
   // Tauri expects a fixed dev port and a stable host.
@@ -29,8 +32,8 @@ export default defineConfig({
       // (Editing source under src/ still reloads — to self-edit the source, run
       // a packaged build as the runner; see SELF-DEV.md.)
       ignored: [
-        '**/.freeultracode/**',
-        '**/*.fuc.json',
+        '**/.ultragamestudio/**',
+        '**/*.ugs.json',
         '**/src-tauri/target/**',
         '**/dist/**',
       ],

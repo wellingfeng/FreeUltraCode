@@ -181,7 +181,7 @@ export default function CanvasToolbar() {
         <span>{t(locale, 'canvas.autoArrange')}</span>
       </button>
 
-      {/* Export — write the current workflow to a portable .fuc.json file. */}
+      {/* Export — write the current workflow to a portable .ugs.json file. */}
       <button
         type="button"
         onClick={() => exportWorkflow(t(locale, 'canvas.exportTitle'))}

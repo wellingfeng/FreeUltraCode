@@ -143,7 +143,7 @@ export function segmentMessage(text: string, streaming = false): Segment[] {
 
 /**
  * Second pass: split each answer segment on inline tool sentinels
- * (`<<FUC_TOOL>>…`), turning them into ordered answer/tools segments. Adjacent
+ * (`<<UGS_TOOL>>…`), turning them into ordered answer/tools segments. Adjacent
  * tool events across the whole message are merged by id so a `running` event
  * and its later `done` patch collapse into one card. The merge is global (not
  * per answer-segment) so a tool that starts before a reasoning block and

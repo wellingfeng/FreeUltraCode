@@ -82,12 +82,12 @@ describe('GameTeamPanel', () => {
     );
 
     try {
-      expect(view.container.querySelector('[aria-label="组织架构蓝图"]')).not.toBeNull();
+      expect(view.container.querySelector('[aria-label="专家视角蓝图"]')).not.toBeNull();
       expect(view.container.textContent).not.toContain('组织架构');
       expect(view.container.textContent).toContain('制作人');
       expect(view.container.textContent).toContain('直属总监');
       expect(view.container.textContent).toContain('玩法策划');
-      expect(view.container.textContent).toContain('调用');
+      expect(view.container.textContent).toContain('视角');
       expect(view.container.querySelectorAll('svg').length).toBeGreaterThan(8);
 
       const locateTechnicalDirector = view.container.querySelector<HTMLButtonElement>(
@@ -99,7 +99,7 @@ describe('GameTeamPanel', () => {
         locateTechnicalDirector?.click();
       });
 
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'technical-director',
       );
 
@@ -118,7 +118,7 @@ describe('GameTeamPanel', () => {
         locateClientDevelopment?.click();
       });
 
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'client-development',
       );
       expect(
@@ -143,7 +143,7 @@ describe('GameTeamPanel', () => {
         searchResult?.click();
       });
 
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'technical-director',
       );
 
@@ -157,7 +157,7 @@ describe('GameTeamPanel', () => {
       });
 
       expect(onOpenDetails).toHaveBeenCalledWith('technical-director');
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'technical-director',
       );
 
@@ -194,7 +194,7 @@ describe('GameTeamPanel', () => {
       });
 
       expect(onOpenDetails).toHaveBeenCalledWith('producer');
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'producer',
       );
     } finally {
@@ -204,7 +204,7 @@ describe('GameTeamPanel', () => {
 
   it('renders team role details and inserts skill slash commands', async () => {
     window.localStorage.setItem(
-      'freeultracode.gameTeam.selectedNode.v1',
+      'ultragamestudio.gameTeam.selectedNode.v1',
       'technical-director',
     );
     const view = await renderGameTeamPanel();
@@ -215,10 +215,10 @@ describe('GameTeamPanel', () => {
       expect(view.container.querySelector('[role="tree"]')).toBeNull();
 
       expect(view.container.textContent).toContain('绑定关系');
-      expect(view.container.textContent).toContain('岗位绑定 Skill');
-      expect(view.container.textContent).toContain('Skill 协作对象');
-      expect(view.container.textContent).toContain('被其它岗位调用');
-      expect(view.container.textContent).toContain('下级岗位');
+      expect(view.container.textContent).toContain('视角绑定 Skill');
+      expect(view.container.textContent).toContain('Skill 关联视角');
+      expect(view.container.textContent).toContain('被其它视角参考');
+      expect(view.container.textContent).toContain('下级视角');
       expect(view.container.textContent).toContain('发起功能开发');
       expect(view.container.textContent).toContain('客户端开发');
       expect(view.container.textContent).not.toContain('任务匹配');
@@ -247,7 +247,7 @@ describe('GameTeamPanel', () => {
         childRole?.click();
       });
 
-      expect(window.localStorage.getItem('freeultracode.gameTeam.selectedNode.v1')).toBe(
+      expect(window.localStorage.getItem('ultragamestudio.gameTeam.selectedNode.v1')).toBe(
         'client-development',
       );
       expect(view.container.textContent).toContain('客户端开发');
@@ -268,7 +268,7 @@ describe('GameTeamPanel', () => {
         Array.from(view.container.querySelectorAll<HTMLTextAreaElement>('textarea'));
 
       const addNode = buttons().find(
-        (button) => button.getAttribute('aria-label') === '添加下级岗位',
+        (button) => button.getAttribute('aria-label') === '添加下级视角',
       );
       expect(addNode).toBeInstanceOf(HTMLButtonElement);
 
@@ -305,7 +305,7 @@ describe('GameTeamPanel', () => {
         textarea.placeholder.includes('每行一个交付物'),
       );
       const nodeCollaborators = textareas().find((textarea) =>
-        textarea.placeholder.includes('每行一个协作岗位'),
+        textarea.placeholder.includes('每行一个相关岗位'),
       );
       expect(nodeSummary).toBeInstanceOf(HTMLTextAreaElement);
       expect(nodeRole).toBeInstanceOf(HTMLTextAreaElement);
@@ -338,7 +338,7 @@ describe('GameTeamPanel', () => {
       expect(view.container.textContent).toContain('任务拆解表');
       expect(view.container.textContent).toContain('制作人');
       const savedDefinition = JSON.parse(
-        window.localStorage.getItem('freeultracode.gameOrgDefinition.v1') ?? '{}',
+        window.localStorage.getItem('ultragamestudio.gameOrgDefinition.v1') ?? '{}',
       );
       const savedCustomRole = savedDefinition.children?.find(
         (child: { id?: string }) => child.id === 'custom-role',
@@ -378,13 +378,13 @@ describe('GameTeamPanel', () => {
       });
 
       const triggerConditions = textareas().find((textarea) =>
-        textarea.placeholder.includes('什么情况应该调用'),
+        textarea.placeholder.includes('什么情况应该参考'),
       );
       const inputsField = textareas().find((textarea) =>
         textarea.placeholder.includes('需要用户需求'),
       );
       const stepsField = textareas().find((textarea) =>
-        textarea.placeholder.includes('每行一个步骤'),
+        textarea.placeholder.includes('每行一个建议步骤'),
       );
       const outputsField = textareas().find((textarea) =>
         textarea.placeholder.includes('方案、代码变更'),

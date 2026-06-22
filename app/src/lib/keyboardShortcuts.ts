@@ -20,8 +20,8 @@ type KeyboardShortcutEvent = Pick<
 >;
 
 export const SHORTCUT_SETTINGS_STORAGE_KEY =
-  'freeultracode.keyboardShortcuts.v1';
-export const SHORTCUT_SETTINGS_EVENT = 'fuc:keyboard-shortcuts-changed';
+  'ultragamestudio.keyboardShortcuts.v1';
+export const SHORTCUT_SETTINGS_EVENT = 'ugs:keyboard-shortcuts-changed';
 
 export const SHORTCUT_ACTION_IDS: ShortcutActionId[] = [
   'composer-send',

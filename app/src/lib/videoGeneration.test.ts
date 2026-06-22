@@ -37,7 +37,7 @@ describe('video generation settings and routing', () => {
       preferredProviderId: 'not-a-provider',
       providerKeys: { runway: ' key ', bogus: 'x' },
     });
-    expect(normalized.enabled).toBe(false);
+    expect(normalized.enabled).toBe(true);
     expect(normalized.preferredProviderId).toBe(
       DEFAULT_VIDEO_GENERATION_SETTINGS.preferredProviderId,
     );
@@ -169,15 +169,6 @@ describe('video generation settings and routing', () => {
 
     expect(result.videos).toEqual(['http://127.0.0.1:7861/output/clip.mp4']);
     expect(fetchMock.mock.calls[0][0]).toBe('http://127.0.0.1:7861/generate');
-  });
-
-  it('throws when generation is disabled', async () => {
-    await expect(
-      generateVideo(
-        { prompt: 'a clip', providerId: 'fal-video' },
-        { ...DEFAULT_VIDEO_GENERATION_SETTINGS, enabled: false },
-      ),
-    ).rejects.toThrow('VIDEO_GENERATION_DISABLED');
   });
 
   it('creates and polls a ByteDance Seedance task on Volcano Ark', async () => {

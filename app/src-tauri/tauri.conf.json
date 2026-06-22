@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "FreeUltraCode",
-  "version": "0.4.8",
-  "identifier": "com.freeultracode.desktop",
+  "productName": "UltraGameStudio",
+  "version": "0.4.9",
+  "identifier": "com.ultragamestudio.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "FreeUltraCode",
+        "title": "UltraGameStudio",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,
@@ -41,10 +41,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../cli/dist/fuc.mjs": "cli/fuc.mjs",
-      "resources/workflows/deep-research/WORKFLOW.md": "workflows/deep-research/WORKFLOW.md",
-      "resources/workflows/deep-research/protocol/model-agnostic-deep-research.md": "workflows/deep-research/protocol/model-agnostic-deep-research.md",
-      "resources/workflows/deep-research/protocol/README.md": "workflows/deep-research/protocol/README.md"
+      "../cli/dist/ugs.mjs": "cli/ugs.mjs"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

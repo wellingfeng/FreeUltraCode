@@ -1,12 +1,12 @@
 @echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
-title FreeUltraCode (Build EXE)
+title UltraGameStudio (Build EXE)
 
 cd /d "%~dp0app"
 
 echo ============================================================
-echo   FreeUltraCode  -  Package Windows EXE  (tauri build)
+echo   UltraGameStudio  -  Package Windows EXE  (tauri build)
 echo ============================================================
 echo.
 
@@ -36,8 +36,8 @@ if errorlevel 1 (
 echo [..] checking dependencies ...
 call npm install || ( echo [X] npm install failed & pause & exit /b 1 )
 
-if exist "src-tauri\target\release\FreeUltraCode.exe" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\stop-running-exe.ps1" "src-tauri\target\release\FreeUltraCode.exe"
+if exist "src-tauri\target\release\UltraGameStudio.exe" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\stop-running-exe.ps1" "src-tauri\target\release\UltraGameStudio.exe"
     if errorlevel 1 (
         echo [X] failed to close running exe before rebuild.
         pause & exit /b 1
@@ -58,7 +58,7 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\needs-rebuild.ps1" "%~dp0app\src-tauri\target\release\FreeUltraCode.exe" "%~dp0" -WriteStamp
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\needs-rebuild.ps1" "%~dp0app\src-tauri\target\release\UltraGameStudio.exe" "%~dp0" -WriteStamp
 if errorlevel 1 (
     echo.
     echo [X] failed to save build fingerprint.
@@ -70,17 +70,17 @@ echo ============================================================
 echo   BUILD COMPLETE
 echo ============================================================
 set "REL=%~dp0app\src-tauri\target\release"
-echo   Standalone app : !REL!\FreeUltraCode.exe
-echo   Installer (exe): !REL!\bundle\nsis\FreeUltraCode_^<version^>_x64-setup.exe
+echo   Standalone app : !REL!\UltraGameStudio.exe
+echo   Installer (exe): !REL!\bundle\nsis\UltraGameStudio_^<version^>_x64-setup.exe
 echo ------------------------------------------------------------
-echo   - Double-click FreeUltraCode.exe to run directly (needs WebView2,
+echo   - Double-click UltraGameStudio.exe to run directly (needs WebView2,
 echo     which ships with Windows 10/11).
 echo   - Or run the *_x64-setup.exe installer to install it like normal software.
 echo ------------------------------------------------------------
 
 REM ---- open the output folders in Explorer ----
 if exist "!REL!\bundle\nsis" start "" explorer "!REL!\bundle\nsis"
-if exist "!REL!\FreeUltraCode.exe" start "" explorer /select,"!REL!\FreeUltraCode.exe"
+if exist "!REL!\UltraGameStudio.exe" start "" explorer /select,"!REL!\UltraGameStudio.exe"
 
 echo.
 pause

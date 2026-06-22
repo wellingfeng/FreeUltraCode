@@ -1,5 +1,5 @@
 /**
- * Headless FreeUltraCode run engine. Pure with respect to its host — see
+ * Headless UltraGameStudio run engine. Pure with respect to its host — see
  * runtime/types.ts for the {@link RunCallbacks} / {@link RunContext} /
  * {@link RunGateway} contract the desktop GUI and the Node CLI both implement.
  */
@@ -44,6 +44,7 @@ export {
   validateAgainstSchema,
   schemaRetryFeedback,
   type ResolvedSchema,
+  type SchemaProblem,
   type SchemaValidation,
 } from './schema';
 export {
@@ -67,9 +68,9 @@ export {
   PROGRESS_OPEN,
   PROGRESS_CLOSE,
   type ProgressSentinelSplit,
-  type UltracodeNodeProgress,
-  type UltracodeNodeStatus,
-  type UltracodePhase,
-  type UltracodeProgressEvent,
-  type UltracodeRunProgress,
-} from './ultracodeProgress';
+  type StudioNodeProgress,
+  type StudioNodeStatus,
+  type StudioPhase,
+  type StudioProgressEvent,
+  type StudioRunProgress,
+} from './studioProgress';

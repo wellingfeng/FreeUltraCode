@@ -52,7 +52,7 @@ export async function translatePromptFields(
   };
 
   const system = [
-    'You translate FreeUltraCode prompt-library strings.',
+    'You translate UltraGameStudio prompt-library strings.',
     'Translate faithfully, keeping meaning, tone, placeholders, model ids, code fragments, paths, and product names intact.',
     'Return ONLY a single valid JSON object with this shape:',
     '{ "translations": { "en-US": { "label": "...", "text": "..." } } }',

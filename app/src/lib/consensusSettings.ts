@@ -6,15 +6,15 @@
  */
 
 export interface ConsensusSettings {
-  /** Generation-time consensus on/off (fuc_gen_consensus). */
+  /** Generation-time consensus on/off (ugs_gen_consensus). */
   genEnabled: boolean;
-  /** Candidate blueprints generated per complex request (fuc_gen_candidates). */
+  /** Candidate blueprints generated per complex request (ugs_gen_candidates). */
   genCandidates: number;
-  /** Default fan-out / sample count for a consensus node (fuc_consensus_default_samples). */
+  /** Default fan-out / sample count for a consensus node (ugs_consensus_default_samples). */
   voteSamples: number;
-  /** Show the "convert to consensus" suggestion on complex agent nodes (fuc_consensus_autosuggest). */
+  /** Show the "convert to consensus" suggestion on complex agent nodes (ugs_consensus_autosuggest). */
   autoSuggest: boolean;
-  /** Max independent calls run at once — also caps consensus fan-out (fuc_run_concurrency). */
+  /** Max independent calls run at once — also caps consensus fan-out (ugs_run_concurrency). */
   concurrency: number;
   /** Max concurrent calls after a route is classified as slow. */
   slowConcurrency: number;
@@ -24,14 +24,13 @@ export interface ConsensusSettings {
   fastConcurrency: number;
   /**
    * Quantity-for-quality tunables. Each feature is a (min,max) PAIR: `min` is the
-   * starting agent/sample count, `max` is the divergence-escalation ceiling
-   * (count doubles min→…→max while disagreement stays high). Defaults min=2 /
-   * max=16 (out of the box every covered node cross-checks with 2 agents and
-   * escalates only on real disagreement). Set a feature's *Max to 1 to disable it.
+   * starting agent/sample count, `max` is the divergence-escalation ceiling.
+   * Defaults are conservative (1/1), so normal coding and writing stay single
+   * model unless the user explicitly enables extra research/voting.
    */
   /**
    * Master switch for divergence-driven adaptive escalation (the
-   * 2→4→8→16-on-disagreement behaviour). Default ON. When OFF, every covered
+   * 2→4→8→16-on-disagreement behaviour). Default OFF. When OFF, every covered
    * node still runs its starting `min` samples and votes once, but NEVER doubles
    * on high disagreement — a hard cap at `min`, regardless of the *Max ceilings.
    */
@@ -53,49 +52,47 @@ export interface ConsensusSettings {
 }
 
 export const CONSENSUS_LIMITS = {
-  genCandidates: { min: 2, max: 5, def: 3 },
-  voteSamples: { min: 2, max: 7, def: 3 },
-  concurrency: { min: 1, max: 16, def: 10 },
-  slowConcurrency: { min: 1, max: 16, def: 4 },
-  standardConcurrency: { min: 1, max: 16, def: 5 },
-  fastConcurrency: { min: 1, max: 16, def: 10 },
-  // Quantity-for-quality (min,max) pairs. min:1/def:2 ⇒ a fresh install starts
-  // with 2 cross-checking agents; max def:16 is the escalation ceiling. Setting
-  // a *Max to 1 disables that feature (single call, no voting).
-  researchAnglesMin: { min: 1, max: 16, def: 2 },
-  researchAnglesMax: { min: 1, max: 16, def: 16 },
-  nodeGenCandidatesMin: { min: 1, max: 16, def: 2 },
-  nodeGenCandidatesMax: { min: 1, max: 16, def: 16 },
-  runtimeVoteSamplesMin: { min: 1, max: 16, def: 2 },
-  runtimeVoteSamplesMax: { min: 1, max: 16, def: 16 },
-  terminalVoteSamplesMin: { min: 1, max: 16, def: 2 },
-  terminalVoteSamplesMax: { min: 1, max: 16, def: 16 },
+  genCandidates: { min: 1, max: 5, def: 1 },
+  voteSamples: { min: 1, max: 7, def: 1 },
+  concurrency: { min: 1, max: 16, def: 4 },
+  slowConcurrency: { min: 1, max: 16, def: 2 },
+  standardConcurrency: { min: 1, max: 16, def: 3 },
+  fastConcurrency: { min: 1, max: 16, def: 4 },
+  // Quantity-for-quality (min,max) pairs. 1/1 disables the feature by default.
+  researchAnglesMin: { min: 1, max: 16, def: 1 },
+  researchAnglesMax: { min: 1, max: 16, def: 1 },
+  nodeGenCandidatesMin: { min: 1, max: 16, def: 1 },
+  nodeGenCandidatesMax: { min: 1, max: 16, def: 1 },
+  runtimeVoteSamplesMin: { min: 1, max: 16, def: 1 },
+  runtimeVoteSamplesMax: { min: 1, max: 16, def: 1 },
+  terminalVoteSamplesMin: { min: 1, max: 16, def: 1 },
+  terminalVoteSamplesMax: { min: 1, max: 16, def: 1 },
   complexityScaling: { min: 1, max: 4, def: 1 },
 } as const;
 
 const KEYS = {
-  genEnabled: 'fuc_gen_consensus',
-  genCandidates: 'fuc_gen_candidates',
-  voteSamples: 'fuc_consensus_default_samples',
-  autoSuggest: 'fuc_consensus_autosuggest',
-  adaptiveEscalation: 'fuc_adaptive_escalation',
-  concurrency: 'fuc_run_concurrency',
-  slowConcurrency: 'fuc_run_concurrency_slow',
-  standardConcurrency: 'fuc_run_concurrency_standard',
-  fastConcurrency: 'fuc_run_concurrency_fast',
-  researchAnglesMin: 'fuc_research_angles_min',
-  researchAnglesMax: 'fuc_research_angles_max',
-  nodeGenCandidatesMin: 'fuc_nodegen_candidates_min',
-  nodeGenCandidatesMax: 'fuc_nodegen_candidates_max',
-  runtimeVoteSamplesMin: 'fuc_runtime_vote_samples_min',
-  runtimeVoteSamplesMax: 'fuc_runtime_vote_samples_max',
-  terminalVoteSamplesMin: 'fuc_terminal_vote_samples_min',
-  terminalVoteSamplesMax: 'fuc_terminal_vote_samples_max',
-  complexityScaling: 'fuc_complexity_scaling',
+  genEnabled: 'ugs_gen_consensus',
+  genCandidates: 'ugs_gen_candidates',
+  voteSamples: 'ugs_consensus_default_samples',
+  autoSuggest: 'ugs_consensus_autosuggest',
+  adaptiveEscalation: 'ugs_adaptive_escalation',
+  concurrency: 'ugs_run_concurrency',
+  slowConcurrency: 'ugs_run_concurrency_slow',
+  standardConcurrency: 'ugs_run_concurrency_standard',
+  fastConcurrency: 'ugs_run_concurrency_fast',
+  researchAnglesMin: 'ugs_research_angles_min',
+  researchAnglesMax: 'ugs_research_angles_max',
+  nodeGenCandidatesMin: 'ugs_nodegen_candidates_min',
+  nodeGenCandidatesMax: 'ugs_nodegen_candidates_max',
+  runtimeVoteSamplesMin: 'ugs_runtime_vote_samples_min',
+  runtimeVoteSamplesMax: 'ugs_runtime_vote_samples_max',
+  terminalVoteSamplesMin: 'ugs_terminal_vote_samples_min',
+  terminalVoteSamplesMax: 'ugs_terminal_vote_samples_max',
+  complexityScaling: 'ugs_complexity_scaling',
 } as const;
 
 /** Fired after any consensus setting changes, so open UI / consumers can refresh. */
-export const CONSENSUS_SETTINGS_EVENT = 'fuc:consensus-settings-changed';
+export const CONSENSUS_SETTINGS_EVENT = 'ugs:consensus-settings-changed';
 
 function ls(): Storage | null {
   try {
@@ -121,11 +118,11 @@ function readInt(key: string, lim: { min: number; max: number; def: number }): n
 
 export function getConsensusSettings(): ConsensusSettings {
   return {
-    genEnabled: readBool(KEYS.genEnabled, true),
+    genEnabled: readBool(KEYS.genEnabled, false),
     genCandidates: readInt(KEYS.genCandidates, CONSENSUS_LIMITS.genCandidates),
     voteSamples: readInt(KEYS.voteSamples, CONSENSUS_LIMITS.voteSamples),
-    autoSuggest: readBool(KEYS.autoSuggest, true),
-    adaptiveEscalation: readBool(KEYS.adaptiveEscalation, true),
+    autoSuggest: readBool(KEYS.autoSuggest, false),
+    adaptiveEscalation: readBool(KEYS.adaptiveEscalation, false),
     concurrency: readInt(KEYS.concurrency, CONSENSUS_LIMITS.concurrency),
     slowConcurrency: readInt(
       KEYS.slowConcurrency,
@@ -179,7 +176,7 @@ export function genCandidateCount(): number {
 
 /** Whether the convert-to-consensus suggestion chip is enabled. */
 export function autoSuggestEnabled(): boolean {
-  return readBool(KEYS.autoSuggest, true);
+  return readBool(KEYS.autoSuggest, false);
 }
 
 /** A starting count + escalation ceiling for an adaptive-escalation feature. */
@@ -271,9 +268,9 @@ export function complexityScaling(): number {
   return readInt(KEYS.complexityScaling, CONSENSUS_LIMITS.complexityScaling);
 }
 
-/** Master switch for divergence-driven escalation (default ON). */
+/** Master switch for divergence-driven escalation (default OFF). */
 export function adaptiveEscalationEnabled(): boolean {
-  return readBool(KEYS.adaptiveEscalation, true);
+  return readBool(KEYS.adaptiveEscalation, false);
 }
 
 function limitsForSetting(key: keyof ConsensusSettings): {

@@ -80,15 +80,160 @@ import { completeGatewayText, resolveCliGatewayRoute, resolveDirectGatewayRoute 
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
 
 // --- generation libs ---
-import { generateImage, imageProviderById, imageProviderModel, imageProviderReady, loadImageGenerationSettings, preferredReadyImageProviderId, stripImageCommand, type ImageProviderId } from '@/lib/imageGeneration';
-import { generateMusic, loadMusicGenerationSettings, musicDurationSecondsFromPrompt, musicProviderById, musicProviderModel, preferredReadyMusicProviderId, stripMusicCommand, type MusicProviderId } from '@/lib/musicGeneration';
-import { assessThreeDRigging, generateThreeD, loadThreeDGenerationSettings, preferredReadyThreeDProviderId, stripThreeDCommand, threeDProviderById, threeDProviderModel, threeDRiggingPromptGuidance, type ThreeDProviderId } from '@/lib/threeDGeneration';
-import { generateVideo, loadVideoGenerationSettings, preferredReadyVideoProviderId, stripVideoCommand, videoDurationSecondsFromPrompt, videoProviderById, videoProviderModel, type VideoProviderId } from '@/lib/videoGeneration';
-import { generateSpeech, loadSpeechGenerationSettings, preferredReadySpeechProviderId, speechProviderById, speechProviderModel, speechProviderVoice, stripSpeechCommand, type SpeechProviderId } from '@/lib/speechGeneration';
+import { generateImage, imageProviderById, imageProviderModel, imageProviderReady, imageProviders, loadImageGenerationSettings, preferredReadyImageProviderId, stripImageCommand, type ImageProviderId, type ImageGenerationSettings } from '@/lib/imageGeneration';
+import { generateMusic, loadMusicGenerationSettings, musicDurationSecondsFromPrompt, musicProviderById, musicProviderModel, musicProviderReady, musicProviders, preferredReadyMusicProviderId, stripMusicCommand, type MusicProviderId, type MusicGenerationSettings } from '@/lib/musicGeneration';
+import { assessThreeDRigging, generateThreeD, loadThreeDGenerationSettings, preferredReadyThreeDProviderId, stripThreeDCommand, threeDProviderById, threeDProviderModel, threeDProviderReady, threeDProviders, threeDRiggingPromptGuidance, type ThreeDProviderId, type ThreeDGenerationSettings } from '@/lib/threeDGeneration';
+import { generateVideo, loadVideoGenerationSettings, preferredReadyVideoProviderId, stripVideoCommand, videoDurationSecondsFromPrompt, videoProviderById, videoProviderModel, videoProviderReady, videoProviders, type VideoProviderId, type VideoGenerationSettings } from '@/lib/videoGeneration';
+import { generateSpeech, loadSpeechGenerationSettings, preferredReadySpeechProviderId, speechProviderById, speechProviderModel, speechProviderReady, speechProviderVoice, speechProviders, stripSpeechCommand, type SpeechProviderId, type SpeechGenerationSettings } from '@/lib/speechGeneration';
 import { generateSprite, loadSpriteGenerationSettings, spriteSheetGridForSettings, stripSpriteCommand } from '@/lib/spriteGeneration';
-import { generateWorldModel, loadWorldModelGenerationSettings, preferredReadyWorldModelProviderId, serializeWorldModelSpec, stripWorldModelCommand, worldModelProviderById, worldModelProviderModel, worldModelProviderReady, type WorldModelProviderId } from '@/lib/worldModel';
+import { generateWorldModel, loadWorldModelGenerationSettings, preferredReadyWorldModelProviderId, serializeWorldModelSpec, stripWorldModelCommand, worldModelProviderById, worldModelProviderModel, worldModelProviderReady, worldModelProviders, type WorldModelGenerationSettings, type WorldModelProviderId } from '@/lib/worldModel';
 import { loadMeshLibrarySettings, meshLibraryById, meshSearchQueryNeedsEnglish, resolveMeshSearchQuery, searchMeshLibraries, stripMeshSearchCommand } from '@/lib/meshLibrary';
 import { loadUiDesignChannelSettings, uiDesignChannelById, uiDesignChannelExportFormat } from '@/lib/uiDesignChannels';
+import {
+  isRemoteSettingsProfile,
+  settingsProfileIdForWorkspacePath,
+  type SettingsProfileOptions,
+} from '@/lib/generationSettingsStore';
+
+function generationWorkspacePathForState(state: StoreState): string {
+  const composerWorkspace = state.composer.workspace.trim();
+  if (composerWorkspace) return composerWorkspace;
+  if (!state.activeWorkspaceId) return '';
+  return (
+    state.workspaces
+      .find((workspace) => workspace.id === state.activeWorkspaceId)
+      ?.path?.trim() ?? ''
+  );
+}
+
+function generationSettingsProfileForState(state: StoreState): SettingsProfileOptions {
+  return {
+    profileId: settingsProfileIdForWorkspacePath(
+      generationWorkspacePathForState(state),
+    ),
+  };
+}
+
+function preferredReadyImageProviderIdForProfile(
+  settings: ImageGenerationSettings,
+  profile: SettingsProfileOptions,
+): ImageProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyImageProviderId(settings);
+  }
+  if (
+    imageProviderReady(settings.preferredProviderId, settings) &&
+    !imageProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    imageProviders(settings).find(
+      (provider) => !provider.local && imageProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadyMusicProviderIdForProfile(
+  settings: MusicGenerationSettings,
+  profile: SettingsProfileOptions,
+): MusicProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyMusicProviderId(settings);
+  }
+  if (
+    musicProviderReady(settings.preferredProviderId, settings) &&
+    !musicProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    musicProviders(settings).find(
+      (provider) => !provider.local && musicProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadyThreeDProviderIdForProfile(
+  settings: ThreeDGenerationSettings,
+  profile: SettingsProfileOptions,
+): ThreeDProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyThreeDProviderId(settings);
+  }
+  if (
+    threeDProviderReady(settings.preferredProviderId, settings) &&
+    !threeDProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    threeDProviders(settings).find(
+      (provider) => !provider.local && threeDProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadyVideoProviderIdForProfile(
+  settings: VideoGenerationSettings,
+  profile: SettingsProfileOptions,
+): VideoProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyVideoProviderId(settings);
+  }
+  if (
+    videoProviderReady(settings.preferredProviderId, settings) &&
+    !videoProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    videoProviders(settings).find(
+      (provider) => !provider.local && videoProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadySpeechProviderIdForProfile(
+  settings: SpeechGenerationSettings,
+  profile: SettingsProfileOptions,
+): SpeechProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadySpeechProviderId(settings);
+  }
+  if (
+    speechProviderReady(settings.preferredProviderId, settings) &&
+    !speechProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    speechProviders(settings).find(
+      (provider) => !provider.local && speechProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadyWorldModelProviderIdForProfile(
+  settings: WorldModelGenerationSettings,
+  profile: SettingsProfileOptions,
+): WorldModelProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyWorldModelProviderId(settings);
+  }
+  if (
+    worldModelProviderReady(settings.preferredProviderId, settings) &&
+    !worldModelProviderById(settings.preferredProviderId, settings).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    worldModelProviders(settings).find(
+      (provider) =>
+        !provider.local && worldModelProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
 
 const IMAGE_PROMPT_SYSTEM = `你是专业的"生图提示词工程师"。用户会给出一句关于想要生成的图片的描述或想法，你要把它扩写成一段高质量、可直接喂给文生图模型的提示词。
 要求：
@@ -155,8 +300,8 @@ const SPRITE_PROMPT_SYSTEM = `你是专业的"Sprite 动画提示词工程师"�
 - 不要要求模仿在世真人、受版权角色或受保护 IP；用可授权的风格描述替代。
 - 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。`;
 
-function spritePromptSystem(): string {
-  const settings = loadSpriteGenerationSettings();
+function spritePromptSystem(settingsProfile: SettingsProfileOptions = {}): string {
+  const settings = loadSpriteGenerationSettings(settingsProfile);
   const grid = spriteSheetGridForSettings(settings);
   return `${SPRITE_PROMPT_SYSTEM}
 
@@ -192,10 +337,12 @@ export function stripUiModeCommand(text: string): string {
 
 // Game-UI design instruction for /ui-mode. Front-loaded before the coding-model
 // turn so the model produces interface design specs and deliverables tailored to
-// the project's configured default UI channel (Project Settings > UI 渠道),
+// the globally configured default UI channel (Settings > UI 渠道),
 // instead of editing the workflow blueprint.
-export function uiDesignPromptSystem(): string {
-  const settings = loadUiDesignChannelSettings();
+export function uiDesignPromptSystem(
+  settingsProfile: SettingsProfileOptions = {},
+): string {
+  const settings = loadUiDesignChannelSettings(settingsProfile);
   const channel = uiDesignChannelById(settings.preferredChannelId);
   const exportFormat = uiDesignChannelExportFormat(channel.id, settings);
   return `你是资深游戏 UI/UX 设计师。用户会描述想要的游戏界面，你要围绕当前项目选定的默认 UI 渠道「${channel.label}」产出可交付的界面设计方案。
@@ -220,13 +367,13 @@ export function blueprintModePromptSystem(modeArgs: string | null | undefined): 
   const argsLine = args
     ? `\n当前 /blueprint-mode-start 参数：${args}`
     : '';
-  return `你现在处于 UE 蓝图模式。目标是帮助用户创建、修改、验证 Unreal Engine Blueprint 资产，不是 OpenWorkflows workflow 蓝图。
+  return `你现在处于 UE 蓝图模式。目标是帮助用户创建、修改、验证 Unreal Engine Blueprint 资产，不是 UltraGameStudio workflow 蓝图。
 要求：
 - 优先检查当前工作区是否是 UE 项目、BlueprintMode 插件是否已安装；如未安装，按项目设置里的安装逻辑从 GitHub 下载插件，或给出最短可执行步骤。
 - 如果可通过 UE 编辑器插件、MCP、Remote Control、Python 或本地命令实际完成，就直接完成；只在确实缺少目标蓝图名、父类、创建确认等关键信息时使用交互协议询问。
 - 蓝图不存在时，先提示用户确认是否创建；确认后默认按 Actor 蓝图创建，除非用户指定 Character、Pawn、GameMode、Widget、Function Library 等父类。
 - 输出或执行内容围绕 BlueprintMode 操作：target、context、checkpoint、BlueprintOp 计划、spawn node、connect pin、set property、compile、verify、commit/discard。
-- 不要生成 OpenWorkflows IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
+- 不要生成 UltraGameStudio IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
 - 回答使用简体中文，结论先行。${argsLine}`;
 }
 
@@ -249,10 +396,10 @@ export function metaHumanModePromptSystem(): string {
 交互规则：
 - 每轮只推进一个阶段或一个明确子步骤；不要一次性跳完整条管线。
 - 每个阶段结束时必须让用户确认、选择或输入调整意见，才能进入下一阶段。
-- 需要用户选择时，只输出完整的 <<FUC_ASK>> 交互协议块并立即结束本回合；不要在正文里写“请回复 1/2/3”。
+- 需要用户选择时，只输出完整的 <<UGS_ASK>> 交互协议块并立即结束本回合；不要在正文里写“请回复 1/2/3”。
 - 需要用户自由修改时，用 input 类型交互块；需要在几个阶段动作间选择时，用 select；需要确认进入下一步时，用 confirm。
 - 如果本轮已经收到用户的选择或调整内容，就直接据此更新方案并给出下一步交互块。
-- 不要生成 OpenWorkflows IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
+- 不要生成 UltraGameStudio IRGraph，不要输出 workflow 蓝图 JSON，不要把需求改写成普通素材生成任务。
 - 回答使用简体中文，结论先行。`;
 }
 
@@ -864,7 +1011,9 @@ async function refineSpritePromptViaModel(
     sessionId: ch.sessionId,
   });
   const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
-  const system = `${spritePromptSystem()}${projectMcpGuidance}`;
+  const system = `${spritePromptSystem(
+    generationSettingsProfileForState(useStore.getState()),
+  )}${projectMcpGuidance}`;
   const direct = resolveDirectGatewayRoute(codingSelection);
   if (direct && !preferCliForProjectMcp) {
     let full = '';
@@ -935,20 +1084,15 @@ export function startImageGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'image', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadImageGenerationSettings();
-  // Pre-flight: surface a visible, actionable note instead of silently doing
-  // nothing when the channel can't run. A silent return is exactly the "image
-  // mode was on but nothing happened" symptom users hit.
-  if (!settings.enabled) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyImageGenerationError('IMAGE_GENERATION_DISABLED')}`,
-        'system',
-      );
-    return;
-  }
-  const providerId = options.providerId ?? preferredReadyImageProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadImageGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !imageProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadyImageProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
     useStore
       .getState()
@@ -1122,8 +1266,8 @@ export function startImageGenerationTurn(
       const result = await generateImage(
         {
           prompt: imagePrompt,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           signal: ch.abortController.signal,
         },
         settings,
@@ -1175,9 +1319,21 @@ export function startMusicGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'music', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadMusicGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyMusicProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadMusicGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !musicProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadyMusicProviderIdForProfile(settings, settingsProfile);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的音乐生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
+    return;
+  }
   const codingSelection = workflowDefaultGatewaySelection(
     state.workflow,
     state.composer.model,
@@ -1188,9 +1344,9 @@ export function startMusicGenerationTurn(
 
   const now = Date.now();
   const providerLabel = providerId
-    ? musicProviderById(providerId).label
+    ? musicProviderById(providerId, settings).label
     : 'Music generation';
-  const provider = providerId ? musicProviderById(providerId) : null;
+  const provider = providerId ? musicProviderById(providerId, settings) : null;
   const model = providerId
     ? options.model?.trim() || musicProviderModel(providerId, settings)
     : options.model?.trim() || '';
@@ -1321,8 +1477,8 @@ export function startMusicGenerationTurn(
       const result = await generateMusic(
         {
           prompt: musicPrompt,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           targetDurationSeconds:
             musicDurationSecondsFromPrompt(musicPrompt) ?? undefined,
           signal: ch.abortController.signal,
@@ -1335,7 +1491,7 @@ export function startMusicGenerationTurn(
       void captureGeneratedAssets({
         kind: 'music',
         sources: result.audios,
-        origin: musicProviderById(result.providerId).local ? 'local' : 'remote',
+        origin: musicProviderById(result.providerId, settings).local ? 'local' : 'remote',
         provider: result.providerLabel,
         model: result.model,
         prompt: result.prompt,
@@ -1373,9 +1529,21 @@ export function startThreeDGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'threeD', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadThreeDGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyThreeDProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadThreeDGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !threeDProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadyThreeDProviderIdForProfile(settings, settingsProfile);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的 3D 生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
+    return;
+  }
   const codingSelection = workflowDefaultGatewaySelection(
     state.workflow,
     state.composer.model,
@@ -1531,8 +1699,8 @@ export function startThreeDGenerationTurn(
       const result = await generateThreeD(
         {
           prompt: threeDPrompt,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           signal: ch.abortController.signal,
         },
         settings,
@@ -1597,17 +1765,15 @@ export function startWorldModelGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'world', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadWorldModelGenerationSettings();
-  if (!settings.enabled) {
-    useStore
-      .getState()
-      .appendChatNote(
-        `✗ ${friendlyWorldModelGenerationError('WORLD_MODEL_GENERATION_DISABLED')}`,
-        'system',
-      );
-    return;
-  }
-  const providerId = options.providerId ?? preferredReadyWorldModelProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadWorldModelGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !worldModelProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadyWorldModelProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
     useStore
       .getState()
@@ -1733,8 +1899,8 @@ export function startWorldModelGenerationTurn(
       const result = await generateWorldModel(
         {
           prompt: generationPrompt,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           signal: ch.abortController.signal,
         },
         settings,
@@ -1791,9 +1957,21 @@ export function startVideoGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'video', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadVideoGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadyVideoProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadVideoGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !videoProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadyVideoProviderIdForProfile(settings, settingsProfile);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的视频生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
+    return;
+  }
   const codingSelection = workflowDefaultGatewaySelection(
     state.workflow,
     state.composer.model,
@@ -1804,9 +1982,9 @@ export function startVideoGenerationTurn(
 
   const now = Date.now();
   const providerLabel = providerId
-    ? videoProviderById(providerId).label
+    ? videoProviderById(providerId, settings).label
     : 'Video generation';
-  const provider = providerId ? videoProviderById(providerId) : null;
+  const provider = providerId ? videoProviderById(providerId, settings) : null;
   const model = providerId
     ? options.model?.trim() || videoProviderModel(providerId, settings)
     : options.model?.trim() || '';
@@ -1937,8 +2115,8 @@ export function startVideoGenerationTurn(
       const result = await generateVideo(
         {
           prompt: videoPrompt,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           targetDurationSeconds:
             videoDurationSecondsFromPrompt(videoPrompt) ?? undefined,
           signal: ch.abortController.signal,
@@ -1951,7 +2129,7 @@ export function startVideoGenerationTurn(
       void captureGeneratedAssets({
         kind: 'video',
         sources: result.videos,
-        origin: videoProviderById(result.providerId).local ? 'local' : 'remote',
+        origin: videoProviderById(result.providerId, settings).local ? 'local' : 'remote',
         provider: result.providerLabel,
         model: result.model,
         prompt: result.prompt,
@@ -1989,9 +2167,21 @@ export function startSpeechGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'speech', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadSpeechGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? preferredReadySpeechProviderId(settings);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadSpeechGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !speechProviderById(requestedProviderId, settings).local)
+      ? requestedProviderId
+      : preferredReadySpeechProviderIdForProfile(settings, settingsProfile);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的语音生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
+    return;
+  }
   const codingSelection = workflowDefaultGatewaySelection(
     state.workflow,
     state.composer.model,
@@ -2002,9 +2192,9 @@ export function startSpeechGenerationTurn(
 
   const now = Date.now();
   const providerLabel = providerId
-    ? speechProviderById(providerId).label
+    ? speechProviderById(providerId, settings).label
     : 'Speech generation';
-  const provider = providerId ? speechProviderById(providerId) : null;
+  const provider = providerId ? speechProviderById(providerId, settings) : null;
   const model = providerId
     ? options.model?.trim() || speechProviderModel(providerId, settings)
     : options.model?.trim() || '';
@@ -2152,8 +2342,8 @@ export function startSpeechGenerationTurn(
       const result = await generateSpeech(
         {
           prompt: speechText,
-          providerId: options.providerId,
-          model: options.model,
+          providerId,
+          model,
           voice: options.voice,
           signal: ch.abortController.signal,
         },
@@ -2165,7 +2355,7 @@ export function startSpeechGenerationTurn(
       void captureGeneratedAssets({
         kind: 'speech',
         sources: result.audios,
-        origin: speechProviderById(result.providerId).local ? 'local' : 'remote',
+        origin: speechProviderById(result.providerId, settings).local ? 'local' : 'remote',
         provider: result.providerLabel,
         model: result.model,
         prompt: result.prompt,
@@ -2203,10 +2393,22 @@ export function startSpriteGenerationTurn(
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'sprite', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadSpriteGenerationSettings();
-  const imageSettings = loadImageGenerationSettings();
-  if (!settings.enabled) return;
-  const providerId = options.providerId ?? imageSettings.preferredProviderId;
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadSpriteGenerationSettings(settingsProfile);
+  const imageSettings = loadImageGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const providerId =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !imageProviderById(requestedProviderId, imageSettings).local)
+      ? requestedProviderId
+      : preferredReadyImageProviderIdForProfile(imageSettings, settingsProfile);
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的 Sprite 生图渠道。请在设置中为当前项目配置在线生图渠道。', 'system');
+    return;
+  }
   if (!imageProviderReady(providerId, imageSettings)) {
     useStore
       .getState()
@@ -2358,7 +2560,7 @@ export function startSpriteGenerationTurn(
         {
           prompt: spritePrompt,
           providerId,
-          model: options.model,
+          model,
           signal: ch.abortController.signal,
         },
         settings,
@@ -2438,7 +2640,8 @@ export function startMeshSearchTurn(text: string): void {
   const state = useStore.getState();
   if (isWorkflowReadOnly(state)) return;
   const sessionKey = activeWorkflowSessionKey(state);
-  const settings = loadMeshLibrarySettings();
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadMeshLibrarySettings(settingsProfile);
 
   if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
 
@@ -2600,7 +2803,7 @@ export function startMeshSearchTurn(text: string): void {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
       setAssistant(
-        `${elapsed()} · 失败\n✗ 在线模型库搜索失败: ${msg}\n\n请检查网络，或在项目设置 > 在线模型库中配置账号 API Key 后重试。`,
+        `${elapsed()} · 失败\n✗ 在线模型库搜索失败: ${msg}\n\n请检查网络，或在设置 > 在线模型库中配置账号 API Key 后重试。`,
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');

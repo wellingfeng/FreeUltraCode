@@ -1,7 +1,7 @@
 /**
  * CONTRACT: historical-record data shapes.
  *
- * Canonical `History*` types model the target `.freeultracode/**` schema. The
+ * Canonical `History*` types model the target `.ultragamestudio/**` schema. The
  * unprefixed types at the bottom preserve the current runtime-store contract
  * until persistence code migrates from the legacy field names.
  */

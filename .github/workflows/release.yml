@@ -26,16 +26,16 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             tauri_target: x86_64-pc-windows-msvc
             bundles: nsis
-            artifact_name: freeultracode-windows-x64
+            artifact_name: ultragamestudio-windows-x64
             asset_glob: |
               app/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
-              app/src-tauri/target/x86_64-pc-windows-msvc/release/FreeUltraCode.exe
+              app/src-tauri/target/x86_64-pc-windows-msvc/release/UltraGameStudio.exe
           - name: macOS universal
             runner: macos-latest
             rust_target: aarch64-apple-darwin,x86_64-apple-darwin
             tauri_target: universal-apple-darwin
             bundles: app,dmg
-            artifact_name: freeultracode-macos-universal
+            artifact_name: ultragamestudio-macos-universal
             asset_glob: |
               app/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           - name: Linux x64
@@ -43,7 +43,7 @@ jobs:
             rust_target: x86_64-unknown-linux-gnu
             tauri_target: x86_64-unknown-linux-gnu
             bundles: deb,appimage
-            artifact_name: freeultracode-linux-x64
+            artifact_name: ultragamestudio-linux-x64
             asset_glob: |
               app/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
               app/src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage

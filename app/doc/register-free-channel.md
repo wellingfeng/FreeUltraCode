@@ -1,12 +1,12 @@
 # 注册并配置免费渠道 API Key
 
-这篇教程演示如何在 FreeUltraCode 里给一个免费渠道补上 API Key。截图使用 OpenRouter 做例子，其他云端渠道的流程基本一致：从底部 Channel 菜单选择一个未配置的渠道，打开注册网站，创建 Key，再回到 FreeUltraCode 保存。
+这篇教程演示如何在 UltraGameStudio 里给一个免费渠道补上 API Key。截图使用 OpenRouter 做例子，其他云端渠道的流程基本一致：从底部 Channel 菜单选择一个未配置的渠道，打开注册网站，创建 Key，再回到 UltraGameStudio 保存。
 
-> 免费渠道的额度、模型和注册要求会随平台变化。以 FreeUltraCode 弹窗打开的平台官网为准，不要把自己的 API Key 发给别人，也不要把完整 Key 放进截图或公开文档。
+> 免费渠道的额度、模型和注册要求会随平台变化。以 UltraGameStudio 弹窗打开的平台官网为准，不要把自己的 API Key 发给别人，也不要把完整 Key 放进截图或公开文档。
 
 ## 适用场景
 
-当渠道名称后面出现警告符号时，通常表示这个渠道还缺少必要配置，例如 API Key。配置完成后，警告会从该渠道名称后消失，FreeUltraCode 就能通过本地 proxy 把请求转发到对应平台。
+当渠道名称后面出现警告符号时，通常表示这个渠道还缺少必要配置，例如 API Key。配置完成后，警告会从该渠道名称后消失，UltraGameStudio 就能通过本地 proxy 把请求转发到对应平台。
 
 本教程主要适用于 OpenRouter、Gemini、DeepSeek、Mistral、Kimi、Groq、Fireworks AI、Z.ai GLM 等需要云端账号或 Key 的渠道。本地渠道如 Ollama、LM Studio、llama.cpp 通常不需要注册网站，但需要先启动本地服务并确认模型名称。
 
@@ -18,7 +18,7 @@
   <img src="images/注册免费渠道/1-配置大模型.png" alt="在 Channel 下拉列表中选择未配置的免费渠道" width="960">
 </p>
 
-警告符号表示 FreeUltraCode 还没有拿到这个渠道需要的配置。选中后，系统会弹出配置窗口。
+警告符号表示 UltraGameStudio 还没有拿到这个渠道需要的配置。选中后，系统会弹出配置窗口。
 
 ## 2. 打开注册网站
 
@@ -38,17 +38,17 @@
   <img src="images/注册免费渠道/3-新建token.png" alt="在渠道平台新建 API Key" width="960">
 </p>
 
-创建后立刻复制 Key。很多平台只会完整显示一次，关闭弹窗后就只能删除重建。建议给 Key 起一个能识别用途的名字，例如 `freeultracode`。
+创建后立刻复制 Key。很多平台只会完整显示一次，关闭弹窗后就只能删除重建。建议给 Key 起一个能识别用途的名字，例如 `ultragamestudio`。
 
-## 4. 回到 FreeUltraCode 保存并使用
+## 4. 回到 UltraGameStudio 保存并使用
 
-把刚复制的 API Key 粘贴到 FreeUltraCode 的渠道配置弹窗里，然后点击 **保存并使用**。保存成功后，再打开 Channel 下拉列表，刚才配置的渠道后面应该已经没有警告符号。
+把刚复制的 API Key 粘贴到 UltraGameStudio 的渠道配置弹窗里，然后点击 **保存并使用**。保存成功后，再打开 Channel 下拉列表，刚才配置的渠道后面应该已经没有警告符号。
 
 <p align="center">
   <img src="images/注册免费渠道/4-配置好了.png" alt="配置完成后渠道警告符号消失" width="960">
 </p>
 
-现在可以直接在底部输入框提问。后续请求会从 FreeUltraCode 本地 proxy 转发到这个渠道。
+现在可以直接在底部输入框提问。后续请求会从 UltraGameStudio 本地 proxy 转发到这个渠道。
 
 ## 5. 在设置里集中查看免费渠道
 
@@ -76,4 +76,4 @@
 
 **可以把 Key 写进 workflow 脚本吗？**
 
-不建议。Key 应保存在 FreeUltraCode 的本地渠道配置里，workflow 只负责描述任务和节点结构。
+不建议。Key 应保存在 UltraGameStudio 的本地渠道配置里，workflow 只负责描述任务和节点结构。

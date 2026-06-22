@@ -32,7 +32,7 @@ beforeEach(() => {
   errBuf = '';
   outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(sink((s) => (outBuf += s)));
   errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(sink((s) => (errBuf += s)));
-  dir = mkdtempSync(join(tmpdir(), 'fuc-cmd-'));
+  dir = mkdtempSync(join(tmpdir(), 'ugs-cmd-'));
 });
 
 afterEach(() => {
@@ -42,12 +42,12 @@ afterEach(() => {
 });
 
 function writeSample(): string {
-  const file = join(dir, 'sample.fuc.json');
+  const file = join(dir, 'sample.ugs.json');
   writeFileSync(file, JSON.stringify(sampleWorkflow, null, 2));
   return file;
 }
 
-describe('fuc init', () => {
+describe('ugs init', () => {
   it('emits a minimal legal IRGraph to stdout (exit 0)', async () => {
     const code = await runInit('demo', { stdout: true });
     expect(code).toBe(0);
@@ -76,7 +76,7 @@ describe('fuc init', () => {
   });
 });
 
-describe('fuc emit', () => {
+describe('ugs emit', () => {
   it('compiles a blueprint to a script (exit 0)', async () => {
     const file = writeSample();
     const code = await runEmit(file, {});
@@ -99,11 +99,11 @@ describe('fuc emit', () => {
   });
 
   it('errors on a missing file (exit 1)', async () => {
-    await expect(runEmit(join(dir, 'nope.fuc.json'), {})).rejects.toMatchObject({ exitCode: 1 });
+    await expect(runEmit(join(dir, 'nope.ugs.json'), {})).rejects.toMatchObject({ exitCode: 1 });
   });
 });
 
-describe('fuc parse', () => {
+describe('ugs parse', () => {
   it('round-trips emit -> parse preserving structure', async () => {
     const file = writeSample();
     await runEmit(file, {});
@@ -119,7 +119,7 @@ describe('fuc parse', () => {
   });
 });
 
-describe('fuc validate', () => {
+describe('ugs validate', () => {
   it('passes a valid blueprint (exit 0)', async () => {
     const file = writeSample();
     const code = await runValidate(file, {});
@@ -128,7 +128,7 @@ describe('fuc validate', () => {
 
   it('fails a structurally broken blueprint (exit 1)', async () => {
     const broken = { version: 1, meta: {}, nodes: [], edges: [] };
-    const file = join(dir, 'broken.fuc.json');
+    const file = join(dir, 'broken.ugs.json');
     writeFileSync(file, JSON.stringify(broken));
     const code = await runValidate(file, {});
     expect(code).toBe(1);
@@ -143,7 +143,7 @@ describe('fuc validate', () => {
   });
 });
 
-describe('fuc info', () => {
+describe('ugs info', () => {
   it('reports node/edge counts (exit 0)', async () => {
     const file = writeSample();
     const code = await runInfo(file, {});
@@ -162,7 +162,7 @@ describe('fuc info', () => {
   });
 });
 
-describe('fuc run --dry-run', () => {
+describe('ugs run --dry-run', () => {
   it('validates + emits without spawning (exit 0, quiet = no stderr)', async () => {
     const file = writeSample();
     const code = await runRun(file, { dryRun: true, quiet: true });
@@ -172,7 +172,7 @@ describe('fuc run --dry-run', () => {
 
   it('returns 3 when the graph is structurally invalid', async () => {
     const broken = { version: 1, meta: {}, nodes: [], edges: [] };
-    const file = join(dir, 'broken.fuc.json');
+    const file = join(dir, 'broken.ugs.json');
     writeFileSync(file, JSON.stringify(broken));
     const code = await runRun(file, { dryRun: true, quiet: true });
     expect(code).toBe(3);

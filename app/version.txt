@@ -1,6 +1,6 @@
 {
-  "version": "0.4.8",
-  "url": "https://github.com/wellingfeng/FreeUltraCode/releases/download/v0.4.8/FreeUltraCode_0.4.8_x64-setup.exe",
-  "notes": "FreeUltraCode v0.4.8",
-  "pubDate": "2026-06-20"
+  "version": "0.4.9",
+  "url": "https://github.com/wellingfeng/UltraGameStudio/releases/download/v0.4.9/UltraGameStudio_0.4.9_x64-setup.exe",
+  "notes": "UltraGameStudio v0.4.9",
+  "pubDate": "2026-06-22"
 }

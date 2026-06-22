@@ -77,7 +77,7 @@ describe('image generation settings and routing', () => {
         unknown: ['ignored'],
       },
     });
-    expect(settings.enabled).toBe(false);
+    expect(settings.enabled).toBe(true);
     expect(settings.showComposerModelSelect).toBe(true);
     expect(settings.preferredProviderId).toBe('pollinations');
     expect(settings.providerKeys.pollinations).toBe('token');

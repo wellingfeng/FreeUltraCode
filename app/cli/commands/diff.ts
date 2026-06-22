@@ -1,6 +1,6 @@
 /**
- * `fuc diff <fileA> <fileB>` — structural comparison of two workflows (spec §3.8).
- * Both inputs are normalised to IRGraph first (mixed .fuc.json/.js/.yaml ok).
+ * `ugs diff <fileA> <fileB>` — structural comparison of two workflows (spec §3.8).
+ * Both inputs are normalised to IRGraph first (mixed .ugs.json/.js/.yaml ok).
  * `--ignore-layout` drops layout; `--ignore-ids` compares structure modulo ids;
  * `--json` emits a machine diff.
  */

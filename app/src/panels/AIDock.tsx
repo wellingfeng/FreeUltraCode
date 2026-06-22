@@ -5,10 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type ReactNode,
-} from 'react';
+} from "react";
 import {
   ArrowDownToLine,
   ArrowUp,
@@ -35,30 +36,24 @@ import {
   Trash2,
   X,
   Zap,
-} from 'lucide-react';
-import Select from '@/components/Select';
-import { summarizeAnswer, type InteractionAnswer } from '@/core/interaction';
-import { readStartUserInputs } from '@/core/startInputs';
+} from "lucide-react";
+import Select from "@/components/Select";
+import { summarizeAnswer, type InteractionAnswer } from "@/core/interaction";
+import { readStartUserInputs } from "@/core/startInputs";
 import {
   systemDefaultGatewaySelection,
   workflowDefaultGatewaySelection,
-} from '@/lib/modelGateway/resolver';
-import {
-  RUNTIME_ADAPTERS,
-  type RuntimeAdapterId,
-} from '@/lib/adapters';
+} from "@/lib/modelGateway/resolver";
+import { RUNTIME_ADAPTERS, type RuntimeAdapterId } from "@/lib/adapters";
 import {
   getProviderRuntimeInfo,
   listProviders,
   type Provider,
   type ProviderKind,
   type ProviderRuntimeStatus,
-} from '@/lib/apiConfig';
-import {
-  getCliRuntimeSnapshot,
-  isCliAdapterAvailable,
-} from '@/lib/cliConfig';
-import { cn } from '@/lib/cn';
+} from "@/lib/apiConfig";
+import { getCliRuntimeSnapshot, isCliAdapterAvailable } from "@/lib/cliConfig";
+import { cn } from "@/lib/cn";
 import {
   FREE_CHANNELS,
   FREE_CHANNEL_AUTO_ID,
@@ -75,8 +70,8 @@ import {
   setFreeChannelKey,
   setFreeChannelModel,
   type FreeChannel,
-} from '@/lib/freeChannels';
-import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
+} from "@/lib/freeChannels";
+import LocalModelSetupDialog from "@/components/LocalModelSetupDialog";
 import {
   imageProviders,
   imageProviderModel,
@@ -85,7 +80,7 @@ import {
   saveImageGenerationSettings,
   type ImageGenerationSettings,
   type ImageProviderId,
-} from '@/lib/imageGeneration';
+} from "@/lib/imageGeneration";
 import {
   MUSIC_PROVIDERS,
   loadMusicGenerationSettings,
@@ -94,7 +89,7 @@ import {
   saveMusicGenerationSettings,
   type MusicGenerationSettings,
   type MusicProviderId,
-} from '@/lib/musicGeneration';
+} from "@/lib/musicGeneration";
 import {
   THREE_D_PROVIDERS,
   loadThreeDGenerationSettings,
@@ -103,7 +98,7 @@ import {
   threeDProviderReady,
   type ThreeDGenerationSettings,
   type ThreeDProviderId,
-} from '@/lib/threeDGeneration';
+} from "@/lib/threeDGeneration";
 import {
   VIDEO_PROVIDERS,
   loadVideoGenerationSettings,
@@ -112,7 +107,7 @@ import {
   videoProviderReady,
   type VideoGenerationSettings,
   type VideoProviderId,
-} from '@/lib/videoGeneration';
+} from "@/lib/videoGeneration";
 import {
   SPEECH_PROVIDERS,
   loadSpeechGenerationSettings,
@@ -121,44 +116,42 @@ import {
   speechProviderReady,
   type SpeechGenerationSettings,
   type SpeechProviderId,
-} from '@/lib/speechGeneration';
-import type { SelectOption } from '@/store/types';
-import { cacheTtlOptions, startupModeOptions } from '@/store/sampleSessions';
+} from "@/lib/speechGeneration";
+import type { SelectOption } from "@/store/types";
+import { cacheTtlOptions, startupModeOptions } from "@/store/sampleSessions";
 import {
   LANGUAGE_SELECT_OPTIONS,
   localizeSelectOption,
   t,
   type Locale,
-} from '@/lib/i18n';
-import type { Message } from '@/store/types';
+} from "@/lib/i18n";
+import type { Message } from "@/store/types";
 import {
-  SLASH_COMMANDS,
   buildSlashSuggestions,
   buildGameSkillSuggestions,
-  slashText,
   type SlashSuggestion,
-} from '@/lib/slashCommands';
+} from "@/lib/slashCommands";
 import {
   guardSlashCommandText,
   type SlashCommandGuardSettings,
-} from '@/lib/slashCommandGuards';
+} from "@/lib/slashCommandGuards";
 import {
   parseGameExpertCommand,
   gameExpertMenuEntries,
-} from '@/lib/gameExperts';
+} from "@/lib/gameExperts";
 import {
   buildGameOrgTree,
   flattenGameOrgNodes,
   loadGameOrgDefinition,
   type GameOrgNodeDefinition,
   type ResolvedGameOrgNode,
-} from '@/lib/gameOrg';
+} from "@/lib/gameOrg";
 import {
   loadDockHeight,
   loadPaneWidth,
   saveDockHeight,
   savePaneWidth,
-} from '@/lib/composerStorage';
+} from "@/lib/composerStorage";
 import {
   describeShortcutBinding,
   isNativeTextareaNewlineShortcut,
@@ -166,8 +159,8 @@ import {
   matchesShortcut,
   shortcutParts,
   subscribeShortcutSettings,
-} from '@/lib/keyboardShortcuts';
-import { shouldRefocusComposerAfterAppend } from '@/lib/composerEntryPolicy';
+} from "@/lib/keyboardShortcuts";
+import { shouldRefocusComposerAfterAppend } from "@/lib/composerEntryPolicy";
 import {
   tauriAvailable,
   blueprintModeInstall,
@@ -177,13 +170,16 @@ import {
   onSlashCatalogUpdated,
   openExternal,
   openLocalPath,
+  readLocalFileForUpload,
   saveClipboardImage,
   slashCatalog,
+  type ClipboardImageSaveRequest,
   type LocalModelRuntimeStatus,
+  type SessionCaptureSaveRequest,
   type SlashCatalogEntry,
   type WorkspaceDirectoryListing,
   type WorkspaceTreeEntry,
-} from '@/lib/tauri';
+} from "@/lib/tauri";
 import {
   applyProjectFileDragDropEffect,
   clearProjectFileDragData,
@@ -193,39 +189,37 @@ import {
   type ProjectFileDragEndDetail,
   type ProjectFileDragMoveDetail,
   projectFilePathsFromDataTransfer,
+  projectFileRelativePathsFromDataTransfer,
   setProjectFileDragAccepted,
-} from '@/lib/projectFileDrag';
+} from "@/lib/projectFileDrag";
 import {
   canRefreshFreeChannelModels,
   freeChannelModelOptions,
   providerModelOptions,
   refreshFreeChannelModels,
   refreshProviderModels,
-} from '@/lib/modelLists';
-import { formatCompactTokenCount } from '@/lib/contextUsage';
+} from "@/lib/modelLists";
+import { formatCompactTokenCount } from "@/lib/contextUsage";
 import {
   uniqueWorkspaceHistory,
   workspacePathKey,
-} from '@/lib/workspaceHistory';
-import LazyMessageContent from '@/components/ai/LazyMessageContent';
-import CopyButton from '@/components/ai/CopyButton';
+} from "@/lib/workspaceHistory";
+import LazyMessageContent from "@/components/ai/LazyMessageContent";
+import CopyButton from "@/components/ai/CopyButton";
 import {
   answerActionText,
   cleanMessageText,
   renderMessageText,
   routeLabelFromText,
-} from '@/components/ai/lib/messageText';
-import { translatePublicText } from '@/lib/publicTranslation';
-import { captureConversation } from '@/lib/sessionScreenshot';
-import { recordConversationGif } from '@/lib/sessionGif';
-import UltracodeRunCard from '@/panels/UltracodeRunCard';
+} from "@/components/ai/lib/messageText";
+import { translatePublicText } from "@/lib/publicTranslation";
+import { captureConversation } from "@/lib/sessionScreenshot";
+import { recordConversationGif } from "@/lib/sessionGif";
+import StudioRunCard from "@/panels/StudioRunCard";
 import GameTeamPanel, {
   OPEN_GAME_TEAM_DETAILS_EVENT,
-} from '@/panels/GameTeamPanel';
-import {
-  activeChatTitle,
-  formatMessageTime,
-} from '@/panels/aidock/chatTitle';
+} from "@/panels/GameTeamPanel";
+import { activeChatTitle, formatMessageTime } from "@/panels/aidock/chatTitle";
 import {
   fileMentionEntryForTarget,
   fileMentionErrorMessage,
@@ -239,13 +233,13 @@ import {
   type FileMentionListing,
   type FileMentionListTarget,
   type FileMentionTrigger,
-} from '@/panels/aidock/fileMentions';
+} from "@/panels/aidock/fileMentions";
 import {
   buildSearchMatches,
   normalizeSearchQuery,
   previousUserText,
   serializeConversation,
-} from '@/panels/aidock/search';
+} from "@/panels/aidock/search";
 import {
   expandSlashRequest,
   filterSlashSuggestions,
@@ -254,25 +248,42 @@ import {
   findSlashTrigger,
   scopeSlashSuggestionsForAdapter,
   type SlashTrigger,
-} from '@/panels/aidock/slashSuggestions';
+} from "@/panels/aidock/slashSuggestions";
 import {
   readStreamScrollSnapshot,
   restoreStreamScrollSnapshot,
   scrollStreamToBottom,
   streamScrollKey,
   type StreamScrollSnapshot,
-} from '@/panels/aidock/streamScroll';
-import FileText from '@/components/ai/FileText';
-import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
-import type { FileRef } from '@/components/ai/lib/filePath';
-import { displayFileRefLabel } from '@/components/ai/lib/filePath';
-import { scanFileRefs } from '@/components/ai/lib/fileScan';
-import FileChip, { type OpenFileIntent } from '@/components/ai/FileChip';
-import { shallow } from 'zustand/shallow';
+} from "@/panels/aidock/streamScroll";
+import FileText from "@/components/ai/FileText";
+import FilePreviewDrawer, {
+  FILE_PREVIEW_DRAWER_LAYOUT_EVENT,
+  type FilePreviewDrawerLayoutDetail,
+} from "@/components/ai/FilePreviewDrawer";
+import type { FileRef } from "@/components/ai/lib/filePath";
+import { displayFileRefLabel } from "@/components/ai/lib/filePath";
+import { scanFileRefs } from "@/components/ai/lib/fileScan";
+import FileChip, { type OpenFileIntent } from "@/components/ai/FileChip";
+import { shallow } from "zustand/shallow";
+import { isActiveAiEditingSession, useStore } from "@/store/useStore";
 import {
-  isActiveAiEditingSession,
-  useStore,
-} from '@/store/useStore';
+  getRemoteWorkspace,
+  isRemoteRunnerProvider,
+  isRemoteWorkspacePath,
+  parseRemoteProviderId,
+  refreshRemoteWorkspaceAccounts,
+  remoteRunnerProviderMatchesWorkspace,
+  remoteWorkspaceIdFromPath,
+  listRemoteWorkspaceDirectory,
+  uploadRemoteWorkspaceFile,
+} from "@/lib/remoteWorkspace";
+import {
+  isRemoteSettingsProfile,
+  preloadSettingsProfile,
+  settingsProfileIdForWorkspacePath,
+  type SettingsProfileOptions,
+} from "@/lib/generationSettingsStore";
 
 const DEFAULT_DOCK_HEIGHT = 208; // matches the former h-52
 const MIN_DOCK_HEIGHT = 120;
@@ -282,11 +293,13 @@ const MIN_DOCK_HEIGHT = 120;
  * Sized to comfortably cover the visible bottom of the stream after auto-scroll.
  */
 const EAGER_MESSAGE_TAIL = 6;
+const INITIAL_MESSAGE_WINDOW = 80;
+const MESSAGE_WINDOW_PAGE = 80;
 /** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
 const CHAT_INPUT_HEIGHT = 300;
 
 /** localStorage key + bounds for the AI-input pane width (right column). */
-const INPUT_WIDTH_KEY = 'freeultracode.aiInputWidth.v1';
+const INPUT_WIDTH_KEY = "ultragamestudio.aiInputWidth.v1";
 const DEFAULT_INPUT_WIDTH = 384; // matches the former w-96
 const MIN_INPUT_WIDTH = 280;
 const MIN_RETURN_WIDTH = 240; // keep the AI-return pane usable
@@ -294,27 +307,30 @@ const NARROW_INPUT_MIN_WIDTH = 120;
 const NARROW_INPUT_WIDTH_RATIO = 0.4;
 
 /** localStorage key + bounds for the bottom input area height in 'chat' layout. */
-const CHAT_INPUT_HEIGHT_KEY = 'freeultracode.chatInputHeight.v1';
+const CHAT_INPUT_HEIGHT_KEY = "ultragamestudio.chatInputHeight.v1";
 const MIN_CHAT_INPUT_HEIGHT = 180;
 const MIN_CHAT_RETURN_HEIGHT = 160; // keep the chat return area usable
+const MIN_CHAT_VISIBLE_WIDTH = 320;
 const MAX_CHAT_TITLE_LENGTH = 80;
 
 /** Clamp the chat input-area height so neither it nor the return area collapses. */
 function clampChatInputHeight(h: number): number {
   const max =
-    typeof window !== 'undefined'
-      ? Math.max(MIN_CHAT_INPUT_HEIGHT, window.innerHeight - MIN_CHAT_RETURN_HEIGHT)
+    typeof window !== "undefined"
+      ? Math.max(
+          MIN_CHAT_INPUT_HEIGHT,
+          window.innerHeight - MIN_CHAT_RETURN_HEIGHT,
+        )
       : 480;
   return Math.min(Math.max(h, MIN_CHAT_INPUT_HEIGHT), max);
 }
 
 function clampHeight(h: number): number {
-  const max =
-    typeof window !== 'undefined' ? window.innerHeight * 0.75 : 600;
+  const max = typeof window !== "undefined" ? window.innerHeight * 0.75 : 600;
   return Math.min(Math.max(h, MIN_DOCK_HEIGHT), max);
 }
 
-const ASSET_SESSION_JUMP_EVENT = 'fuc:asset-session-jump';
+const ASSET_SESSION_JUMP_EVENT = "ugs:asset-session-jump";
 
 interface AssetSessionJumpDetail {
   assetId?: string;
@@ -323,17 +339,18 @@ interface AssetSessionJumpDetail {
   messageId?: string | null;
 }
 
-type MessageActionMenu =
-  | { messageId: string; kind: 'model' | 'translate' }
-  | null;
+type MessageActionMenu = {
+  messageId: string;
+  kind: "model" | "translate";
+} | null;
 
 // Row variants for the inline `$组织架构` tree menu.
 type OrgMentionOption =
-  | { kind: 'back' }
-  | { kind: 'insert-self'; node: ResolvedGameOrgNode }
-  | { kind: 'node'; node: ResolvedGameOrgNode; hasChildren: boolean };
+  | { kind: "back" }
+  | { kind: "insert-self"; node: ResolvedGameOrgNode }
+  | { kind: "node"; node: ResolvedGameOrgNode; hasChildren: boolean };
 
-const ORG_SLASH_SUGGESTION_PREFIX = 'game-org:';
+const ORG_SLASH_SUGGESTION_PREFIX = "game-org:";
 
 function isOrgSlashSuggestion(suggestion: SlashSuggestion): boolean {
   return suggestion.id.startsWith(ORG_SLASH_SUGGESTION_PREFIX);
@@ -361,7 +378,7 @@ function orgNodeSearchText(node: ResolvedGameOrgNode): string {
       ...expert.triggers,
     ]),
   ]
-    .join(' ')
+    .join(" ")
     .toLocaleLowerCase();
 }
 
@@ -374,21 +391,21 @@ function orgNodeSearchText(node: ResolvedGameOrgNode): string {
  *   - full      → 危险（红）  : 完全读写，激活时整组高亮
  * Returns the lucide icon and the CSS color variable used for text/active fill.
  */
-type PermissionTone = 'safe' | 'caution' | 'danger';
+type PermissionTone = "safe" | "caution" | "danger";
 
 function permissionVisual(id: string): {
   Icon: typeof Eye;
   tone: PermissionTone;
   color: string;
 } {
-  if (id === 'readonly') {
-    return { Icon: Eye, tone: 'safe', color: 'var(--status-ai-edit)' };
+  if (id === "readonly") {
+    return { Icon: Eye, tone: "safe", color: "var(--status-ai-edit)" };
   }
-  if (id === 'ask') {
-    return { Icon: ListChecks, tone: 'caution', color: 'var(--accent-3)' };
+  if (id === "ask") {
+    return { Icon: ListChecks, tone: "caution", color: "var(--accent-3)" };
   }
   // 'full' (and any unknown id) → most permissive, treat as the danger segment.
-  return { Icon: ShieldAlert, tone: 'danger', color: 'var(--status-error)' };
+  return { Icon: ShieldAlert, tone: "danger", color: "var(--status-error)" };
 }
 
 /**
@@ -398,8 +415,8 @@ function permissionVisual(id: string): {
  * a copy at render time using this rank.
  */
 function permissionRank(id: string): number {
-  if (id === 'readonly') return 0; // 只读 — 最低
-  if (id === 'ask') return 1; // 每次询问 — 居中
+  if (id === "readonly") return 0; // 只读 — 最低
+  if (id === "ask") return 1; // 每次询问 — 居中
   return 2; // 完全访问 — 最高，置于最右
 }
 
@@ -409,38 +426,68 @@ function assistantHeaderLabel(message: Message): string {
 
 function translatedAnswerTitle(target: Locale, locale: Locale): string {
   const option = LANGUAGE_SELECT_OPTIONS.find((item) => item.id === target);
-  const prefix = locale === 'zh-CN' ? '🌐 翻译为 ' : '🌐 Translate to ';
+  const prefix = locale === "zh-CN" ? "🌐 翻译为 " : "🌐 Translate to ";
   if (!option) return `${prefix}${target}`;
   return `${prefix}${localizeSelectOption(option, locale).label}`;
 }
 
 function isCaptureUtilityMessage(message: Message): boolean {
   const text = message.text.trim();
-  if (
-    message.role === 'user' &&
-    /^\/screenshot(?:-gif)?$/i.test(text)
-  ) {
+  if (message.role === "user" && /^\/screenshot(?:-gif)?$/i.test(text)) {
     return true;
   }
   return (
-    /^✓\s*(?:已截图当前会话|Captured this conversation|已把当前会话录成滚动 GIF|Recorded this conversation as a scrolling GIF)/i.test(text) ||
-    /^✗\s*(?:截图失败|Screenshot failed|GIF 录制失败|GIF recording failed)/i.test(text) ||
+    /^✓\s*(?:已截图当前会话|Captured this conversation|已把当前会话录成滚动 GIF|Recorded this conversation as a scrolling GIF)/i.test(
+      text,
+    ) ||
+    /^✗\s*(?:截图失败|Screenshot failed|GIF 录制失败|GIF recording failed)/i.test(
+      text,
+    ) ||
     /!\[(?:截图预览|screenshot preview|GIF 预览|GIF preview)\]\(/i.test(text)
   );
 }
 
+function friendlyCaptureError(err: unknown, locale: Locale): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const zh = locale === "zh-CN";
+  switch (msg) {
+    case "CAPTURE_IMAGE_FETCH_TIMEOUT":
+      return zh
+        ? "图片加载超时。部分远程图片无响应，请稍后重试或先移除这类图片。"
+        : "Image loading timed out. Some remote images did not respond; retry later or remove them first.";
+    case "HTML2CANVAS_LOAD_TIMEOUT":
+      return zh
+        ? "截图组件加载超时。请重试。"
+        : "Screenshot renderer load timed out. Please retry.";
+    case "HTML2CANVAS_CAPTURE_TIMEOUT":
+      return zh
+        ? "截图渲染超时。会话可能太长，或包含加载很慢的图片。"
+        : "Screenshot render timed out. The conversation may be too long or include slow images.";
+    case "CANVAS_ENCODE_TIMEOUT":
+      return zh
+        ? "图片编码超时。请尝试缩短会话后再截图。"
+        : "Image encoding timed out. Try capturing a shorter conversation.";
+    case "SESSION_CAPTURE_SAVE_TIMEOUT":
+      return zh
+        ? "保存截图超时。请检查磁盘或工作区路径后重试。"
+        : "Saving capture timed out. Check disk/workspace path and retry.";
+    case "GIF_ENCODER_LOAD_TIMEOUT":
+      return zh
+        ? "GIF 编码器加载超时。请重试。"
+        : "GIF encoder load timed out. Please retry.";
+    default:
+      return msg;
+  }
+}
+
 function messageActionButtonClass(active = false): string {
   return (
-    'relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-border-soft hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 ' +
-    (active ? 'bg-border-soft text-fg' : '')
+    "relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-border-soft hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 " +
+    (active ? "bg-border-soft text-fg" : "")
   );
 }
 
-function MessageActionMenuPanel({
-  children,
-}: {
-  children: ReactNode;
-}) {
+function MessageActionMenuPanel({ children }: { children: ReactNode }) {
   return (
     <div className="absolute bottom-[calc(100%+0.25rem)] left-0 z-40 max-h-64 min-w-44 overflow-y-auto rounded-md border border-border bg-panel py-1 shadow-xl">
       {children}
@@ -471,8 +518,8 @@ function MessageActionToolbar({
   modelOptions: SelectOption[];
   modelValue: string;
   canRegenerate: boolean;
-  usage?: Message['usage'];
-  onToggleMenu: (kind: 'model' | 'translate') => void;
+  usage?: Message["usage"];
+  onToggleMenu: (kind: "model" | "translate") => void;
   onRegenerate: () => void;
   onRegenerateWithModel: (model: string) => void;
   onTranslate: (target: Locale) => void;
@@ -480,21 +527,21 @@ function MessageActionToolbar({
   onDelete: () => void;
 }) {
   const modelMenuOpen =
-    openMenu?.messageId === messageId && openMenu.kind === 'model';
+    openMenu?.messageId === messageId && openMenu.kind === "model";
   const translateMenuOpen =
-    openMenu?.messageId === messageId && openMenu.kind === 'translate';
+    openMenu?.messageId === messageId && openMenu.kind === "translate";
   return (
     <div className="relative mt-1 flex items-center gap-1">
       <CopyButton
         value={text}
-        title={t(locale, 'dock.copyAnswer')}
+        title={t(locale, "dock.copyAnswer")}
         className={messageActionButtonClass()}
       />
       <button
         type="button"
         onClick={onBranch}
-        title={t(locale, 'dock.branchFromHere')}
-        aria-label={t(locale, 'dock.branchAria')}
+        title={t(locale, "dock.branchFromHere")}
+        aria-label={t(locale, "dock.branchAria")}
         className={messageActionButtonClass()}
       >
         <GitBranch size={14} />
@@ -503,8 +550,8 @@ function MessageActionToolbar({
         type="button"
         onClick={onRegenerate}
         disabled={!canRegenerate}
-        title={t(locale, 'dock.regenerate')}
-        aria-label={t(locale, 'dock.regenerate')}
+        title={t(locale, "dock.regenerate")}
+        aria-label={t(locale, "dock.regenerate")}
         className={messageActionButtonClass()}
       >
         <RotateCcw size={14} />
@@ -512,10 +559,10 @@ function MessageActionToolbar({
       <div className="relative">
         <button
           type="button"
-          onClick={() => onToggleMenu('model')}
+          onClick={() => onToggleMenu("model")}
           disabled={!canRegenerate || modelOptions.length === 0}
-          title={t(locale, 'dock.switchModel')}
-          aria-label={t(locale, 'dock.switchModel')}
+          title={t(locale, "dock.switchModel")}
+          aria-label={t(locale, "dock.switchModel")}
           aria-expanded={modelMenuOpen}
           className={messageActionButtonClass(modelMenuOpen)}
         >
@@ -525,7 +572,8 @@ function MessageActionToolbar({
           <MessageActionMenuPanel>
             {modelOptions.map((option, index) => {
               const showGroup =
-                !!option.group && option.group !== modelOptions[index - 1]?.group;
+                !!option.group &&
+                option.group !== modelOptions[index - 1]?.group;
               return (
                 <div key={option.id}>
                   {showGroup && (
@@ -537,17 +585,17 @@ function MessageActionToolbar({
                     type="button"
                     onClick={() => onRegenerateWithModel(option.id)}
                     className={
-                      'flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors ' +
+                      "flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors " +
                       (option.id === modelValue
-                        ? 'bg-border-soft text-fg'
-                        : 'text-fg-dim hover:bg-border-soft hover:text-fg')
+                        ? "bg-border-soft text-fg"
+                        : "text-fg-dim hover:bg-border-soft hover:text-fg")
                     }
                   >
                     <span
                       className={
                         option.id === modelValue
-                          ? 'text-[10px] text-accent'
-                          : 'text-[10px] text-transparent'
+                          ? "text-[10px] text-accent"
+                          : "text-[10px] text-transparent"
                       }
                     >
                       ●
@@ -568,10 +616,10 @@ function MessageActionToolbar({
       <div className="relative">
         <button
           type="button"
-          onClick={() => onToggleMenu('translate')}
+          onClick={() => onToggleMenu("translate")}
           disabled={!text}
-          title={t(locale, 'dock.translateAnswer')}
-          aria-label={t(locale, 'dock.translateAnswer')}
+          title={t(locale, "dock.translateAnswer")}
+          aria-label={t(locale, "dock.translateAnswer")}
           aria-expanded={translateMenuOpen}
           className={messageActionButtonClass(translateMenuOpen)}
         >
@@ -604,8 +652,8 @@ function MessageActionToolbar({
       <button
         type="button"
         onClick={onDelete}
-        title={t(locale, 'dock.deleteAnswer')}
-        aria-label={t(locale, 'dock.deleteAnswer')}
+        title={t(locale, "dock.deleteAnswer")}
+        aria-label={t(locale, "dock.deleteAnswer")}
         className={messageActionButtonClass()}
       >
         <Trash2 size={14} />
@@ -615,10 +663,10 @@ function MessageActionToolbar({
           className="ml-auto inline-flex shrink-0 items-center gap-2 pl-2 font-mono text-[10px] text-fg-faint"
           title={
             usage.estimated
-              ? locale === 'zh-CN'
+              ? locale === "zh-CN"
                 ? `本轮 tokens（本地估算）：输入 ${usage.inputTokens} · 输出 ${usage.outputTokens}`
                 : `Turn tokens (local estimate): input ${usage.inputTokens} · output ${usage.outputTokens}`
-              : locale === 'zh-CN'
+              : locale === "zh-CN"
                 ? `本轮 tokens：输入 ${usage.inputTokens} · 输出 ${usage.outputTokens} · 缓存命中 ${usage.cachedInputTokens}`
                 : `Turn tokens: input ${usage.inputTokens} · output ${usage.outputTokens} · cache hit ${usage.cachedInputTokens}`
           }
@@ -630,7 +678,7 @@ function MessageActionToolbar({
           <span className="inline-flex items-center gap-1">
             <Zap size={11} className="text-[var(--accent-3)]" />
             {usage.estimated
-              ? '--'
+              ? "--"
               : `${Math.min(999, Math.round(usage.cachePercent))}%`}
           </span>
         </span>
@@ -675,10 +723,10 @@ function renderHighlightedText(
             : undefined
         }
         className={
-          'rounded-sm px-0.5 text-fg transition-colors ' +
+          "rounded-sm px-0.5 text-fg transition-colors " +
           (isActive
-            ? 'bg-accent-3/35 ring-1 ring-inset ring-accent-3/55'
-            : 'bg-accent/20')
+            ? "bg-accent-3/35 ring-1 ring-inset ring-accent-3/55"
+            : "bg-accent/20")
         }
       >
         {text.slice(found, found + lowerQuery.length)}
@@ -698,12 +746,22 @@ interface TextSelection {
   end: number;
 }
 
+type FileMentionInsertMode = "mention" | "path";
+
 function clampSelection(value: number, max: number): number {
   return Math.min(Math.max(value, 0), max);
 }
 
 function formatFilePathInsertion(paths: string[]): string {
-  return paths.map((path) => path.trim()).filter(Boolean).join('\n');
+  return paths
+    .map((path) => path.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function filePathPickerInsertText(entry: WorkspaceTreeEntry): string {
+  const relativePath = normalizeFileMentionPath(entry.relativePath);
+  return `${relativePath}${entry.kind === "directory" ? "/" : ""}`;
 }
 
 function pointInsideElement(
@@ -733,7 +791,7 @@ function clientPointInsideElement(
 async function pickComposerFiles(title: string): Promise<string[] | null> {
   if (!tauriAvailable()) return null;
 
-  const { open } = await import('@tauri-apps/plugin-dialog');
+  const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({
     title,
     directory: false,
@@ -756,19 +814,19 @@ function clipboardImageFiles(dataTransfer: DataTransfer): File[] {
   const seen = new Set<string>();
   const images: File[] = [];
 
-  const add = (file: File | null, mimeHint = '') => {
+  const add = (file: File | null, mimeHint = "") => {
     if (!file) return;
     const mime = (file.type || mimeHint).toLowerCase();
-    if (!mime.startsWith('image/')) return;
-    const key = [mime, file.name, file.size, file.lastModified].join('\0');
+    if (!mime.startsWith("image/")) return;
+    const key = [mime, file.name, file.size, file.lastModified].join("\0");
     if (seen.has(key)) return;
     seen.add(key);
     images.push(file);
   };
 
   for (const item of Array.from(dataTransfer.items)) {
-    if (item.kind !== 'file') continue;
-    if (!item.type.toLowerCase().startsWith('image/')) continue;
+    if (item.kind !== "file") continue;
+    if (!item.type.toLowerCase().startsWith("image/")) continue;
     add(item.getAsFile(), item.type);
   }
   if (images.length > 0) return images;
@@ -779,10 +837,12 @@ function clipboardImageFiles(dataTransfer: DataTransfer): File[] {
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
-  let binary = '';
+  let binary = "";
   const chunkSize = 0x8000;
   for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    binary += String.fromCharCode(
+      ...bytes.subarray(offset, offset + chunkSize),
+    );
   }
   return btoa(binary);
 }
@@ -791,12 +851,124 @@ async function fileToBase64(file: File): Promise<string> {
   return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
 }
 
-async function savePastedImageFile(file: File, cwd: string): Promise<string> {
-  return saveClipboardImage({
+type RemoteUploadNamespace = "uploads" | "clipboard-images" | "session-captures";
+
+function filesFromDataTransfer(dataTransfer: DataTransfer): File[] {
+  const files = Array.from(dataTransfer.files).filter((file) => file.size >= 0);
+  if (files.length > 0) return files;
+
+  return Array.from(dataTransfer.items ?? [])
+    .filter((item) => item.kind === "file")
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => !!file && file.size >= 0);
+}
+
+async function uploadRemoteBytes(
+  remoteRootPath: string,
+  request: {
+    bytesBase64: string;
+    fileName?: string | null;
+    mime?: string | null;
+    namespace: RemoteUploadNamespace;
+  },
+): Promise<string> {
+  const uploaded = await uploadRemoteWorkspaceFile(remoteRootPath, request);
+  return uploaded.relativePath;
+}
+
+async function uploadRemoteFile(
+  remoteRootPath: string,
+  file: File,
+  namespace: RemoteUploadNamespace = "uploads",
+): Promise<string> {
+  return uploadRemoteBytes(remoteRootPath, {
     bytesBase64: await fileToBase64(file),
-    mime: file.type || 'image/png',
+    mime: file.type || null,
+    fileName: file.name || "upload.bin",
+    namespace,
+  });
+}
+
+async function uploadLocalPathToRemote(
+  remoteRootPath: string,
+  path: string,
+  namespace: RemoteUploadNamespace = "uploads",
+): Promise<string> {
+  const payload = await readLocalFileForUpload(path);
+  return uploadRemoteBytes(remoteRootPath, {
+    bytesBase64: payload.bytesBase64,
+    mime: payload.mime ?? null,
+    fileName: payload.fileName,
+    namespace,
+  });
+}
+
+async function savePastedImageFile(
+  file: File,
+  cwd: string,
+  remoteRootPath?: string,
+): Promise<string> {
+  if (remoteRootPath) {
+    return uploadRemoteFile(remoteRootPath, file, "clipboard-images");
+  }
+  const request: ClipboardImageSaveRequest = {
+    bytesBase64: await fileToBase64(file),
+    mime: file.type || "image/png",
     fileName: file.name || null,
     cwd: cwd || null,
+  };
+  return saveClipboardImage(request);
+}
+
+function remoteProjectDragInsertPaths(
+  remoteRootPath: string,
+  paths: string[],
+  relativePaths?: string[],
+): string[] {
+  const explicitRelativePaths = (relativePaths ?? [])
+    .map((path) => path.trim())
+    .filter(Boolean);
+  if (explicitRelativePaths.length > 0) return explicitRelativePaths;
+
+  const root = remoteRootPath.trim().replace(/[\\/]+$/g, "").replace(/\\/g, "/");
+  return paths
+    .map((path) => {
+      const trimmed = path.trim();
+      const normalized = trimmed.replace(/\\/g, "/");
+      if (root && normalized.startsWith(`${root}/`)) {
+        return normalized.slice(root.length + 1).replace(/^\/+|\/+$/g, "");
+      }
+      return trimmed;
+    })
+    .filter(Boolean);
+}
+
+function fulfilledSettledValues<T>(results: PromiseSettledResult<T>[]): T[] {
+  return results
+    .filter(
+      (result): result is PromiseFulfilledResult<T> =>
+        result.status === "fulfilled",
+    )
+    .map((result) => result.value);
+}
+
+function firstRejectedResult<T>(
+  results: PromiseSettledResult<T>[],
+): PromiseRejectedResult | undefined {
+  return results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+}
+
+async function saveRemoteSessionCapture(
+  remoteRootPath: string,
+  request: SessionCaptureSaveRequest,
+): Promise<string> {
+  return uploadRemoteBytes(remoteRootPath, {
+    bytesBase64: request.bytesBase64,
+    mime: request.mime,
+    fileName: request.fileName ?? "session-capture",
+    namespace: "session-captures",
   });
 }
 
@@ -805,28 +977,28 @@ function describeLocalModelStatus(
   channel: FreeChannel,
   status: LocalModelRuntimeStatus,
 ): string {
-  const suffix = status.message ? ` ${status.message}` : '';
-  if (status.state === 'missing_model') {
-    return `${channel.label}: ${t(locale, 'settings.freeChannels.localMissingModel')}。`;
+  const suffix = status.message ? ` ${status.message}` : "";
+  if (status.state === "missing_model") {
+    return `${channel.label}: ${t(locale, "settings.freeChannels.localMissingModel")}。`;
   }
-  if (status.state === 'service_unavailable') {
-    return `${channel.label}: ${t(locale, 'settings.freeChannels.localServiceDown')}。${suffix}`;
+  if (status.state === "service_unavailable") {
+    return `${channel.label}: ${t(locale, "settings.freeChannels.localServiceDown")}。${suffix}`;
   }
-  if (status.state === 'model_missing') {
-    return `${channel.label}: ${t(locale, 'settings.freeChannels.localModelMissing')} (${status.configuredModel})。${suffix}`;
+  if (status.state === "model_missing") {
+    return `${channel.label}: ${t(locale, "settings.freeChannels.localModelMissing")} (${status.configuredModel})。${suffix}`;
   }
-  if (status.state === 'desktop_unavailable') {
-    return `${channel.label}: ${t(locale, 'settings.freeChannels.localDesktopOnly')}。`;
+  if (status.state === "desktop_unavailable") {
+    return `${channel.label}: ${t(locale, "settings.freeChannels.localDesktopOnly")}。`;
   }
-  if (status.state === 'unsupported') {
-    return `${channel.label}: ${t(locale, 'settings.freeChannels.localUnsupported')}。${suffix}`;
+  if (status.state === "unsupported") {
+    return `${channel.label}: ${t(locale, "settings.freeChannels.localUnsupported")}。${suffix}`;
   }
-  return `${channel.label}: ${t(locale, 'settings.freeChannels.localServiceError')}。${suffix}`;
+  return `${channel.label}: ${t(locale, "settings.freeChannels.localServiceError")}。${suffix}`;
 }
 
-const DEFAULT_PROVIDER_OPTION_PREFIX = 'default-provider:';
-const SYSTEM_DEFAULT_OPTION_PREFIX = 'system-default:';
-const FREE_CHANNEL_OPTION_PREFIX = 'free:';
+const DEFAULT_PROVIDER_OPTION_PREFIX = "default-provider:";
+const SYSTEM_DEFAULT_OPTION_PREFIX = "system-default:";
+const FREE_CHANNEL_OPTION_PREFIX = "free:";
 
 function defaultProviderOptionId(providerId: string): string {
   return `${DEFAULT_PROVIDER_OPTION_PREFIX}${providerId}`;
@@ -864,31 +1036,38 @@ function defaultChannelRuntimeLabel(
   locale: Locale,
   adapter: { label: string },
 ): string {
-  return `${adapter.label} · ${t(locale, 'dock.channelKindDefault')}`;
+  return `${adapter.label} · ${t(locale, "dock.channelKindDefault")}`;
 }
 
 function defaultChannelRuntimeGroup(
   locale: Locale,
   adapter: { label: string },
 ): string {
-  return `${t(locale, 'dock.channelGroupDefault')} · ${adapter.label}`;
+  return `${t(locale, "dock.channelGroupDefault")} · ${adapter.label}`;
 }
 
 function providerKindToAdapter(kind: ProviderKind): RuntimeAdapterId {
-  if (kind === 'codex') return 'codex';
-  if (kind === 'gemini') return 'gemini';
-  return 'claude-code';
+  if (kind === "codex") return "codex";
+  if (kind === "gemini") return "gemini";
+  return "claude-code";
 }
 
 function providerSelection(provider: Provider, modelOverride?: string) {
   const adapter = providerKindToAdapter(provider.kind);
-  const model = (modelOverride ?? provider.model ?? '').trim();
+  const model = (modelOverride ?? provider.model ?? "").trim();
   return {
     adapter,
-    modelClass: model || 'default',
+    modelClass: model || "default",
+    ...(modelOverride?.trim() ? { modelOverride: modelOverride.trim() } : {}),
     providerId: provider.id,
-    channelId: 'default',
+    channelId: "default",
   };
+}
+
+function remoteAdapterToRuntimeAdapter(adapter: unknown): RuntimeAdapterId {
+  if (adapter === "codex") return "codex";
+  if (adapter === "gemini") return "gemini";
+  return "claude-code";
 }
 
 function uniqueModelSelectOptions(
@@ -909,34 +1088,37 @@ function uniqueModelSelectOptions(
 
 function modelStrategyLabelKey(strategy: string | undefined) {
   switch (strategy) {
-    case 'prefer-better':
-      return 'dock.modelStrategy.better';
-    case 'prefer-cheaper':
-      return 'dock.modelStrategy.cheaper';
-    case 'smart':
-      return 'dock.modelStrategy.smart';
+    case "prefer-better":
+      return "dock.modelStrategy.better";
+    case "prefer-cheaper":
+      return "dock.modelStrategy.cheaper";
+    case "smart":
+      return "dock.modelStrategy.smart";
     default:
-      return 'dock.modelStrategy.inherit';
+      return "dock.modelStrategy.inherit";
   }
 }
 
 function providerSortRank(status: ProviderRuntimeStatus): number {
-  if (status === 'direct') return 1;
-  if (status === 'cli') return 2;
+  if (status === "direct") return 1;
+  if (status === "cli") return 2;
   return 3;
 }
 
 function interactionOptionCountLabel(locale: Locale, count: number): string {
-  return t(locale, 'interaction.optionCount').replace('{count}', String(count));
+  return t(locale, "interaction.optionCount").replace("{count}", String(count));
 }
 
-function splitInteractionOption(option: string): { title: string; detail: string } {
+function splitInteractionOption(option: string): {
+  title: string;
+  detail: string;
+} {
   const lines = option
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   if (lines.length > 1) {
-    return { title: lines[0], detail: lines.slice(1).join(' ') };
+    return { title: lines[0], detail: lines.slice(1).join(" ") };
   }
 
   const colon = option.match(/^(.{2,48}?)[：:]\s+(.+)$/);
@@ -944,12 +1126,12 @@ function splitInteractionOption(option: string): { title: string; detail: string
     return { title: colon[1].trim(), detail: colon[2].trim() };
   }
 
-  return { title: option.trim(), detail: '' };
+  return { title: option.trim(), detail: "" };
 }
 
 const BLUEPRINT_MODE_INSTALL_PROMPT =
-  '当前 UE 项目未安装 BlueprintMode 插件。是否现在安装？';
-const BLUEPRINT_MODE_INSTALL_LABEL = '安装 BlueprintMode 插件';
+  "当前 UE 项目未安装 BlueprintMode 插件。是否现在安装？";
+const BLUEPRINT_MODE_INSTALL_LABEL = "安装 BlueprintMode 插件";
 
 interface BlueprintModeStartPayload {
   modeArgs: string | null;
@@ -973,26 +1155,28 @@ function tokenizeCommandPayload(
 }
 
 function blueprintFlagExpectsValue(flag: string): boolean {
-  if (flag.includes('=')) return false;
+  if (flag.includes("=")) return false;
   return new Set([
-    '--target',
-    '--context',
-    '--parent',
-    '--class',
-    '--asset',
-    '--path',
-    '--folder',
-    '--name',
-    '--package',
-    '--project',
-    '--map',
-    '--level',
+    "--target",
+    "--context",
+    "--parent",
+    "--class",
+    "--asset",
+    "--path",
+    "--folder",
+    "--name",
+    "--package",
+    "--project",
+    "--map",
+    "--level",
   ]).has(flag.toLowerCase());
 }
 
-function parseBlueprintModeStartPayload(rawPayload: string): BlueprintModeStartPayload {
+function parseBlueprintModeStartPayload(
+  rawPayload: string,
+): BlueprintModeStartPayload {
   const raw = rawPayload.trim();
-  if (!raw) return { modeArgs: null, prompt: '' };
+  if (!raw) return { modeArgs: null, prompt: "" };
 
   const tokens = tokenizeCommandPayload(raw);
   let index = 0;
@@ -1001,7 +1185,7 @@ function parseBlueprintModeStartPayload(rawPayload: string): BlueprintModeStartP
 
   while (index < tokens.length) {
     const token = tokens[index];
-    if (!token.value.startsWith('-')) {
+    if (!token.value.startsWith("-")) {
       promptStart = token.start;
       break;
     }
@@ -1041,27 +1225,27 @@ function InteractionWidget({
   onDismiss: () => void;
 }) {
   const req = message.interaction;
-  const status = message.interactionStatus ?? 'pending';
+  const status = message.interactionStatus ?? "pending";
   const [selected, setSelected] = useState<string[]>([]);
-  const [text, setText] = useState('');
+  const [text, setText] = useState("");
 
   if (!req) return null;
 
-  if (status === 'answered' && message.interactionAnswer) {
+  if (status === "answered" && message.interactionAnswer) {
     return (
       <div className="rounded-lg border border-accent-2/40 bg-accent-2/10 px-3 py-2 text-xs text-fg-dim shadow-sm">
         <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider text-accent-2">
           <Check size={12} strokeWidth={2.4} />
-          {t(locale, 'interaction.youAnswered')}
-        </span>{' '}
+          {t(locale, "interaction.youAnswered")}
+        </span>{" "}
         {summarizeAnswer(req, message.interactionAnswer)}
       </div>
     );
   }
-  if (status === 'cancelled') {
+  if (status === "cancelled") {
     return (
       <div className="rounded-lg border border-border bg-panel-2 px-3 py-2 text-xs text-fg-faint shadow-sm">
-        {t(locale, 'interaction.cancelled')}
+        {t(locale, "interaction.cancelled")}
       </div>
     );
   }
@@ -1070,22 +1254,20 @@ function InteractionWidget({
   const trimmedText = text.trim();
   const canSubmitSelect = selected.length > 0;
   const submitSelect = () => {
-    if (selected.length > 0) onAnswer({ kind: 'select', values: selected });
+    if (selected.length > 0) onAnswer({ kind: "select", values: selected });
   };
   const toggle = (opt: string) => {
-    if (req.type !== 'select') return;
+    if (req.type !== "select") return;
     if (!req.multi) {
-      onAnswer({ kind: 'select', values: [opt] });
+      onAnswer({ kind: "select", values: [opt] });
       return;
     }
     setSelected((cur) => {
-      return cur.includes(opt)
-        ? cur.filter((o) => o !== opt)
-        : [...cur, opt];
+      return cur.includes(opt) ? cur.filter((o) => o !== opt) : [...cur, opt];
     });
   };
   const submitInput = () => {
-    if (trimmedText) onAnswer({ kind: 'input', text: trimmedText });
+    if (trimmedText) onAnswer({ kind: "input", text: trimmedText });
   };
 
   return (
@@ -1099,12 +1281,12 @@ function InteractionWidget({
         </span>
         <div className="min-w-0 flex-1">
           <div className="mb-1 text-xs font-semibold leading-4 text-accent">
-            {t(locale, 'interaction.title')}
+            {t(locale, "interaction.title")}
           </div>
           <div className="whitespace-pre-wrap break-words text-sm font-semibold leading-relaxed text-fg">
             {req.prompt}
           </div>
-          {req.type === 'select' && (
+          {req.type === "select" && (
             <div className="mt-1 text-xs leading-5 text-fg-faint">
               {interactionOptionCountLabel(locale, req.options?.length ?? 0)}
             </div>
@@ -1112,11 +1294,11 @@ function InteractionWidget({
         </div>
       </div>
 
-      {req.type === 'select' && (
+      {req.type === "select" && (
         <div className="flex flex-col gap-2">
           {req.multi && (
             <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-              {t(locale, 'interaction.multiHint')}
+              {t(locale, "interaction.multiHint")}
             </span>
           )}
           <div className="flex flex-col gap-1.5">
@@ -1131,20 +1313,20 @@ function InteractionWidget({
                   aria-pressed={on}
                   onClick={() => toggle(opt)}
                   className={cn(
-                    'group flex min-h-[54px] w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55',
+                    "group flex min-h-[54px] w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-55",
                     on
-                      ? 'border-accent/70 bg-accent/10 text-fg'
-                      : 'border-border bg-panel-2/70 text-fg hover:border-accent/45 hover:bg-bg',
+                      ? "border-accent/70 bg-accent/10 text-fg"
+                      : "border-border bg-panel-2/70 text-fg hover:border-accent/45 hover:bg-bg",
                   )}
                 >
                   {req.multi && (
                     <span
                       aria-hidden="true"
                       className={cn(
-                        'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
+                        "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors",
                         on
-                          ? 'border-accent bg-accent text-bg'
-                          : 'border-fg-faint/60 bg-bg text-transparent group-hover:border-accent/70',
+                          ? "border-accent bg-accent text-bg"
+                          : "border-fg-faint/60 bg-bg text-transparent group-hover:border-accent/70",
                       )}
                     >
                       <Check size={12} strokeWidth={3} />
@@ -1170,14 +1352,14 @@ function InteractionWidget({
                 type="button"
                 onClick={onDismiss}
                 className="min-h-8 rounded-md bg-accent-3 px-3 text-xs font-medium text-bg transition-colors hover:bg-accent-3/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-3"
-                title={t(locale, 'interaction.skipTitle')}
+                title={t(locale, "interaction.skipTitle")}
               >
-                {t(locale, 'common.cancel')}
+                {t(locale, "common.cancel")}
               </button>
             )}
             {disabled && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
-                {t(locale, 'interaction.ended')}
+                {t(locale, "interaction.ended")}
               </span>
             )}
             {req.multi && (
@@ -1187,14 +1369,14 @@ function InteractionWidget({
                 onClick={submitSelect}
                 className="min-h-8 rounded-md bg-fg px-3 text-xs font-medium text-bg transition-colors hover:bg-fg-dim disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {t(locale, 'interaction.submit')}
+                {t(locale, "interaction.submit")}
               </button>
             )}
           </div>
         </div>
       )}
 
-      {req.type === 'input' && (
+      {req.type === "input" && (
         <div className="flex flex-col gap-2">
           {req.multiline ? (
             <textarea
@@ -1202,7 +1384,7 @@ function InteractionWidget({
               disabled={disabled}
               onChange={(e) => setText(e.target.value)}
               placeholder={
-                req.placeholder ?? t(locale, 'interaction.inputPlaceholder')
+                req.placeholder ?? t(locale, "interaction.inputPlaceholder")
               }
               rows={3}
               className="min-h-[92px] resize-none rounded-md border border-border bg-bg p-2.5 text-sm text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
@@ -1213,13 +1395,13 @@ function InteractionWidget({
               disabled={disabled}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
+                if (e.key === "Enter" && !e.shiftKey && text.trim()) {
                   e.preventDefault();
                   submitInput();
                 }
               }}
               placeholder={
-                req.placeholder ?? t(locale, 'interaction.inputPlaceholder')
+                req.placeholder ?? t(locale, "interaction.inputPlaceholder")
               }
               className="min-h-10 rounded-md border border-border bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
             />
@@ -1230,14 +1412,14 @@ function InteractionWidget({
                 type="button"
                 onClick={onDismiss}
                 className="min-h-8 rounded-md border border-transparent px-2.5 text-xs text-fg-faint transition-colors hover:border-border hover:bg-panel-2 hover:text-fg-dim focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                title={t(locale, 'interaction.skipTitle')}
+                title={t(locale, "interaction.skipTitle")}
               >
-                {t(locale, 'interaction.skip')}
+                {t(locale, "interaction.skip")}
               </button>
             )}
             {disabled && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
-                {t(locale, 'interaction.ended')}
+                {t(locale, "interaction.ended")}
               </span>
             )}
             <button
@@ -1246,16 +1428,16 @@ function InteractionWidget({
               onClick={submitInput}
               className="min-h-8 rounded-md bg-fg px-3 text-xs font-medium text-bg transition-colors hover:bg-fg-dim disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {t(locale, 'interaction.submit')}
+              {t(locale, "interaction.submit")}
             </button>
           </div>
         </div>
       )}
 
-      {req.type === 'confirm' && (
+      {req.type === "confirm" && (
         <div className="flex flex-col gap-2">
           <div className="rounded-md border border-border bg-panel-2 px-3 py-2 text-xs leading-relaxed text-fg-faint">
-            {t(locale, 'interaction.confirmHint')}
+            {t(locale, "interaction.confirmHint")}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {!disabled && (
@@ -1263,31 +1445,31 @@ function InteractionWidget({
                 type="button"
                 onClick={onDismiss}
                 className="min-h-8 rounded-md border border-transparent px-2.5 text-xs text-fg-faint transition-colors hover:border-border hover:bg-panel-2 hover:text-fg-dim focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                title={t(locale, 'interaction.skipTitle')}
+                title={t(locale, "interaction.skipTitle")}
               >
-                {t(locale, 'interaction.skip')}
+                {t(locale, "interaction.skip")}
               </button>
             )}
             {disabled && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
-                {t(locale, 'interaction.ended')}
+                {t(locale, "interaction.ended")}
               </span>
             )}
             <button
               type="button"
               disabled={disabled}
-              onClick={() => onAnswer({ kind: 'confirm', confirmed: false })}
+              onClick={() => onAnswer({ kind: "confirm", confirmed: false })}
               className="min-h-8 rounded-md border border-border bg-panel-2 px-3 text-xs text-fg-dim transition-colors hover:border-accent-3/60 hover:text-accent-3 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {req.cancelLabel ?? t(locale, 'common.cancel')}
+              {req.cancelLabel ?? t(locale, "common.cancel")}
             </button>
             <button
               type="button"
               disabled={disabled}
-              onClick={() => onAnswer({ kind: 'confirm', confirmed: true })}
+              onClick={() => onAnswer({ kind: "confirm", confirmed: true })}
               className="min-h-8 rounded-md bg-fg px-3 text-xs font-medium text-bg transition-colors hover:bg-fg-dim disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {req.confirmLabel ?? t(locale, 'interaction.confirm')}
+              {req.confirmLabel ?? t(locale, "interaction.confirm")}
             </button>
           </div>
         </div>
@@ -1321,11 +1503,11 @@ function InteractionWidget({
  *     drag the input card's visible top edge to resize the input area.
  */
 export default function AIDock({
-  layout = 'dock',
+  layout = "dock",
 }: {
-  layout?: 'dock' | 'chat';
+  layout?: "dock" | "chat";
 } = {}) {
-  const isChat = layout === 'chat';
+  const isChat = layout === "chat";
   const messages = useStore((s) => s.messages);
   const sendPrompt = useStore((s) => s.sendPrompt);
   const ensureSessionStartupWorkspace = useStore(
@@ -1343,7 +1525,6 @@ export default function AIDock({
   const generateBlueprintPrompt = useStore((s) => s.generateBlueprintPrompt);
   const generateMetaHumanPrompt = useStore((s) => s.generateMetaHumanPrompt);
   const searchMeshLibraryPrompt = useStore((s) => s.searchMeshLibraryPrompt);
-  const runUltracodePrompt = useStore((s) => s.runUltracodePrompt);
   const appendChatNote = useStore((s) => s.appendChatNote);
   const newSession = useStore((s) => s.newSession);
   const stopChat = useStore((s) => s.stopChat);
@@ -1355,24 +1536,59 @@ export default function AIDock({
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
   const deleteMessage = useStore((s) => s.deleteMessage);
   const branchSessionFromMessage = useStore((s) => s.branchSessionFromMessage);
-  const runSelection = useStore((s) => workflowDefaultGatewaySelection(s.workflow), shallow);
+  const runSelection = useStore(
+    (s) => workflowDefaultGatewaySelection(s.workflow),
+    shallow,
+  );
   const selectedAdapter =
-    RUNTIME_ADAPTERS.find((adapter) => adapter.id === runSelection.adapter)?.id ??
-    RUNTIME_ADAPTERS[0].id;
+    RUNTIME_ADAPTERS.find((adapter) => adapter.id === runSelection.adapter)
+      ?.id ?? RUNTIME_ADAPTERS[0].id;
   const setSessionRunSelection = useStore((s) => s.setSessionRunSelection);
   const composer = useStore((s) => s.composer);
   const draft = useStore((s) => s.composerDraft);
   const composerFocusVersion = useStore((s) => s.composerFocusVersion);
   const locale = useStore((s) => s.locale);
-  const [shortcutSettings, setShortcutSettingsState] = useState(
-    loadShortcutSettings,
-  );
+  const [shortcutSettings, setShortcutSettingsState] =
+    useState(loadShortcutSettings);
   const gameExpertSettings = useStore((s) => s.gameExpertSettings);
   const setComposer = useStore((s) => s.setComposer);
   const setComposerDraft = useStore((s) => s.setComposerDraft);
   const permissionOptions = useStore((s) => s.permissionOptions);
   const composerModelOptions = useStore((s) => s.modelOptions);
   const workspaces = useStore((s) => s.workspaces);
+  const activeWorkspacePath = useMemo(
+    () =>
+      workspaces
+        .find((workspace) => workspace.id === activeWorkspaceId)
+        ?.path?.trim() ?? "",
+    [activeWorkspaceId, workspaces],
+  );
+  const channelWorkspacePath = composer.workspace.trim() || activeWorkspacePath;
+  const activeRemoteWorkspaceId = isRemoteWorkspacePath(channelWorkspacePath)
+    ? remoteWorkspaceIdFromPath(channelWorkspacePath)
+    : "";
+  const activeRemoteWorkspaceRoot = activeRemoteWorkspaceId
+    ? channelWorkspacePath
+    : "";
+  const activeRemoteWorkspaceConfig = activeRemoteWorkspaceId
+    ? getRemoteWorkspace(activeRemoteWorkspaceId)
+    : null;
+  const generationSettingsProfileId = settingsProfileIdForWorkspacePath(
+    channelWorkspacePath,
+  );
+  const generationSettingsProfile = useMemo<SettingsProfileOptions>(
+    () => ({ profileId: generationSettingsProfileId }),
+    [generationSettingsProfileId],
+  );
+  const remoteGenerationSettings = isRemoteSettingsProfile(
+    generationSettingsProfileId,
+  );
+  useEffect(() => {
+    void preloadSettingsProfile(generationSettingsProfileId);
+  }, [generationSettingsProfileId]);
+  const activeSlashAdapter = activeRemoteWorkspaceConfig
+    ? remoteAdapterToRuntimeAdapter(activeRemoteWorkspaceConfig.adapter)
+    : selectedAdapter;
   const mode = useStore((s) => s.mode);
   const activeAiEditing = useStore((s) => isActiveAiEditingSession(s));
   const activeChatting = useStore((s) =>
@@ -1396,8 +1612,8 @@ export default function AIDock({
     return s.workflow.nodes.length > 1;
   });
   const firstStartUserInput = useStore((s) => {
-    const startNode = s.workflow.nodes.find((node) => node.type === 'start');
-    return readStartUserInputs(startNode?.params)[0]?.trim() ?? '';
+    const startNode = s.workflow.nodes.find((node) => node.type === "start");
+    return readStartUserInputs(startNode?.params)[0]?.trim() ?? "";
   });
   const activeChatFavorite = useStore((s) => {
     const sessionId = s.activeSessionId;
@@ -1425,9 +1641,10 @@ export default function AIDock({
   // Session long-screenshot (`/screenshot`). While capturing we force every
   // message to render its rich content (off-screen ones are otherwise plain-text
   // placeholders, see LazyMessageContent) so the image is faithful, then restore.
-  const [captureStatus, setCaptureStatus] = useState<
-    { kind: 'busy' | 'done' | 'error'; text: string } | null
-  >(null);
+  const [captureStatus, setCaptureStatus] = useState<{
+    kind: "busy" | "done" | "error";
+    text: string;
+  } | null>(null);
   const [forceEagerCapture, setForceEagerCapture] = useState(false);
   const captureInFlightRef = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1441,6 +1658,8 @@ export default function AIDock({
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   const gameSkillTriggerRef = useRef<SlashTrigger | null>(null);
   const fileMentionTriggerRef = useRef<FileMentionTrigger | null>(null);
+  const fileMentionInsertModeRef =
+    useRef<FileMentionInsertMode>("mention");
   const orgMentionTriggerRef = useRef<SlashTrigger | null>(null);
   const orgMentionRef = useRef<HTMLDivElement>(null);
   const lastComposerFocusVersion = useRef(composerFocusVersion);
@@ -1450,7 +1669,9 @@ export default function AIDock({
   const lastSearchActiveRef = useRef(false);
   const stickToBottomRef = useRef(true);
   const forceNextMessageBottomRef = useRef(false);
-  const streamScrollSnapshotsRef = useRef(new Map<string, StreamScrollSnapshot>());
+  const streamScrollSnapshotsRef = useRef(
+    new Map<string, StreamScrollSnapshot>(),
+  );
   const activeStreamScrollKey = useMemo(
     () => streamScrollKey(layout, activeWorkspaceId, activeSessionId),
     [activeSessionId, activeWorkspaceId, layout],
@@ -1460,14 +1681,19 @@ export default function AIDock({
   const pendingStreamScrollRestoreKeyRef = useRef<string | null>(
     activeStreamScrollKey,
   );
+  const messageWindowSizesRef = useRef(new Map<string, number>());
+  const [messageWindow, setMessageWindow] = useState(() => ({
+    key: activeStreamScrollKey,
+    size: INITIAL_MESSAGE_WINDOW,
+  }));
   const [assetJumpTarget, setAssetJumpTarget] =
     useState<AssetSessionJumpDetail | null>(null);
-  const [assetJumpHighlightId, setAssetJumpHighlightId] = useState<string | null>(
-    null,
-  );
+  const [assetJumpHighlightId, setAssetJumpHighlightId] = useState<
+    string | null
+  >(null);
   const assetJumpHighlightTimerRef = useRef<number | null>(null);
 
-  const isReadOnly = mode === 'running';
+  const isReadOnly = mode === "running";
   // Cache TTL is a session-open-time setting: changeable only before the first
   // message lands. Once the conversation has any messages (or the dock is
   // read-only because a run is in flight) the selector locks.
@@ -1476,20 +1702,40 @@ export default function AIDock({
   // a brand-new session prepares its working directory, so it locks once the
   // conversation starts. Only meaningful for chat/simple sessions with a cwd.
   const startupModeLocked = isReadOnly || messages.length > 0;
+  const remoteCacheOptions = useMemo<SelectOption[]>(
+    () => [
+      {
+        id: "remote",
+        label: t(locale, "dock.remoteCacheManaged"),
+      },
+    ],
+    [locale],
+  );
+  const remoteStartupModeOptions = useMemo<SelectOption[]>(
+    () => [
+      {
+        id: "remote",
+        label: t(locale, "dock.remoteStartupMode"),
+      },
+    ],
+    [locale],
+  );
   const sendShortcutHint = useMemo(
     () =>
-      `${describeShortcutBinding(shortcutSettings['composer-send'])} ${t(
+      `${describeShortcutBinding(shortcutSettings["composer-send"])} ${t(
         locale,
-        'dock.sendShortcutAction',
+        "dock.sendShortcutAction",
       )} · ${describeShortcutBinding(
-        shortcutSettings['composer-newline'],
-      )} ${t(locale, 'dock.newlineShortcutAction')}`,
+        shortcutSettings["composer-newline"],
+      )} ${t(locale, "dock.newlineShortcutAction")}`,
     [locale, shortcutSettings],
   );
   const [dropActive, setDropActive] = useState(false);
   const [filePreviewRef, setFilePreviewRef] = useState<FileRef | null>(null);
+  const [filePreviewDrawerWidth, setFilePreviewDrawerWidth] = useState(0);
+  const [chatVisibleRightInset, setChatVisibleRightInset] = useState(0);
   const [chatTitleEditing, setChatTitleEditing] = useState(false);
-  const [chatTitleDraft, setChatTitleDraft] = useState('');
+  const [chatTitleDraft, setChatTitleDraft] = useState("");
   const [chatTitleSaving, setChatTitleSaving] = useState(false);
   // The organization chart is no longer a top tab beside the stream; it pops up
   // from a `$组织架构` trigger at the input bottom and collapses on outside click.
@@ -1499,12 +1745,13 @@ export default function AIDock({
   // it back to the normal bottom composer so the popup never covers the input.
   const centerInput = isChat && messages.length === 0 && !orgPanelOpen;
   const [returnSearchOpen, setReturnSearchOpen] = useState(false);
-  const [returnSearch, setReturnSearch] = useState('');
+  const [returnSearch, setReturnSearch] = useState("");
   const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(0);
   const [slashTrigger, setSlashTrigger] = useState<SlashTrigger | null>(null);
   const [activeSlashIndex, setActiveSlashIndex] = useState(0);
-  const [gameSkillTrigger, setGameSkillTrigger] =
-    useState<SlashTrigger | null>(null);
+  const [gameSkillTrigger, setGameSkillTrigger] = useState<SlashTrigger | null>(
+    null,
+  );
   const [activeGameSkillIndex, setActiveGameSkillIndex] = useState(0);
   const [fileMentionTrigger, setFileMentionTrigger] =
     useState<FileMentionTrigger | null>(null);
@@ -1525,9 +1772,9 @@ export default function AIDock({
   );
   const [fileMentionListing, setFileMentionListing] =
     useState<FileMentionListing>({
-      status: 'idle',
-      rootPath: '',
-      directory: '',
+      status: "idle",
+      rootPath: "",
+      directory: "",
       entries: [],
     });
   const [slashCatalogEntries, setSlashCatalogEntries] = useState<
@@ -1536,19 +1783,56 @@ export default function AIDock({
   const [modelStrategyOpen, setModelStrategyOpen] = useState(false);
   const [messageActionMenu, setMessageActionMenu] =
     useState<MessageActionMenu>(null);
+  const [fileUploadTipText, setFileUploadTipText] = useState("");
   const blockedSendTipText =
-    blockedSendTip === 'model-switched-while-chatting'
-      ? t(locale, 'dock.modelSwitchBlockedTip')
-      : typeof blockedSendTip === 'object' &&
-          blockedSendTip?.kind === 'slash-command-unavailable'
+    blockedSendTip === "model-switched-while-chatting"
+      ? t(locale, "dock.modelSwitchBlockedTip")
+      : typeof blockedSendTip === "object" &&
+          blockedSendTip?.kind === "slash-command-unavailable"
         ? blockedSendTip.message
-        : '';
+        : "";
+  const showFileUploadError = useCallback(
+    (reason: unknown, remote = false) => {
+      const detail =
+        reason instanceof Error
+          ? reason.message
+          : typeof reason === "string"
+            ? reason
+            : "";
+      const prefix = remote
+        ? locale.startsWith("zh")
+          ? "远程文件上传失败"
+          : "Remote file upload failed"
+        : locale.startsWith("zh")
+          ? "文件处理失败"
+          : "File handling failed";
+      setFileUploadTipText(detail ? `${prefix}：${detail}` : prefix);
+    },
+    [locale],
+  );
+  const uploadedPathsFromResults = useCallback(
+    (
+      results: PromiseSettledResult<string>[],
+      options: { remote?: boolean } = {},
+    ): string[] => {
+      const failed = firstRejectedResult(results);
+      if (failed) showFileUploadError(failed.reason, options.remote);
+      return fulfilledSettledValues(results);
+    },
+    [showFileUploadError],
+  );
 
   useEffect(() => {
     if (!blockedSendTip) return;
     const id = window.setTimeout(() => clearBlockedSendTip(), 3200);
     return () => window.clearTimeout(id);
   }, [blockedSendTip, clearBlockedSendTip]);
+
+  useEffect(() => {
+    if (!fileUploadTipText) return;
+    const id = window.setTimeout(() => setFileUploadTipText(""), 4000);
+    return () => window.clearTimeout(id);
+  }, [fileUploadTipText]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1580,10 +1864,7 @@ export default function AIDock({
     };
   }, []);
 
-  useEffect(
-    () => subscribeShortcutSettings(setShortcutSettingsState),
-    [],
-  );
+  useEffect(() => subscribeShortcutSettings(setShortcutSettingsState), []);
 
   const normalizedSearch = useMemo(
     () => normalizeSearchQuery(returnSearch),
@@ -1609,7 +1890,7 @@ export default function AIDock({
   const topicMessageIds = useMemo(
     () =>
       messages
-        .filter((message) => message.role === 'user')
+        .filter((message) => message.role === "user")
         .map((message) => message.id),
     [messages],
   );
@@ -1624,13 +1905,13 @@ export default function AIDock({
     () =>
       gameExpertMenuEntries(gameExpertSettings, locale).map((entry) => ({
         id: entry.id,
-        kind: 'command' as const,
+        kind: "command" as const,
         name: entry.name,
         label: entry.name.slice(1),
         detail: entry.detail,
         insertText: entry.insertText,
-        source: 'app',
-        sourceAdapter: 'app' as const,
+        source: "app",
+        sourceAdapter: "app" as const,
         searchText:
           `${entry.name} ${entry.detail} ${entry.insertText}`.toLowerCase(),
       })),
@@ -1638,7 +1919,7 @@ export default function AIDock({
   );
   // GameSkill suggestions powering the `#游戏Skill` menu. Always sourced from the
   // GameSkill registry (independent of the backend slash catalog / adapter scope)
-  // so the FreeUltraCode-introduced skills get a clean, app-curated surface.
+  // so the UltraGameStudio-introduced skills get a clean, app-curated surface.
   const gameSkillSuggestions = useMemo(
     () => buildGameSkillSuggestions(locale),
     [locale],
@@ -1666,45 +1947,43 @@ export default function AIDock({
     () => buildGameOrgTree(gameExpertSettings, locale, orgDefinition),
     [gameExpertSettings, locale, orgDefinition],
   );
-  const orgNodesFlat = useMemo(
-    () => flattenGameOrgNodes(orgTree),
-    [orgTree],
-  );
+  const orgNodesFlat = useMemo(() => flattenGameOrgNodes(orgTree), [orgTree]);
   const orgNodeById = useMemo(() => {
     const map = new Map<string, ResolvedGameOrgNode>();
     for (const node of orgNodesFlat) map.set(node.id, node);
     return map;
   }, [orgNodesFlat]);
   const orgSlashSuggestions = useMemo<SlashSuggestion[]>(() => {
-    const rootLabel = locale === 'zh-CN' ? '组织架构' : 'organization';
+    const rootLabel = locale === "zh-CN" ? "组织架构" : "organization";
     return orgNodesFlat
       .filter((node) => node.id !== orgTree.id)
       .flatMap<SlashSuggestion>((node) => {
         const nodeName = `/${rootLabel}/${node.id}`;
-        const nodeCommand = (node.commandText ?? '').trim();
+        const nodeCommand = (node.commandText ?? "").trim();
         const nodeSearch = orgNodeSearchText(node);
         const roleSuggestion: SlashSuggestion = {
           id: `${ORG_SLASH_SUGGESTION_PREFIX}role:${node.id}`,
-          kind: 'command',
+          kind: "command",
           name: nodeName,
-          label: node.path.join(' / '),
+          label: node.path.join(" / "),
           detail: node.summary || node.role,
           insertText: nodeCommand || nodeName,
           source: rootLabel,
-          sourceAdapter: 'app',
-          searchText: `${nodeName} ${nodeSearch} ${nodeCommand}`.toLocaleLowerCase(),
+          sourceAdapter: "app",
+          searchText:
+            `${nodeName} ${nodeSearch} ${nodeCommand}`.toLocaleLowerCase(),
         };
         const skillSuggestions = node.skills.map<SlashSuggestion>((skill) => {
           const skillName = `${nodeName}/${skill.id}`;
           return {
             id: `${ORG_SLASH_SUGGESTION_PREFIX}skill:${node.id}:${skill.id}`,
-            kind: 'skill',
+            kind: "skill",
             name: skillName,
             label: `${node.label} / ${skill.label}`,
             detail: skill.summary,
             insertText: skill.commandText.trim(),
             source: rootLabel,
-            sourceAdapter: 'app',
+            sourceAdapter: "app",
             searchText: [
               skillName,
               nodeSearch,
@@ -1719,9 +1998,17 @@ export default function AIDock({
               skill.protocol.toolsAndResources,
               skill.protocol.outputs,
               skill.protocol.acceptanceCriteria,
+              ...skill.allowedCapabilities,
+              ...skill.capabilityLabels,
+              ...skill.capabilities.flatMap((capability) => [
+                capability.label,
+                capability.command,
+                capability.useWhen,
+                ...capability.intentKeywords,
+              ]),
               ...skill.collaboratorLabels,
             ]
-              .join(' ')
+              .join(" ")
               .toLocaleLowerCase(),
           };
         });
@@ -1730,11 +2017,16 @@ export default function AIDock({
   }, [locale, orgNodesFlat, orgTree.id]);
   const activeAdapterSlashSuggestions = useMemo(
     () => [
-      ...scopeSlashSuggestionsForAdapter(slashSuggestions, selectedAdapter),
+      ...scopeSlashSuggestionsForAdapter(slashSuggestions, activeSlashAdapter),
       ...gameExpertSuggestions,
       ...orgSlashSuggestions,
     ],
-    [gameExpertSuggestions, orgSlashSuggestions, selectedAdapter, slashSuggestions],
+    [
+      activeSlashAdapter,
+      gameExpertSuggestions,
+      orgSlashSuggestions,
+      slashSuggestions,
+    ],
   );
   const filteredSlashSuggestions = useMemo(
     () =>
@@ -1755,9 +2047,9 @@ export default function AIDock({
   const fileMentionOpen = !isReadOnly && fileMentionTrigger !== null;
   // The node whose children the menu currently lists (null = root level).
   const orgMentionParent = orgMentionParentId
-    ? orgNodeById.get(orgMentionParentId) ?? null
+    ? (orgNodeById.get(orgMentionParentId) ?? null)
     : null;
-  const orgMentionQuery = orgMentionTrigger?.query.trim() ?? '';
+  const orgMentionQuery = orgMentionTrigger?.query.trim() ?? "";
   const orgMentionOptions = useMemo<OrgMentionOption[]>(() => {
     if (!orgMentionTrigger) return [];
     const query = orgMentionTrigger.query.trim().toLocaleLowerCase();
@@ -1768,7 +2060,7 @@ export default function AIDock({
         .filter((node) => orgNodeSearchText(node).includes(query))
         .slice(0, 30)
         .map<OrgMentionOption>((node) => ({
-          kind: 'node',
+          kind: "node",
           node,
           hasChildren: node.children.length > 0,
         }));
@@ -1776,16 +2068,16 @@ export default function AIDock({
     // Tree-navigation mode: list the current branch's children, with a back row
     // and a self-insert row when drilled past the root.
     const parent = orgMentionParentId
-      ? orgNodeById.get(orgMentionParentId) ?? null
+      ? (orgNodeById.get(orgMentionParentId) ?? null)
       : null;
     const levelNodes = parent ? parent.children : orgTree.children;
     const out: OrgMentionOption[] = [];
     if (parent) {
-      out.push({ kind: 'back' });
-      out.push({ kind: 'insert-self', node: parent });
+      out.push({ kind: "back" });
+      out.push({ kind: "insert-self", node: parent });
     }
     for (const node of levelNodes) {
-      out.push({ kind: 'node', node, hasChildren: node.children.length > 0 });
+      out.push({ kind: "node", node, hasChildren: node.children.length > 0 });
     }
     return out;
   }, [
@@ -1807,8 +2099,9 @@ export default function AIDock({
   }, [activeFileMentionIndex, fileMentionOptions.length]);
   const firstUserMessageText = useMemo(
     () =>
-      messages.find((message) => message.role === 'user' && message.text.trim())
-        ?.text.trim() ?? '',
+      messages
+        .find((message) => message.role === "user" && message.text.trim())
+        ?.text.trim() ?? "",
     [messages],
   );
   const reusableChatText = firstUserMessageText || firstStartUserInput;
@@ -1895,100 +2188,124 @@ export default function AIDock({
   const [freeChannelRevision, setFreeChannelRevision] = useState(0);
   useEffect(() => {
     const refresh = () => setFreeChannelRevision((n) => n + 1);
-    window.addEventListener('fuc:gateway-config-changed', refresh);
-    return () => window.removeEventListener('fuc:gateway-config-changed', refresh);
+    window.addEventListener("ugs:gateway-config-changed", refresh);
+    return () =>
+      window.removeEventListener("ugs:gateway-config-changed", refresh);
   }, []);
   const [localRuntimeStatuses, setLocalRuntimeStatuses] = useState<
     Record<string, LocalModelRuntimeStatus | undefined>
   >({});
-  const defaultChannelProviders = useMemo(
-    () => {
-      // Refresh after Settings edits/imports, because provider config is backed
-      // by localStorage and surfaced through the gateway-config-changed event.
-      void freeChannelRevision;
-      const cliRuntime = getCliRuntimeSnapshot();
-      const desktop = tauriAvailable();
-      const sorted = listProviders()
-        .map((provider) => {
-          const adapter = providerKindToAdapter(provider.kind);
-          const runtime = getProviderRuntimeInfo(provider, {
-            canUseCliFallback:
-              desktop && isCliAdapterAvailable(adapter, cliRuntime),
-          });
-          return { provider, adapter, status: runtime.status };
-        })
-        .sort((a, b) => {
-          const adapterRank =
-            RUNTIME_ADAPTERS.findIndex((item) => item.id === a.adapter) -
-            RUNTIME_ADAPTERS.findIndex((item) => item.id === b.adapter);
-          if (adapterRank !== 0) return adapterRank;
-          const rankA = providerSortRank(a.status);
-          const rankB = providerSortRank(b.status);
-          if (rankA !== rankB) return rankA - rankB;
-          return a.provider.name.localeCompare(b.provider.name);
+  const defaultChannelProviders = useMemo(() => {
+    // Refresh after Settings edits/imports, because provider config is backed
+    // by localStorage and surfaced through the gateway-config-changed event.
+    void freeChannelRevision;
+    const cliRuntime = getCliRuntimeSnapshot();
+    const desktop = tauriAvailable();
+    const sorted = listProviders()
+      .filter((provider) => {
+        if (activeRemoteWorkspaceId) {
+          return (
+            isRemoteRunnerProvider(provider) &&
+            remoteRunnerProviderMatchesWorkspace(
+              provider,
+              activeRemoteWorkspaceId,
+            )
+          );
+        }
+        if (!isRemoteRunnerProvider(provider)) return true;
+        return remoteRunnerProviderMatchesWorkspace(
+          provider,
+          activeRemoteWorkspaceId,
+        );
+      })
+      .map((provider) => {
+        const adapter = providerKindToAdapter(provider.kind);
+        const runtime = getProviderRuntimeInfo(provider, {
+          canUseCliFallback:
+            desktop && isCliAdapterAvailable(adapter, cliRuntime),
         });
-      // Collapse providers that render identically in the channel picker. Two
-      // entries with the same adapter + name + baseUrl + model (e.g. a stale
-      // `direct` copy left beside a cc-switch `cli` import) would otherwise show
-      // up as duplicate "default" rows. Keep the first — the list is already
-      // sorted best-status-first, so we drop the weaker duplicate.
-      const seen = new Set<string>();
-      return sorted.filter(({ provider, adapter }) => {
-        const key = [
-          adapter,
-          provider.name.trim().toLowerCase(),
-          provider.baseUrl.trim().replace(/\/+$/, '').toLowerCase(),
-          (provider.model ?? '').trim().toLowerCase(),
-        ].join('\0');
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+        return { provider, adapter, status: runtime.status };
+      })
+      .sort((a, b) => {
+        const adapterRank =
+          RUNTIME_ADAPTERS.findIndex((item) => item.id === a.adapter) -
+          RUNTIME_ADAPTERS.findIndex((item) => item.id === b.adapter);
+        if (adapterRank !== 0) return adapterRank;
+        const rankA = providerSortRank(a.status);
+        const rankB = providerSortRank(b.status);
+        if (rankA !== rankB) return rankA - rankB;
+        return a.provider.name.localeCompare(b.provider.name);
       });
-    },
-    [freeChannelRevision],
-  );
+    // Collapse providers that render identically in the channel picker. Two
+    // entries with the same adapter + name + baseUrl + model (e.g. a stale
+    // `direct` copy left beside a cc-switch `cli` import) would otherwise show
+    // up as duplicate "default" rows. Keep the first — the list is already
+    // sorted best-status-first, so we drop the weaker duplicate.
+    const seen = new Set<string>();
+    return sorted.filter(({ provider, adapter }) => {
+      const key = [
+        adapter,
+        provider.name.trim().toLowerCase(),
+        provider.baseUrl.trim().replace(/\/+$/, "").toLowerCase(),
+        (provider.model ?? "").trim().toLowerCase(),
+      ].join("\0");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [activeRemoteWorkspaceId, freeChannelRevision]);
   // Image-generation settings power the bottom channel/model selectors while
   // the composer is in image mode. They live in their own store (separate from
   // the AI-editing runSelection), so flipping image mode never disturbs the
   // coding channel/model — leaving image mode just reads runSelection again.
   const [imageSettings, setImageSettings] = useState<ImageGenerationSettings>(
-    () => loadImageGenerationSettings(),
+    () => loadImageGenerationSettings(generationSettingsProfile),
   );
   useEffect(() => {
-    const refresh = () => setImageSettings(loadImageGenerationSettings());
-    window.addEventListener('fuc:image-generation-settings-changed', refresh);
+    const refresh = () =>
+      setImageSettings(loadImageGenerationSettings(generationSettingsProfile));
+    refresh();
+    window.addEventListener("ugs:image-generation-settings-changed", refresh);
     return () =>
       window.removeEventListener(
-        'fuc:image-generation-settings-changed',
+        "ugs:image-generation-settings-changed",
         refresh,
       );
-  }, []);
+  }, [generationSettingsProfile]);
   const imageChannelOptions = useMemo<SelectOption[]>(
     () =>
-      imageProviders(imageSettings).map((provider) => ({
-        id: provider.id,
-        label:
-          provider.label +
-          (imageProviderReady(provider.id, imageSettings) ? '' : ' ⚠'),
-        hint: t(
-          locale,
-          provider.category === 'commercial'
-            ? 'settings.imageGeneration.categoryCommercial'
-            : 'settings.imageGeneration.categoryFreeCredit',
-        ),
-        group: t(
-          locale,
-          provider.category === 'commercial'
-            ? 'settings.imageGeneration.commercialProviders'
-            : 'settings.imageGeneration.freeCreditProviders',
-        ),
-      })),
-    [imageSettings, locale],
+      imageProviders(imageSettings)
+        .filter((provider) => !remoteGenerationSettings || !provider.local)
+        .map((provider) => ({
+          id: provider.id,
+          label:
+            provider.label +
+            (imageProviderReady(provider.id, imageSettings) ? "" : " ⚠"),
+          hint: t(
+            locale,
+            provider.category === "commercial"
+              ? "settings.imageGeneration.categoryCommercial"
+              : "settings.imageGeneration.categoryFreeCredit",
+          ),
+          group: t(
+            locale,
+            provider.category === "commercial"
+              ? "settings.imageGeneration.commercialProviders"
+              : "settings.imageGeneration.freeCreditProviders",
+          ),
+        })),
+    [imageSettings, locale, remoteGenerationSettings],
   );
-  const imageChannelValue = imageSettings.preferredProviderId;
+  const imageChannelValue = imageChannelOptions.some(
+    (option) => option.id === imageSettings.preferredProviderId,
+  )
+    ? imageSettings.preferredProviderId
+    : "";
   const imageModelOptions = useMemo<SelectOption[]>(() => {
     const provider = imageProviders(imageSettings).find(
-      (item) => item.id === imageSettings.preferredProviderId,
+      (item) =>
+        item.id === imageSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
     );
     if (!provider) return [];
     const current = imageProviderModel(provider.id, imageSettings);
@@ -1997,294 +2314,321 @@ export default function AIDock({
       ...(imageSettings.providerModelLists[provider.id] ?? []),
       ...provider.models,
     ]);
-  }, [imageSettings]);
+  }, [imageSettings, remoteGenerationSettings]);
   const imageModelValue = imageProviderModel(
     imageSettings.preferredProviderId,
     imageSettings,
   );
   const onImageChannelChange = useCallback((id: string) => {
     saveImageGenerationSettings({
-      ...loadImageGenerationSettings(),
+      ...loadImageGenerationSettings(generationSettingsProfile),
       preferredProviderId: id as ImageProviderId,
-    });
-  }, []);
-  const onImageModelChange = useCallback(
-    (model: string) => {
-      const selected = model.trim();
-      if (!selected) return;
-      const current = loadImageGenerationSettings();
-      const providerId = current.preferredProviderId;
-      saveImageGenerationSettings({
-        ...current,
-        providerModels: { ...current.providerModels, [providerId]: selected },
-      });
-    },
-    [],
-  );
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onImageModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadImageGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveImageGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
   const [musicSettings, setMusicSettings] = useState<MusicGenerationSettings>(
-    () => loadMusicGenerationSettings(),
+    () => loadMusicGenerationSettings(generationSettingsProfile),
   );
   useEffect(() => {
-    const refresh = () => setMusicSettings(loadMusicGenerationSettings());
-    window.addEventListener('fuc:music-generation-settings-changed', refresh);
+    const refresh = () =>
+      setMusicSettings(loadMusicGenerationSettings(generationSettingsProfile));
+    refresh();
+    window.addEventListener("ugs:music-generation-settings-changed", refresh);
     return () =>
       window.removeEventListener(
-        'fuc:music-generation-settings-changed',
+        "ugs:music-generation-settings-changed",
         refresh,
       );
-  }, []);
+  }, [generationSettingsProfile]);
   const musicChannelOptions = useMemo<SelectOption[]>(
     () =>
-      MUSIC_PROVIDERS.map((provider) => ({
+      MUSIC_PROVIDERS.filter(
+        (provider) => !remoteGenerationSettings || !provider.local,
+      ).map((provider) => ({
         id: provider.id,
         label:
           provider.label +
-          (musicProviderReady(provider.id, musicSettings) ? '' : ' ⚠'),
+          (musicProviderReady(provider.id, musicSettings) ? "" : " ⚠"),
         hint: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.musicGeneration.categoryCommercial'
-            : 'settings.musicGeneration.categoryFree',
+          provider.category === "commercial"
+            ? "settings.musicGeneration.categoryCommercial"
+            : "settings.musicGeneration.categoryFree",
         ),
         group: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.musicGeneration.commercialProviders'
-            : 'settings.musicGeneration.freeProviders',
+          provider.category === "commercial"
+            ? "settings.musicGeneration.commercialProviders"
+            : "settings.musicGeneration.freeProviders",
         ),
       })),
-    [musicSettings, locale],
+    [musicSettings, locale, remoteGenerationSettings],
   );
-  const musicChannelValue = musicSettings.preferredProviderId;
+  const musicChannelValue = musicChannelOptions.some(
+    (option) => option.id === musicSettings.preferredProviderId,
+  )
+    ? musicSettings.preferredProviderId
+    : "";
   const musicModelOptions = useMemo<SelectOption[]>(() => {
     const provider = MUSIC_PROVIDERS.find(
-      (item) => item.id === musicSettings.preferredProviderId,
+      (item) =>
+        item.id === musicSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
     );
     if (!provider) return [];
     const current = musicProviderModel(provider.id, musicSettings);
     return uniqueModelSelectOptions([current, ...provider.models]);
-  }, [musicSettings]);
+  }, [musicSettings, remoteGenerationSettings]);
   const musicModelValue = musicProviderModel(
     musicSettings.preferredProviderId,
     musicSettings,
   );
   const onMusicChannelChange = useCallback((id: string) => {
     saveMusicGenerationSettings({
-      ...loadMusicGenerationSettings(),
+      ...loadMusicGenerationSettings(generationSettingsProfile),
       preferredProviderId: id as MusicProviderId,
-    });
-  }, []);
-  const onMusicModelChange = useCallback(
-    (model: string) => {
-      const selected = model.trim();
-      if (!selected) return;
-      const current = loadMusicGenerationSettings();
-      const providerId = current.preferredProviderId;
-      saveMusicGenerationSettings({
-        ...current,
-        providerModels: { ...current.providerModels, [providerId]: selected },
-      });
-    },
-    [],
-  );
-  const [threeDSettings, setThreeDSettings] = useState<ThreeDGenerationSettings>(
-    () => loadThreeDGenerationSettings(),
-  );
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onMusicModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadMusicGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveMusicGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const [threeDSettings, setThreeDSettings] =
+    useState<ThreeDGenerationSettings>(() =>
+      loadThreeDGenerationSettings(generationSettingsProfile),
+    );
   useEffect(() => {
-    const refresh = () => setThreeDSettings(loadThreeDGenerationSettings());
-    window.addEventListener('fuc:three-d-generation-settings-changed', refresh);
+    const refresh = () =>
+      setThreeDSettings(loadThreeDGenerationSettings(generationSettingsProfile));
+    refresh();
+    window.addEventListener("ugs:three-d-generation-settings-changed", refresh);
     return () =>
       window.removeEventListener(
-        'fuc:three-d-generation-settings-changed',
+        "ugs:three-d-generation-settings-changed",
         refresh,
       );
-  }, []);
+  }, [generationSettingsProfile]);
   const threeDChannelOptions = useMemo<SelectOption[]>(
     () =>
-      THREE_D_PROVIDERS.map((provider) => ({
+      THREE_D_PROVIDERS.filter(
+        (provider) => !remoteGenerationSettings || !provider.local,
+      ).map((provider) => ({
         id: provider.id,
         label:
           provider.label +
-          (threeDProviderReady(provider.id, threeDSettings) ? '' : ' ⚠'),
+          (threeDProviderReady(provider.id, threeDSettings) ? "" : " ⚠"),
         hint: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.threeDGeneration.categoryCommercial'
-            : 'settings.threeDGeneration.categoryFree',
+          provider.category === "commercial"
+            ? "settings.threeDGeneration.categoryCommercial"
+            : "settings.threeDGeneration.categoryFree",
         ),
         group: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.threeDGeneration.commercialProviders'
-            : 'settings.threeDGeneration.freeProviders',
+          provider.category === "commercial"
+            ? "settings.threeDGeneration.commercialProviders"
+            : "settings.threeDGeneration.freeProviders",
         ),
       })),
-    [threeDSettings, locale],
+    [threeDSettings, locale, remoteGenerationSettings],
   );
-  const threeDChannelValue = threeDSettings.preferredProviderId;
+  const threeDChannelValue = threeDChannelOptions.some(
+    (option) => option.id === threeDSettings.preferredProviderId,
+  )
+    ? threeDSettings.preferredProviderId
+    : "";
   const threeDModelOptions = useMemo<SelectOption[]>(() => {
     const provider = THREE_D_PROVIDERS.find(
-      (item) => item.id === threeDSettings.preferredProviderId,
+      (item) =>
+        item.id === threeDSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
     );
     if (!provider) return [];
     const current = threeDProviderModel(provider.id, threeDSettings);
     return uniqueModelSelectOptions([current, ...provider.models]);
-  }, [threeDSettings]);
+  }, [threeDSettings, remoteGenerationSettings]);
   const threeDModelValue = threeDProviderModel(
     threeDSettings.preferredProviderId,
     threeDSettings,
   );
   const onThreeDChannelChange = useCallback((id: string) => {
     saveThreeDGenerationSettings({
-      ...loadThreeDGenerationSettings(),
+      ...loadThreeDGenerationSettings(generationSettingsProfile),
       preferredProviderId: id as ThreeDProviderId,
-    });
-  }, []);
-  const onThreeDModelChange = useCallback(
-    (model: string) => {
-      const selected = model.trim();
-      if (!selected) return;
-      const current = loadThreeDGenerationSettings();
-      const providerId = current.preferredProviderId;
-      saveThreeDGenerationSettings({
-        ...current,
-        providerModels: { ...current.providerModels, [providerId]: selected },
-      });
-    },
-    [],
-  );
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onThreeDModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadThreeDGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveThreeDGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
   const [videoSettings, setVideoSettings] = useState<VideoGenerationSettings>(
-    () => loadVideoGenerationSettings(),
+    () => loadVideoGenerationSettings(generationSettingsProfile),
   );
   useEffect(() => {
-    const refresh = () => setVideoSettings(loadVideoGenerationSettings());
-    window.addEventListener('fuc:video-generation-settings-changed', refresh);
+    const refresh = () =>
+      setVideoSettings(loadVideoGenerationSettings(generationSettingsProfile));
+    refresh();
+    window.addEventListener("ugs:video-generation-settings-changed", refresh);
     return () =>
       window.removeEventListener(
-        'fuc:video-generation-settings-changed',
+        "ugs:video-generation-settings-changed",
         refresh,
       );
-  }, []);
+  }, [generationSettingsProfile]);
   const videoChannelOptions = useMemo<SelectOption[]>(
     () =>
-      VIDEO_PROVIDERS.map((provider) => ({
+      VIDEO_PROVIDERS.filter(
+        (provider) => !remoteGenerationSettings || !provider.local,
+      ).map((provider) => ({
         id: provider.id,
         label:
           provider.label +
-          (videoProviderReady(provider.id, videoSettings) ? '' : ' ⚠'),
+          (videoProviderReady(provider.id, videoSettings) ? "" : " ⚠"),
         hint: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.videoGeneration.categoryCommercial'
-            : 'settings.videoGeneration.categoryFree',
+          provider.category === "commercial"
+            ? "settings.videoGeneration.categoryCommercial"
+            : "settings.videoGeneration.categoryFree",
         ),
         group: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.videoGeneration.commercialProviders'
-            : 'settings.videoGeneration.freeProviders',
+          provider.category === "commercial"
+            ? "settings.videoGeneration.commercialProviders"
+            : "settings.videoGeneration.freeProviders",
         ),
       })),
-    [videoSettings, locale],
+    [videoSettings, locale, remoteGenerationSettings],
   );
-  const videoChannelValue = videoSettings.preferredProviderId;
+  const videoChannelValue = videoChannelOptions.some(
+    (option) => option.id === videoSettings.preferredProviderId,
+  )
+    ? videoSettings.preferredProviderId
+    : "";
   const videoModelOptions = useMemo<SelectOption[]>(() => {
     const provider = VIDEO_PROVIDERS.find(
-      (item) => item.id === videoSettings.preferredProviderId,
+      (item) =>
+        item.id === videoSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
     );
     if (!provider) return [];
     const current = videoProviderModel(provider.id, videoSettings);
     return uniqueModelSelectOptions([current, ...provider.models]);
-  }, [videoSettings]);
+  }, [videoSettings, remoteGenerationSettings]);
   const videoModelValue = videoProviderModel(
     videoSettings.preferredProviderId,
     videoSettings,
   );
   const onVideoChannelChange = useCallback((id: string) => {
     saveVideoGenerationSettings({
-      ...loadVideoGenerationSettings(),
+      ...loadVideoGenerationSettings(generationSettingsProfile),
       preferredProviderId: id as VideoProviderId,
-    });
-  }, []);
-  const onVideoModelChange = useCallback(
-    (model: string) => {
-      const selected = model.trim();
-      if (!selected) return;
-      const current = loadVideoGenerationSettings();
-      const providerId = current.preferredProviderId;
-      saveVideoGenerationSettings({
-        ...current,
-        providerModels: { ...current.providerModels, [providerId]: selected },
-      });
-    },
-    [],
-  );
-  const [speechSettings, setSpeechSettings] = useState<SpeechGenerationSettings>(
-    () => loadSpeechGenerationSettings(),
-  );
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onVideoModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadVideoGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveVideoGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const [speechSettings, setSpeechSettings] =
+    useState<SpeechGenerationSettings>(() =>
+      loadSpeechGenerationSettings(generationSettingsProfile),
+    );
   useEffect(() => {
-    const refresh = () => setSpeechSettings(loadSpeechGenerationSettings());
-    window.addEventListener('fuc:speech-generation-settings-changed', refresh);
+    const refresh = () =>
+      setSpeechSettings(loadSpeechGenerationSettings(generationSettingsProfile));
+    refresh();
+    window.addEventListener("ugs:speech-generation-settings-changed", refresh);
     return () =>
       window.removeEventListener(
-        'fuc:speech-generation-settings-changed',
+        "ugs:speech-generation-settings-changed",
         refresh,
       );
-  }, []);
+  }, [generationSettingsProfile]);
   const speechChannelOptions = useMemo<SelectOption[]>(
     () =>
-      SPEECH_PROVIDERS.map((provider) => ({
+      SPEECH_PROVIDERS.filter(
+        (provider) => !remoteGenerationSettings || !provider.local,
+      ).map((provider) => ({
         id: provider.id,
         label:
           provider.label +
-          (speechProviderReady(provider.id, speechSettings) ? '' : ' ⚠'),
+          (speechProviderReady(provider.id, speechSettings) ? "" : " ⚠"),
         hint: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.speechGeneration.categoryCommercial'
-            : 'settings.speechGeneration.categoryFree',
+          provider.category === "commercial"
+            ? "settings.speechGeneration.categoryCommercial"
+            : "settings.speechGeneration.categoryFree",
         ),
         group: t(
           locale,
-          provider.category === 'commercial'
-            ? 'settings.speechGeneration.commercialProviders'
-            : 'settings.speechGeneration.freeProviders',
+          provider.category === "commercial"
+            ? "settings.speechGeneration.commercialProviders"
+            : "settings.speechGeneration.freeProviders",
         ),
       })),
-    [speechSettings, locale],
+    [speechSettings, locale, remoteGenerationSettings],
   );
-  const speechChannelValue = speechSettings.preferredProviderId;
+  const speechChannelValue = speechChannelOptions.some(
+    (option) => option.id === speechSettings.preferredProviderId,
+  )
+    ? speechSettings.preferredProviderId
+    : "";
   const speechModelOptions = useMemo<SelectOption[]>(() => {
     const provider = SPEECH_PROVIDERS.find(
-      (item) => item.id === speechSettings.preferredProviderId,
+      (item) =>
+        item.id === speechSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
     );
     if (!provider) return [];
     const current = speechProviderModel(provider.id, speechSettings);
     return uniqueModelSelectOptions([current, ...provider.models]);
-  }, [speechSettings]);
+  }, [speechSettings, remoteGenerationSettings]);
   const speechModelValue = speechProviderModel(
     speechSettings.preferredProviderId,
     speechSettings,
   );
   const onSpeechChannelChange = useCallback((id: string) => {
     saveSpeechGenerationSettings({
-      ...loadSpeechGenerationSettings(),
+      ...loadSpeechGenerationSettings(generationSettingsProfile),
       preferredProviderId: id as SpeechProviderId,
-    });
-  }, []);
-  const onSpeechModelChange = useCallback(
-    (model: string) => {
-      const selected = model.trim();
-      if (!selected) return;
-      const current = loadSpeechGenerationSettings();
-      const providerId = current.preferredProviderId;
-      saveSpeechGenerationSettings({
-        ...current,
-        providerModels: { ...current.providerModels, [providerId]: selected },
-      });
-    },
-    [],
-  );
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onSpeechModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadSpeechGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveSpeechGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
   const slashGuardSettings = useMemo<SlashCommandGuardSettings>(
     () => ({
       image: imageSettings,
@@ -2293,7 +2637,13 @@ export default function AIDock({
       video: videoSettings,
       speech: speechSettings,
     }),
-    [imageSettings, musicSettings, speechSettings, threeDSettings, videoSettings],
+    [
+      imageSettings,
+      musicSettings,
+      speechSettings,
+      threeDSettings,
+      videoSettings,
+    ],
   );
   const currentSlashGuard = useMemo(
     () => guardSlashCommandText(draft, composer, slashGuardSettings),
@@ -2301,60 +2651,57 @@ export default function AIDock({
   );
   const slashGuardTipText =
     currentSlashGuard && !currentSlashGuard.ok
-      ? currentSlashGuard.message ?? ''
-      : '';
-  const composerTipText = blockedSendTipText || slashGuardTipText;
-  const channelSelectOptions = useMemo<SelectOption[]>(
-    () => {
-      const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
-        const hint = defaultChannelRuntimeLabel(locale, adapter);
-        const group = defaultChannelRuntimeGroup(locale, adapter);
-        return [
-          {
-            id: systemDefaultOptionId(adapter.id),
-            label: `${adapter.label} · ${t(locale, 'dock.channelSystemDefault')}`,
+      ? (currentSlashGuard.message ?? "")
+      : "";
+  const composerTipText =
+    fileUploadTipText || blockedSendTipText || slashGuardTipText;
+  const channelSelectOptions = useMemo<SelectOption[]>(() => {
+    const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
+      const hint = defaultChannelRuntimeLabel(locale, adapter);
+      const group = defaultChannelRuntimeGroup(locale, adapter);
+      return [
+        {
+          id: systemDefaultOptionId(adapter.id),
+          label: `${adapter.label} · ${t(locale, "dock.channelSystemDefault")}`,
+          hint,
+          group,
+        },
+        ...defaultChannelProviders
+          .filter((item) => item.adapter === adapter.id)
+          .map(({ provider }) => ({
+            id: defaultProviderOptionId(provider.id),
+            label: provider.name.trim() || adapter.label,
             hint,
             group,
-          },
-          ...defaultChannelProviders
-            .filter((item) => item.adapter === adapter.id)
-            .map(({ provider }) => ({
-              id: defaultProviderOptionId(provider.id),
-              label: provider.name.trim() || adapter.label,
-              hint,
-              group,
-            })),
-        ];
-      });
-
-      return [
-        ...defaultOptions,
-        ...FREE_CHANNELS.map((c) => {
-          const localStatus = c.local ? localRuntimeStatuses[c.id] : undefined;
-          const ready = freeChannelReady(c.id);
-          const needsAttention =
-            !ready ||
-            (c.local && localStatus && !localStatus.ready);
-          const hint = c.local
-            ? localStatus?.ready
-              ? t(locale, 'settings.freeChannels.localReady')
-              : ready
-                ? t(locale, 'settings.freeChannels.localConfigured')
-                : t(locale, 'settings.freeChannels.localNeedsSetup')
-            : ready
-              ? t(locale, 'settings.freeChannels.ready')
-              : t(locale, 'settings.freeChannels.needsKey');
-          return {
-            id: freeChannelOptionId(c.id),
-            label: c.label + (needsAttention ? ' ⚠' : ''),
-            hint,
-            group: t(locale, 'dock.channelGroupFree'),
-          };
-        }),
+          })),
       ];
-    },
-    [locale, defaultChannelProviders, localRuntimeStatuses],
-  );
+    });
+
+    return [
+      ...defaultOptions,
+      ...FREE_CHANNELS.map((c) => {
+        const localStatus = c.local ? localRuntimeStatuses[c.id] : undefined;
+        const ready = freeChannelReady(c.id);
+        const needsAttention =
+          !ready || (c.local && localStatus && !localStatus.ready);
+        const hint = c.local
+          ? localStatus?.ready
+            ? t(locale, "settings.freeChannels.localReady")
+            : ready
+              ? t(locale, "settings.freeChannels.localConfigured")
+              : t(locale, "settings.freeChannels.localNeedsSetup")
+          : ready
+            ? t(locale, "settings.freeChannels.ready")
+            : t(locale, "settings.freeChannels.needsKey");
+        return {
+          id: freeChannelOptionId(c.id),
+          label: c.label + (needsAttention ? " ⚠" : ""),
+          hint,
+          group: t(locale, "dock.channelGroupFree"),
+        };
+      }),
+    ];
+  }, [locale, defaultChannelProviders, localRuntimeStatuses]);
   const selectedFreeChannelId = isFreeChannelSelection(runSelection);
   const pinnedDefaultProvider = runSelection.providerId
     ? defaultChannelProviders.find(
@@ -2374,12 +2721,109 @@ export default function AIDock({
   const selectedDefaultProvider = selectedFreeChannel
     ? undefined
     : pinnedDefaultProvider;
+  useEffect(() => {
+    const providerId = runSelection.providerId;
+    if (!providerId) return;
+    const remote = parseRemoteProviderId(providerId);
+    if (remote && remote.workspaceId !== activeRemoteWorkspaceId) {
+      setSessionRunSelection(systemDefaultGatewaySelection(runSelection.adapter));
+      return;
+    }
+    const provider = listProviders().find((item) => item.id === providerId);
+    if (
+      activeRemoteWorkspaceId &&
+      provider &&
+      !isRemoteRunnerProvider(provider)
+    ) {
+      setSessionRunSelection(systemDefaultGatewaySelection(runSelection.adapter));
+      return;
+    }
+    if (
+      provider &&
+      isRemoteRunnerProvider(provider) &&
+      !remoteRunnerProviderMatchesWorkspace(provider, activeRemoteWorkspaceId)
+    ) {
+      setSessionRunSelection(systemDefaultGatewaySelection(runSelection.adapter));
+    }
+  }, [
+    activeRemoteWorkspaceId,
+    freeChannelRevision,
+    runSelection.adapter,
+    runSelection.providerId,
+    setSessionRunSelection,
+  ]);
+  useEffect(() => {
+    if (!simpleChatMode || !activeRemoteWorkspaceId) return;
+    const currentRemote = parseRemoteProviderId(runSelection.providerId);
+    const config = getRemoteWorkspace(activeRemoteWorkspaceId);
+    if (!config) return;
+    const projectModel = config.model?.trim();
+    if (currentRemote?.workspaceId === activeRemoteWorkspaceId) {
+      if (!projectModel) return;
+      const currentModel =
+        runSelection.modelOverride?.trim() || runSelection.modelClass?.trim();
+      const currentOverride = runSelection.modelOverride?.trim();
+      if (
+        currentModel?.toLowerCase() === projectModel.toLowerCase() &&
+        currentOverride?.toLowerCase() === projectModel.toLowerCase()
+      ) {
+        return;
+      }
+      setSessionRunSelection({
+        ...runSelection,
+        modelClass: projectModel,
+        modelOverride: projectModel,
+      });
+      return;
+    }
+
+    let disposed = false;
+    const applyRemoteSelection = (providers: Provider[]) => {
+      if (disposed) return;
+      const targetAdapter = remoteAdapterToRuntimeAdapter(config.adapter);
+      const provider =
+        providers.find((item) => providerKindToAdapter(item.kind) === targetAdapter) ??
+        providers[0];
+      if (provider) {
+        setSessionRunSelection(providerSelection(provider, config.model));
+        return;
+      }
+      const model = config.model?.trim();
+      setSessionRunSelection({
+        ...systemDefaultGatewaySelection(targetAdapter),
+        ...(model ? { modelClass: model, modelOverride: model } : {}),
+      });
+    };
+
+    const currentProviders = listProviders().filter((provider) =>
+      remoteRunnerProviderMatchesWorkspace(provider, activeRemoteWorkspaceId),
+    );
+    if (currentProviders.length > 0) {
+      applyRemoteSelection(currentProviders);
+      return;
+    }
+
+    void refreshRemoteWorkspaceAccounts(config)
+      .then(applyRemoteSelection)
+      .catch(() => applyRemoteSelection([]));
+    return () => {
+      disposed = true;
+    };
+  }, [
+    activeRemoteWorkspaceId,
+    freeChannelRevision,
+    runSelection.modelClass,
+    runSelection.modelOverride,
+    runSelection.providerId,
+    setSessionRunSelection,
+    simpleChatMode,
+  ]);
   const [modelListRevision, setModelListRevision] = useState(0);
   const [loadingChannelModels, setLoadingChannelModels] = useState(false);
   useEffect(() => {
     const refresh = () => setModelListRevision((n) => n + 1);
-    window.addEventListener('fuc:model-list-changed', refresh);
-    return () => window.removeEventListener('fuc:model-list-changed', refresh);
+    window.addEventListener("ugs:model-list-changed", refresh);
+    return () => window.removeEventListener("ugs:model-list-changed", refresh);
   }, []);
   useEffect(() => {
     if (!selectedFreeChannel) return;
@@ -2418,43 +2862,44 @@ export default function AIDock({
   const modelSelectOptions = useMemo<SelectOption[]>(() => {
     void modelListRevision;
     const defaultModelOption = {
-      id: 'default',
-      label: t(locale, 'dock.channelSystemDefault'),
+      id: "default",
+      label: t(locale, "dock.channelSystemDefault"),
     };
     if (selectedFreeChannel) {
-      const options = uniqueModelSelectOptions(
-        [runSelection.modelOverride, ...freeChannelModelOptions(selectedFreeChannel)],
-      );
+      const options = uniqueModelSelectOptions([
+        runSelection.modelOverride,
+        ...freeChannelModelOptions(selectedFreeChannel),
+      ]);
       return options.length > 0 ? options : [defaultModelOption];
     }
     if (selectedDefaultProvider) {
       const provider = selectedDefaultProvider.provider;
       const fallback =
-        selectedDefaultProvider.adapter === 'claude-code'
+        selectedDefaultProvider.adapter === "claude-code"
           ? [
               runSelection.modelClass,
               ...composerModelOptions.map((option) => option.id),
-              'sonnet',
-              'opus',
-              'haiku',
+              "sonnet",
+              "opus",
+              "haiku",
             ]
-          : ['default', runSelection.modelClass];
+          : ["default", runSelection.modelClass];
       return uniqueModelSelectOptions([
-        provider.model ?? '',
+        provider.model ?? "",
         ...providerModelOptions(provider),
         ...fallback,
       ]);
     }
-    if (selectedAdapter === 'claude-code') {
+    if (selectedAdapter === "claude-code") {
       return uniqueModelSelectOptions([
         runSelection.modelClass,
         ...composerModelOptions.map((option) => option.id),
-        'sonnet',
-        'opus',
-        'haiku',
+        "sonnet",
+        "opus",
+        "haiku",
       ]);
     }
-    return uniqueModelSelectOptions(['default', runSelection.modelClass]);
+    return uniqueModelSelectOptions(["default", runSelection.modelClass]);
   }, [
     locale,
     selectedFreeChannel,
@@ -2468,26 +2913,30 @@ export default function AIDock({
   const modelSelectValue = selectedFreeChannel
     ? selectedFreeChannel.id === FREE_CHANNEL_AUTO_ID
       ? (runSelection.modelOverride ??
-        getFreeChannelModelOverride(selectedFreeChannel.id)) ||
+          getFreeChannelModelOverride(selectedFreeChannel.id)) ||
         FREE_CHANNEL_AUTO_MODEL
-      : runSelection.modelOverride ??
-        (runSelection.modelClass === 'default'
-          ? 'default'
-          : getFreeChannelModel(selectedFreeChannel.id) || 'default')
+      : (runSelection.modelOverride ??
+        (runSelection.modelClass === "default"
+          ? "default"
+          : getFreeChannelModel(selectedFreeChannel.id) || "default"))
     : selectedDefaultProvider
-      ? runSelection.modelOverride ??
-        (runSelection.modelClass === 'default'
-          ? 'default'
-          : (selectedDefaultProvider.provider.model ?? '').trim() ||
+      ? (runSelection.modelOverride ??
+        (runSelection.modelClass === "default"
+          ? "default"
+          : (selectedDefaultProvider.provider.model ?? "").trim() ||
             runSelection.modelClass ||
-            'default')
-      : runSelection.modelClass || 'default';
-  const [keyModalChannel, setKeyModalChannel] = useState<FreeChannel | null>(null);
-  const [keyModalValue, setKeyModalValue] = useState('');
+            "default"))
+      : runSelection.modelClass || "default";
+  const [keyModalChannel, setKeyModalChannel] = useState<FreeChannel | null>(
+    null,
+  );
+  const [keyModalValue, setKeyModalValue] = useState("");
   const [localSetupChannel, setLocalSetupChannel] =
     useState<FreeChannel | null>(null);
-  const [localModelValue, setLocalModelValue] = useState('');
-  const [localSetupMessage, setLocalSetupMessage] = useState<string | null>(null);
+  const [localModelValue, setLocalModelValue] = useState("");
+  const [localSetupMessage, setLocalSetupMessage] = useState<string | null>(
+    null,
+  );
   const [checkingLocalModel, setCheckingLocalModel] = useState(false);
 
   useEffect(() => {
@@ -2505,7 +2954,10 @@ export default function AIDock({
       localChannels.map(async (channel) => {
         const model = getFreeChannelModelOverride(channel.id);
         try {
-          return [channel.id, await localModelStatus(channel.id, model)] as const;
+          return [
+            channel.id,
+            await localModelStatus(channel.id, model),
+          ] as const;
         } catch {
           return [channel.id, undefined] as const;
         }
@@ -2525,9 +2977,9 @@ export default function AIDock({
         freeChannelSelection(channel.id, getFreeChannelModel(channel.id)),
       );
       setKeyModalChannel(null);
-      setKeyModalValue('');
+      setKeyModalValue("");
       setLocalSetupChannel(null);
-      setLocalModelValue('');
+      setLocalModelValue("");
       setLocalSetupMessage(null);
     },
     [setSessionRunSelection],
@@ -2582,7 +3034,7 @@ export default function AIDock({
                 configuredModel: model,
                 reachable: false,
                 ready: false,
-                state: 'service_unavailable',
+                state: "service_unavailable",
                 models: [],
                 message: err instanceof Error ? err.message : String(err),
               };
@@ -2609,59 +3061,58 @@ export default function AIDock({
             : getFreeChannelKey(freeChannelId);
         if (channel.needsKey && !key) {
           setKeyModalChannel(channel);
-          setKeyModalValue('');
+          setKeyModalValue("");
           return;
         }
         selectFreeChannel(channel);
       })();
     },
-    [defaultChannelProviders, locale, setSessionRunSelection, selectFreeChannel],
+    [
+      defaultChannelProviders,
+      locale,
+      setSessionRunSelection,
+      selectFreeChannel,
+    ],
   );
   const onModelChange = useCallback(
     (model: string) => {
       const selectedModel = model.trim();
       if (!selectedModel) return;
       const modelOverride =
-        selectedModel === 'default' ? undefined : selectedModel;
+        selectedModel === "default" ? undefined : selectedModel;
       if (selectedFreeChannel) {
         void ensureFreeProxy();
         if (selectedFreeChannel.id === FREE_CHANNEL_AUTO_ID) {
           const autoModel =
-            selectedModel === 'default' ? FREE_CHANNEL_AUTO_MODEL : selectedModel;
+            selectedModel === "default"
+              ? FREE_CHANNEL_AUTO_MODEL
+              : selectedModel;
           const modelOverride =
             autoModel === FREE_CHANNEL_AUTO_MODEL ? undefined : autoModel;
-          setSessionRunSelection(
-            {
-              ...freeChannelSelection(selectedFreeChannel.id, autoModel),
-              ...(modelOverride ? { modelOverride } : {}),
-            },
-          );
+          setSessionRunSelection({
+            ...freeChannelSelection(selectedFreeChannel.id, autoModel),
+            ...(modelOverride ? { modelOverride } : {}),
+          });
           return;
         }
-        setSessionRunSelection(
-          {
-            ...freeChannelSelection(selectedFreeChannel.id, selectedModel),
-            ...(modelOverride ? { modelOverride } : {}),
-          },
-        );
+        setSessionRunSelection({
+          ...freeChannelSelection(selectedFreeChannel.id, selectedModel),
+          ...(modelOverride ? { modelOverride } : {}),
+        });
         return;
       }
       if (selectedDefaultProvider) {
         const provider = selectedDefaultProvider.provider;
-        setSessionRunSelection(
-          {
-            ...providerSelection(provider, selectedModel),
-            ...(modelOverride ? { modelOverride } : {}),
-          },
-        );
+        setSessionRunSelection({
+          ...providerSelection(provider, selectedModel),
+          ...(modelOverride ? { modelOverride } : {}),
+        });
         return;
       }
-      setSessionRunSelection(
-        {
-          ...systemDefaultGatewaySelection(selectedAdapter),
-          modelClass: selectedModel === 'default' ? 'default' : selectedModel,
-        },
-      );
+      setSessionRunSelection({
+        ...systemDefaultGatewaySelection(selectedAdapter),
+        modelClass: selectedModel === "default" ? "default" : selectedModel,
+      });
     },
     [
       selectedAdapter,
@@ -2705,7 +3156,7 @@ export default function AIDock({
           configuredModel: model,
           reachable: false,
           ready: false,
-          state: 'service_unavailable',
+          state: "service_unavailable",
           models: [],
           message: err instanceof Error ? err.message : String(err),
         };
@@ -2722,256 +3173,275 @@ export default function AIDock({
     })();
   }, [localModelValue, localSetupChannel, locale, selectFreeChannel]);
 
-  const ensureSelectedLocalChannelReady = useCallback(async (): Promise<boolean> => {
-    const id = isFreeChannelSelection(runSelection);
-    if (!id) return true;
-    const channel = freeChannelById(id);
-    if (!channel?.local) return true;
-    const model = getFreeChannelModelOverride(id);
-    if (!model.trim()) {
-      setLocalSetupChannel(channel);
-      setLocalModelValue(model);
-      setLocalSetupMessage(null);
-      return false;
-    }
-    if (!tauriAvailable()) return true;
-    setCheckingLocalModel(true);
-    try {
-      const status = await localModelStatus(id, model);
-      setLocalRuntimeStatuses((prev) => ({ ...prev, [id]: status }));
-      if (status.ready) return true;
-      setLocalSetupChannel(channel);
-      setLocalModelValue(model);
-      setLocalSetupMessage(describeLocalModelStatus(locale, channel, status));
-      return false;
-    } catch (err) {
-      const status: LocalModelRuntimeStatus = {
-        channelId: id,
-        configuredModel: model,
-        reachable: false,
-        ready: false,
-        state: 'service_unavailable',
-        models: [],
-        message: err instanceof Error ? err.message : String(err),
-      };
-      setLocalRuntimeStatuses((prev) => ({ ...prev, [id]: status }));
-      setLocalSetupChannel(channel);
-      setLocalModelValue(model);
-      setLocalSetupMessage(describeLocalModelStatus(locale, channel, status));
-      return false;
-    } finally {
-      setCheckingLocalModel(false);
-    }
-  }, [locale, runSelection]);
+  const ensureSelectedLocalChannelReady =
+    useCallback(async (): Promise<boolean> => {
+      const id = isFreeChannelSelection(runSelection);
+      if (!id) return true;
+      const channel = freeChannelById(id);
+      if (!channel?.local) return true;
+      const model = getFreeChannelModelOverride(id);
+      if (!model.trim()) {
+        setLocalSetupChannel(channel);
+        setLocalModelValue(model);
+        setLocalSetupMessage(null);
+        return false;
+      }
+      if (!tauriAvailable()) return true;
+      setCheckingLocalModel(true);
+      try {
+        const status = await localModelStatus(id, model);
+        setLocalRuntimeStatuses((prev) => ({ ...prev, [id]: status }));
+        if (status.ready) return true;
+        setLocalSetupChannel(channel);
+        setLocalModelValue(model);
+        setLocalSetupMessage(describeLocalModelStatus(locale, channel, status));
+        return false;
+      } catch (err) {
+        const status: LocalModelRuntimeStatus = {
+          channelId: id,
+          configuredModel: model,
+          reachable: false,
+          ready: false,
+          state: "service_unavailable",
+          models: [],
+          message: err instanceof Error ? err.message : String(err),
+        };
+        setLocalRuntimeStatuses((prev) => ({ ...prev, [id]: status }));
+        setLocalSetupChannel(channel);
+        setLocalModelValue(model);
+        setLocalSetupMessage(describeLocalModelStatus(locale, channel, status));
+        return false;
+      } finally {
+        setCheckingLocalModel(false);
+      }
+    }, [locale, runSelection]);
 
   // Open a local file referenced by an AI-message chip in the right preview pane.
   // Paths resolve against the active workspace folder in the Tauri command.
   const workspaceCwd = composer.workspace;
-  const activeWorkspacePath = useMemo(
-    () =>
-      workspaces.find((workspace) => workspace.id === activeWorkspaceId)?.path?.trim() ??
-      '',
-    [activeWorkspaceId, workspaces],
-  );
   const fileMentionRootFolders = useMemo(
-    () =>
-      uniqueWorkspaceHistory([
+    () => {
+      if (activeRemoteWorkspaceRoot) return [activeRemoteWorkspaceRoot];
+      return uniqueWorkspaceHistory([
         composer.workspace,
         ...composer.workspaceFolders,
         activeWorkspacePath,
-      ]),
-    [activeWorkspacePath, composer.workspace, composer.workspaceFolders],
+      ]);
+    },
+    [
+      activeRemoteWorkspaceRoot,
+      activeWorkspacePath,
+      composer.workspace,
+      composer.workspaceFolders,
+    ],
   );
   const fileMentionRootKey = useMemo(
-    () => fileMentionRootFolders.map(workspacePathKey).join('|'),
+    () => fileMentionRootFolders.map(workspacePathKey).join("|"),
     [fileMentionRootFolders],
   );
   const fileMentionDirectory = fileMentionTrigger?.directory ?? null;
-  const enterBlueprintMode = useCallback((
-    modeArgs: string | null | undefined,
-    prompt: string | undefined,
-  ) => {
-    const currentComposer = useStore.getState().composer;
-    const wasBlueprintMode = currentComposer.blueprintMode;
-    const startedAt = wasBlueprintMode
-      ? currentComposer.blueprintModeStartedAt ?? Date.now()
-      : Date.now();
-    setComposer({
-      imageMode: false,
-      imageModeStartedAt: null,
-      musicMode: false,
-      musicModeStartedAt: null,
-      threeDMode: false,
-      threeDModeStartedAt: null,
-      comfyMode: false,
-      comfyModeStartedAt: null,
-      videoMode: false,
-      videoModeStartedAt: null,
-      spriteMode: false,
-      spriteModeStartedAt: null,
-      speechMode: false,
-      speechModeStartedAt: null,
-      uiMode: false,
-      uiModeStartedAt: null,
-      metahumanMode: false,
-      metahumanModeStartedAt: null,
-      worldMode: false,
-      worldModeStartedAt: null,
-      blueprintMode: true,
-      blueprintModeStartedAt: startedAt,
-      blueprintModeArgs: modeArgs?.trim() || null,
-    });
-    if (!wasBlueprintMode) {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '🧩 已进入 UE 蓝图模式 · 之后每条消息会按 Unreal Blueprint 创建、修改、编译和校验处理，发送 /blueprint-mode-end 退出'
-          : '🧩 UE Blueprint mode on · every message now targets Unreal Blueprint creation, editing, compilation, and verification; send /blueprint-mode-end to exit',
-        'system',
-      );
-    }
-    const firstPrompt = prompt?.trim();
-    if (firstPrompt) generateBlueprintPrompt(firstPrompt);
-  }, [appendChatNote, generateBlueprintPrompt, locale, setComposer]);
-
-  const requestBlueprintModeInstall = useCallback((
-    rootPath: string,
-    modeArgs: string | null,
-    prompt: string,
-  ) => {
-    appendChatNote(BLUEPRINT_MODE_INSTALL_PROMPT, 'assistant', {
-      interaction: {
-        type: 'confirm',
-        prompt: BLUEPRINT_MODE_INSTALL_PROMPT,
-        confirmLabel: BLUEPRINT_MODE_INSTALL_LABEL,
-        cancelLabel: t(locale, 'common.cancel'),
-      },
-      appAction: {
-        type: 'blueprint-mode-install',
-        rootPath,
-        modeArgs,
-        prompt,
-      },
-    });
-  }, [appendChatNote, locale]);
-
-  const startBlueprintModeFromCommand = useCallback(async (payload: string) => {
-    const { modeArgs, prompt } = parseBlueprintModeStartPayload(payload);
-    const rootPath = (workspaceCwd || activeWorkspacePath).trim();
-    if (!rootPath) {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '⚠️ 先选择 Unreal Engine 项目目录，才能检查或安装 BlueprintMode 插件。'
-          : '⚠️ Select an Unreal Engine project folder before checking or installing BlueprintMode.',
-      );
-      return;
-    }
-    if (!tauriAvailable()) {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '⚠️ BlueprintMode 插件检查和安装需要在桌面应用中运行。'
-          : '⚠️ BlueprintMode plugin checks and installation require the desktop app.',
-      );
-      return;
-    }
-    try {
-      const status = await blueprintModeStatus({ rootPath, targetDir: null });
-      if (!status.ok) {
+  const listComposerWorkspaceDirectory = useCallback(
+    (
+      rootPath: string,
+      relativePath = "",
+    ): Promise<WorkspaceDirectoryListing> => {
+      if (isRemoteWorkspacePath(rootPath)) {
+        return listRemoteWorkspaceDirectory(rootPath, relativePath);
+      }
+      return listWorkspaceDirectory(rootPath, relativePath);
+    },
+    [],
+  );
+  const enterBlueprintMode = useCallback(
+    (modeArgs: string | null | undefined, prompt: string | undefined) => {
+      const currentComposer = useStore.getState().composer;
+      const wasBlueprintMode = currentComposer.blueprintMode;
+      const startedAt = wasBlueprintMode
+        ? (currentComposer.blueprintModeStartedAt ?? Date.now())
+        : Date.now();
+      setComposer({
+        imageMode: false,
+        imageModeStartedAt: null,
+        musicMode: false,
+        musicModeStartedAt: null,
+        threeDMode: false,
+        threeDModeStartedAt: null,
+        comfyMode: false,
+        comfyModeStartedAt: null,
+        videoMode: false,
+        videoModeStartedAt: null,
+        spriteMode: false,
+        spriteModeStartedAt: null,
+        speechMode: false,
+        speechModeStartedAt: null,
+        uiMode: false,
+        uiModeStartedAt: null,
+        metahumanMode: false,
+        metahumanModeStartedAt: null,
+        worldMode: false,
+        worldModeStartedAt: null,
+        blueprintMode: true,
+        blueprintModeStartedAt: startedAt,
+        blueprintModeArgs: modeArgs?.trim() || null,
+      });
+      if (!wasBlueprintMode) {
         appendChatNote(
-          status.error ||
-            (locale === 'zh-CN'
-              ? '⚠️ 当前工作区无法启用 BlueprintMode。'
-              : '⚠️ BlueprintMode cannot be enabled for this workspace.'),
+          locale === "zh-CN"
+            ? "🧩 已进入 UE 蓝图模式 · 之后每条消息会按 Unreal Blueprint 创建、修改、编译和校验处理，发送 /blueprint-mode-end 退出"
+            : "🧩 UE Blueprint mode on · every message now targets Unreal Blueprint creation, editing, compilation, and verification; send /blueprint-mode-end to exit",
+          "system",
+        );
+      }
+      const firstPrompt = prompt?.trim();
+      if (firstPrompt) generateBlueprintPrompt(firstPrompt);
+    },
+    [appendChatNote, generateBlueprintPrompt, locale, setComposer],
+  );
+
+  const requestBlueprintModeInstall = useCallback(
+    (rootPath: string, modeArgs: string | null, prompt: string) => {
+      appendChatNote(BLUEPRINT_MODE_INSTALL_PROMPT, "assistant", {
+        interaction: {
+          type: "confirm",
+          prompt: BLUEPRINT_MODE_INSTALL_PROMPT,
+          confirmLabel: BLUEPRINT_MODE_INSTALL_LABEL,
+          cancelLabel: t(locale, "common.cancel"),
+        },
+        appAction: {
+          type: "blueprint-mode-install",
+          rootPath,
+          modeArgs,
+          prompt,
+        },
+      });
+    },
+    [appendChatNote, locale],
+  );
+
+  const startBlueprintModeFromCommand = useCallback(
+    async (payload: string) => {
+      const { modeArgs, prompt } = parseBlueprintModeStartPayload(payload);
+      const rootPath = (workspaceCwd || activeWorkspacePath).trim();
+      if (!rootPath) {
+        appendChatNote(
+          locale === "zh-CN"
+            ? "⚠️ 先选择 Unreal Engine 项目目录，才能检查或安装 BlueprintMode 插件。"
+            : "⚠️ Select an Unreal Engine project folder before checking or installing BlueprintMode.",
         );
         return;
       }
-      if (status.installed) {
-        enterBlueprintMode(modeArgs, prompt);
+      if (!tauriAvailable()) {
+        appendChatNote(
+          locale === "zh-CN"
+            ? "⚠️ BlueprintMode 插件检查和安装需要在桌面应用中运行。"
+            : "⚠️ BlueprintMode plugin checks and installation require the desktop app.",
+        );
         return;
       }
-      requestBlueprintModeInstall(rootPath, modeArgs, prompt);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      appendChatNote(
-        locale === 'zh-CN'
-          ? `⚠️ 检查 BlueprintMode 插件失败：${msg}`
-          : `⚠️ Failed to check BlueprintMode plugin: ${msg}`,
-      );
-    }
-  }, [
-    activeWorkspacePath,
-    appendChatNote,
-    enterBlueprintMode,
-    locale,
-    requestBlueprintModeInstall,
-    workspaceCwd,
-  ]);
-  const handleInteractionAnswer = useCallback((
-    message: Message,
-    answer: InteractionAnswer,
-  ) => {
-    answerInteraction(message.id, answer);
-    const action = message.appAction;
-    if (action?.type !== 'blueprint-mode-install') return;
-    if (answer.kind !== 'confirm' || !answer.confirmed) {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '已取消安装 BlueprintMode，未进入 UE 蓝图模式。'
-          : 'BlueprintMode installation cancelled; UE Blueprint mode was not enabled.',
-        'system',
-      );
-      return;
-    }
-    void (async () => {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '正在安装 BlueprintMode 插件…'
-          : 'Installing BlueprintMode plugin...',
-        'system',
-      );
       try {
-        const result = await blueprintModeInstall({
-          rootPath: action.rootPath,
-          targetDir: null,
-          overwrite: false,
-        });
-        if (!result.ok) {
+        const status = await blueprintModeStatus({ rootPath, targetDir: null });
+        if (!status.ok) {
           appendChatNote(
-            result.error ||
-              (locale === 'zh-CN'
-                ? 'BlueprintMode 插件安装失败。'
-                : 'BlueprintMode plugin installation failed.'),
+            status.error ||
+              (locale === "zh-CN"
+                ? "⚠️ 当前工作区无法启用 BlueprintMode。"
+                : "⚠️ BlueprintMode cannot be enabled for this workspace."),
           );
           return;
         }
-        appendChatNote(
-          locale === 'zh-CN'
-            ? '✅ BlueprintMode 插件已安装；若 Unreal Editor 已打开，请重启后生效。'
-            : '✅ BlueprintMode plugin installed; restart Unreal Editor if it is already open.',
-          'system',
-        );
-        enterBlueprintMode(action.modeArgs, action.prompt);
+        if (status.installed) {
+          enterBlueprintMode(modeArgs, prompt);
+          return;
+        }
+        requestBlueprintModeInstall(rootPath, modeArgs, prompt);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         appendChatNote(
-          locale === 'zh-CN'
-            ? `BlueprintMode 插件安装失败：${msg}`
-            : `BlueprintMode plugin installation failed: ${msg}`,
+          locale === "zh-CN"
+            ? `⚠️ 检查 BlueprintMode 插件失败：${msg}`
+            : `⚠️ Failed to check BlueprintMode plugin: ${msg}`,
         );
       }
-    })();
-  }, [answerInteraction, appendChatNote, enterBlueprintMode, locale]);
+    },
+    [
+      activeWorkspacePath,
+      appendChatNote,
+      enterBlueprintMode,
+      locale,
+      requestBlueprintModeInstall,
+      workspaceCwd,
+    ],
+  );
+  const handleInteractionAnswer = useCallback(
+    (message: Message, answer: InteractionAnswer) => {
+      answerInteraction(message.id, answer);
+      const action = message.appAction;
+      if (action?.type !== "blueprint-mode-install") return;
+      if (answer.kind !== "confirm" || !answer.confirmed) {
+        appendChatNote(
+          locale === "zh-CN"
+            ? "已取消安装 BlueprintMode，未进入 UE 蓝图模式。"
+            : "BlueprintMode installation cancelled; UE Blueprint mode was not enabled.",
+          "system",
+        );
+        return;
+      }
+      void (async () => {
+        appendChatNote(
+          locale === "zh-CN"
+            ? "正在安装 BlueprintMode 插件…"
+            : "Installing BlueprintMode plugin...",
+          "system",
+        );
+        try {
+          const result = await blueprintModeInstall({
+            rootPath: action.rootPath,
+            targetDir: null,
+            overwrite: false,
+          });
+          if (!result.ok) {
+            appendChatNote(
+              result.error ||
+                (locale === "zh-CN"
+                  ? "BlueprintMode 插件安装失败。"
+                  : "BlueprintMode plugin installation failed."),
+            );
+            return;
+          }
+          appendChatNote(
+            locale === "zh-CN"
+              ? "✅ BlueprintMode 插件已安装；若 Unreal Editor 已打开，请重启后生效。"
+              : "✅ BlueprintMode plugin installed; restart Unreal Editor if it is already open.",
+            "system",
+          );
+          enterBlueprintMode(action.modeArgs, action.prompt);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          appendChatNote(
+            locale === "zh-CN"
+              ? `BlueprintMode 插件安装失败：${msg}`
+              : `BlueprintMode plugin installation failed: ${msg}`,
+          );
+        }
+      })();
+    },
+    [answerInteraction, appendChatNote, enterBlueprintMode, locale],
+  );
 
-  const handleInteractionDismiss = useCallback((message: Message) => {
-    dismissInteraction(message.id);
-    if (message.appAction?.type === 'blueprint-mode-install') {
-      appendChatNote(
-        locale === 'zh-CN'
-          ? '已取消安装 BlueprintMode，未进入 UE 蓝图模式。'
-          : 'BlueprintMode installation cancelled; UE Blueprint mode was not enabled.',
-        'system',
-      );
-    }
-  }, [appendChatNote, dismissInteraction, locale]);
+  const handleInteractionDismiss = useCallback(
+    (message: Message) => {
+      dismissInteraction(message.id);
+      if (message.appAction?.type === "blueprint-mode-install") {
+        appendChatNote(
+          locale === "zh-CN"
+            ? "已取消安装 BlueprintMode，未进入 UE 蓝图模式。"
+            : "BlueprintMode installation cancelled; UE Blueprint mode was not enabled.",
+          "system",
+        );
+      }
+    },
+    [appendChatNote, dismissInteraction, locale],
+  );
   useEffect(() => {
     if (fileMentionDirectory === null || isReadOnly) return;
 
@@ -2983,11 +3453,14 @@ export default function AIDock({
     const directory = fileMentionDirectory;
     if (targets.length === 0) {
       setFileMentionListing({
-        status: 'error',
-        rootPath: '',
+        status: "error",
+        rootPath: "",
         directory,
         entries: [],
-        message: locale === 'zh-CN' ? '请先选择工作区。' : 'Please select a workspace first.',
+        message:
+          locale === "zh-CN"
+            ? "请先选择工作区。"
+            : "Please select a workspace first.",
       });
       return;
     }
@@ -3003,16 +3476,18 @@ export default function AIDock({
       const cacheKey = workspacePathKey(target.rootPath);
       const cached = rootListingPromises.get(cacheKey);
       if (cached) return cached;
-      const promise = listWorkspaceDirectory(target.rootPath, '').catch((err) => {
-        rootListingPromises.delete(cacheKey);
-        throw err;
-      });
+      const promise = listComposerWorkspaceDirectory(target.rootPath, "").catch(
+        (err) => {
+          rootListingPromises.delete(cacheKey);
+          throw err;
+        },
+      );
       rootListingPromises.set(cacheKey, promise);
       return promise;
     };
 
     setFileMentionListing((current) => ({
-      status: 'loading',
+      status: "loading",
       rootPath: listingKey,
       directory,
       entries:
@@ -3035,21 +3510,23 @@ export default function AIDock({
       if (cancelled) return [];
 
       const fulfilled = rootResults.filter(
-        (result): result is PromiseFulfilledResult<{
+        (
+          result,
+        ): result is PromiseFulfilledResult<{
           target: FileMentionListTarget;
           listing: WorkspaceDirectoryListing;
-        }> => result.status === 'fulfilled',
+        }> => result.status === "fulfilled",
       );
       const matchingTargets = fulfilled
         .filter(({ value }) => {
           const topLevelDirectory =
             normalizeFileMentionPath(value.target.relativePath)
-              .split('/')
-              .find(Boolean) ?? '';
+              .split("/")
+              .find(Boolean) ?? "";
           if (!topLevelDirectory) return true;
           return value.listing.entries.some(
             (entry) =>
-              entry.kind === 'directory' &&
+              entry.kind === "directory" &&
               entry.name.toLowerCase() === topLevelDirectory.toLowerCase(),
           );
         })
@@ -3064,9 +3541,9 @@ export default function AIDock({
         setFileMentionTrigger(null);
         setActiveFileMentionIndex(0);
         setFileMentionListing({
-          status: 'idle',
-          rootPath: '',
-          directory: '',
+          status: "idle",
+          rootPath: "",
+          directory: "",
           entries: [],
         });
         return [];
@@ -3074,9 +3551,9 @@ export default function AIDock({
 
       const rejected = rootResults.find(
         (result): result is PromiseRejectedResult =>
-          result.status === 'rejected',
+          result.status === "rejected",
       );
-      throw rejected?.reason ?? new Error('Workspace listing failed');
+      throw rejected?.reason ?? new Error("Workspace listing failed");
     })()
       .then((validTargets) => {
         if (cancelled || validTargets.length === 0) return [];
@@ -3084,29 +3561,34 @@ export default function AIDock({
           validTargets.map(async (target) => ({
             target,
             listing:
-              target.relativePath === ''
+              target.relativePath === ""
                 ? await rootListingForTarget(target)
-                : await listWorkspaceDirectory(target.rootPath, target.relativePath),
+                : await listComposerWorkspaceDirectory(
+                    target.rootPath,
+                    target.relativePath,
+                  ),
           })),
         );
       })
       .then((results) => {
         if (cancelled || results.length === 0) return;
         const fulfilled = results.filter(
-          (result): result is PromiseFulfilledResult<{
+          (
+            result,
+          ): result is PromiseFulfilledResult<{
             target: FileMentionListTarget;
             listing: Awaited<ReturnType<typeof listWorkspaceDirectory>>;
-          }> => result.status === 'fulfilled',
+          }> => result.status === "fulfilled",
         );
         if (fulfilled.length === 0) {
           const rejected = results.find(
             (result): result is PromiseRejectedResult =>
-              result.status === 'rejected',
+              result.status === "rejected",
           );
-          throw rejected?.reason ?? new Error('Workspace listing failed');
+          throw rejected?.reason ?? new Error("Workspace listing failed");
         }
         setFileMentionListing({
-          status: 'ready',
+          status: "ready",
           rootPath: listingKey,
           directory,
           entries: uniqueFileMentionEntries(
@@ -3122,7 +3604,7 @@ export default function AIDock({
       .catch((err) => {
         if (cancelled) return;
         setFileMentionListing({
-          status: 'error',
+          status: "error",
           rootPath: listingKey,
           directory,
           entries: [],
@@ -3133,10 +3615,18 @@ export default function AIDock({
     return () => {
       cancelled = true;
     };
-  }, [fileMentionDirectory, fileMentionRootFolders, fileMentionRootKey, isReadOnly, locale]);
+  }, [
+    fileMentionDirectory,
+    fileMentionRootFolders,
+    fileMentionRootKey,
+    isReadOnly,
+    listComposerWorkspaceDirectory,
+    locale,
+  ]);
 
   const onOpenFile = useCallback(
     (ref: FileRef, intent?: OpenFileIntent) => {
+      if (activeRemoteWorkspaceRoot) return;
       if (intent?.reveal) {
         void openLocalPath(ref.path, {
           cwd: workspaceCwd || undefined,
@@ -3146,7 +3636,7 @@ export default function AIDock({
       }
       setFilePreviewRef(ref);
     },
-    [workspaceCwd],
+    [activeRemoteWorkspaceRoot, workspaceCwd],
   );
 
   // File/image paths typed or pasted into the composer are just plain text
@@ -3160,7 +3650,7 @@ export default function AIDock({
     const refs: FileRef[] = [];
     const seen = new Set<string>();
     for (const part of scanFileRefs(text)) {
-      if (typeof part === 'string') continue;
+      if (typeof part === "string") continue;
       const key = displayFileRefLabel(part, workspaceCwd);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -3174,7 +3664,7 @@ export default function AIDock({
   // and in-progress reasoning rendering.
   const lastAssistantId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'assistant') return messages[i].id;
+      if (messages[i].role === "assistant") return messages[i].id;
     }
     return null;
   }, [messages]);
@@ -3185,12 +3675,70 @@ export default function AIDock({
   // no longer parses every message's markdown in one blocking commit.
   const eagerMessageIds = useMemo(() => {
     const ids = new Set<string>();
-    for (let i = Math.max(0, messages.length - EAGER_MESSAGE_TAIL); i < messages.length; i++) {
+    for (
+      let i = Math.max(0, messages.length - EAGER_MESSAGE_TAIL);
+      i < messages.length;
+      i++
+    ) {
       ids.add(messages[i].id);
     }
     return ids;
   }, [messages]);
-  const aiBusy = mode === 'running' || activeAiEditing || activeChatting;
+  const renderFullMessageList =
+    forceEagerCapture || normalizedSearch.length > 0;
+  const scrollSnapshotForWindow =
+    streamScrollSnapshotsRef.current.get(activeStreamScrollKey);
+  const anchorMessageIndex = scrollSnapshotForWindow?.anchorMessageId
+    ? messages.findIndex(
+        (message) => message.id === scrollSnapshotForWindow.anchorMessageId,
+      )
+    : -1;
+  const anchorMessageWindowSize =
+    anchorMessageIndex >= 0 ? messages.length - anchorMessageIndex : 0;
+  const savedMessageWindowSize =
+    messageWindowSizesRef.current.get(activeStreamScrollKey) ??
+    INITIAL_MESSAGE_WINDOW;
+  const storedMessageWindowSize =
+    messageWindow.key === activeStreamScrollKey
+      ? messageWindow.size
+      : savedMessageWindowSize;
+  const effectiveMessageWindowSize = Math.min(
+    messages.length,
+    Math.max(
+      INITIAL_MESSAGE_WINDOW,
+      storedMessageWindowSize,
+      anchorMessageWindowSize,
+    ),
+  );
+  const visibleMessageCount = renderFullMessageList
+    ? messages.length
+    : effectiveMessageWindowSize;
+  const hiddenMessageCount = Math.max(
+    0,
+    messages.length - visibleMessageCount,
+  );
+  const visibleMessages = useMemo(
+    () =>
+      hiddenMessageCount > 0
+        ? messages.slice(hiddenMessageCount)
+        : messages,
+    [hiddenMessageCount, messages],
+  );
+  const aiBusy = mode === "running" || activeAiEditing || activeChatting;
+
+  useLayoutEffect(() => {
+    if (renderFullMessageList) return;
+    setMessageWindow((current) =>
+      current.key === activeStreamScrollKey &&
+      current.size === effectiveMessageWindowSize
+        ? current
+        : { key: activeStreamScrollKey, size: effectiveMessageWindowSize },
+    );
+  }, [
+    activeStreamScrollKey,
+    effectiveMessageWindowSize,
+    renderFullMessageList,
+  ]);
 
   const [height, setHeight] = useState<number>(
     () => loadDockHeight() ?? DEFAULT_DOCK_HEIGHT,
@@ -3214,6 +3762,30 @@ export default function AIDock({
   // bottom edge to this so it never overlaps the (variable-height) input bar.
   const [inputSectionHeight, setInputSectionHeight] = useState(0);
 
+  useEffect(() => {
+    const drawerWidths = new Map<string, number>();
+    const syncWidth = () => {
+      setFilePreviewDrawerWidth(
+        Math.max(0, ...Array.from(drawerWidths.values())),
+      );
+    };
+    const onLayout = (event: Event) => {
+      const detail = (event as CustomEvent<FilePreviewDrawerLayoutDetail>)
+        .detail;
+      if (!detail?.id) return;
+      if (detail.open) {
+        drawerWidths.set(detail.id, Math.max(0, detail.width));
+      } else {
+        drawerWidths.delete(detail.id);
+      }
+      syncWidth();
+    };
+    window.addEventListener(FILE_PREVIEW_DRAWER_LAYOUT_EVENT, onLayout);
+    return () => {
+      window.removeEventListener(FILE_PREVIEW_DRAWER_LAYOUT_EVENT, onLayout);
+    };
+  }, []);
+
   // Track the input section height while the popup is open so the popup always
   // floats just above the composer instead of covering it.
   useEffect(() => {
@@ -3222,11 +3794,46 @@ export default function AIDock({
     if (!el) return;
     const measure = () => setInputSectionHeight(el.offsetHeight);
     measure();
-    if (typeof ResizeObserver === 'undefined') return;
+    if (typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, [orgPanelOpen]);
+
+  useLayoutEffect(() => {
+    if (!isChat || filePreviewDrawerWidth <= 0) {
+      setChatVisibleRightInset(0);
+      return;
+    }
+
+    const updateInset = () => {
+      const dock = dockRef.current;
+      if (!dock || typeof window === "undefined") {
+        setChatVisibleRightInset(0);
+        return;
+      }
+      const dockRect = dock.getBoundingClientRect();
+      const drawerLeft = window.innerWidth - filePreviewDrawerWidth;
+      const overlap = Math.max(
+        0,
+        dockRect.right - Math.max(dockRect.left, drawerLeft),
+      );
+      const maxInset = Math.max(0, dockRect.width - MIN_CHAT_VISIBLE_WIDTH);
+      setChatVisibleRightInset(Math.min(overlap, maxInset));
+    };
+
+    updateInset();
+    window.addEventListener("resize", updateInset);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && dockRef.current) {
+      ro = new ResizeObserver(updateInset);
+      ro.observe(dockRef.current);
+    }
+    return () => {
+      window.removeEventListener("resize", updateInset);
+      ro?.disconnect();
+    };
+  }, [filePreviewDrawerWidth, isChat]);
 
   // Collapse the organization popup when clicking anywhere outside of it (the
   // trigger button toggles it directly, so ignore clicks that land on it).
@@ -3236,17 +3843,17 @@ export default function AIDock({
       const panel = orgPanelRef.current;
       const target = event.target as HTMLElement | null;
       if (panel && target && panel.contains(target)) return;
-      if (target && target.closest('[data-org-panel-trigger]')) return;
+      if (target && target.closest("[data-org-panel-trigger]")) return;
       setOrgPanelOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOrgPanelOpen(false);
+      if (event.key === "Escape") setOrgPanelOpen(false);
     };
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, [orgPanelOpen]);
 
@@ -3258,15 +3865,16 @@ export default function AIDock({
   }, [orgPanelOpen]);
   useEffect(() => {
     const handleStorage = (event: StorageEvent) => {
-      if (event.key && !event.key.includes('gameOrgDefinition')) return;
+      if (event.key && !event.key.includes("gameOrgDefinition")) return;
       setOrgDefinition(loadGameOrgDefinition());
     };
-    window.addEventListener('storage', handleStorage);
-    return () => window.removeEventListener('storage', handleStorage);
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   const orgPanelBottomOffset =
-    (inputSectionHeight || (isChat && !centerInput ? chatInputHeight : 112)) + 12;
+    (inputSectionHeight || (isChat && !centerInput ? chatInputHeight : 112)) +
+    12;
 
   const setActiveSearchMatchNode = useCallback((node: HTMLElement | null) => {
     activeSearchMatchNodeRef.current = node;
@@ -3283,13 +3891,13 @@ export default function AIDock({
 
   const closeReturnSearch = useCallback(() => {
     setReturnSearchOpen(false);
-    setReturnSearch('');
+    setReturnSearch("");
     setActiveSearchMatchIndex(0);
     activeSearchMatchNodeRef.current = null;
   }, []);
 
   const clearReturnSearch = useCallback(() => {
-    setReturnSearch('');
+    setReturnSearch("");
     setActiveSearchMatchIndex(0);
     if (returnSearchOpen) focusSearchInput();
   }, [focusSearchInput, returnSearchOpen]);
@@ -3298,20 +3906,21 @@ export default function AIDock({
     (step: number) => {
       if (searchMatches.length === 0) return;
       setActiveSearchMatchIndex((current) => {
-        const next = (current + step + searchMatches.length) % searchMatches.length;
+        const next =
+          (current + step + searchMatches.length) % searchMatches.length;
         return next;
       });
     },
     [searchMatches.length],
   );
 
-  const scrollToStreamEdge = useCallback((edge: 'top' | 'bottom') => {
+  const scrollToStreamEdge = useCallback((edge: "top" | "bottom") => {
     const stream = streamRef.current;
     if (!stream) return;
-    if (edge === 'bottom') stickToBottomRef.current = true;
+    if (edge === "bottom") stickToBottomRef.current = true;
     stream.scrollTo({
-      top: edge === 'top' ? 0 : stream.scrollHeight,
-      behavior: 'smooth',
+      top: edge === "top" ? 0 : stream.scrollHeight,
+      behavior: "smooth",
     });
   }, []);
 
@@ -3328,7 +3937,10 @@ export default function AIDock({
     };
     window.addEventListener(ASSET_SESSION_JUMP_EVENT, handleAssetSessionJump);
     return () => {
-      window.removeEventListener(ASSET_SESSION_JUMP_EVENT, handleAssetSessionJump);
+      window.removeEventListener(
+        ASSET_SESSION_JUMP_EVENT,
+        handleAssetSessionJump,
+      );
       if (assetJumpHighlightTimerRef.current != null) {
         window.clearTimeout(assetJumpHighlightTimerRef.current);
         assetJumpHighlightTimerRef.current = null;
@@ -3353,15 +3965,33 @@ export default function AIDock({
         ? assetJumpTarget.messageId
         : (messages[messages.length - 1]?.id ?? null);
     if (!targetMessageId) return;
+    if (!renderFullMessageList) {
+      const targetIndex = messages.findIndex(
+        (message) => message.id === targetMessageId,
+      );
+      const requiredWindowSize =
+        targetIndex >= 0 ? messages.length - targetIndex : 0;
+      if (requiredWindowSize > visibleMessageCount) {
+        setMessageWindow({
+          key: activeStreamScrollKey,
+          size: requiredWindowSize,
+        });
+        messageWindowSizesRef.current.set(
+          activeStreamScrollKey,
+          requiredWindowSize,
+        );
+        return;
+      }
+    }
 
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const node = messageRefs.current.get(targetMessageId);
         if (node) {
           node.scrollIntoView({
-            block: 'center',
-            inline: 'nearest',
-            behavior: 'smooth',
+            block: "center",
+            inline: "nearest",
+            behavior: "smooth",
           });
         } else {
           scrollStreamToBottom(stream);
@@ -3377,7 +4007,15 @@ export default function AIDock({
         setAssetJumpTarget(null);
       });
     });
-  }, [activeSessionId, activeWorkspaceId, assetJumpTarget, messages]);
+  }, [
+    activeSessionId,
+    activeStreamScrollKey,
+    activeWorkspaceId,
+    assetJumpTarget,
+    messages,
+    renderFullMessageList,
+    visibleMessageCount,
+  ]);
 
   // Re-pin the active stream to the bottom. Called when the user sends a
   // message so the new entry is guaranteed to scroll into view, even if the
@@ -3412,13 +4050,49 @@ export default function AIDock({
     stickToBottomRef.current = snapshot.atBottom;
   }, []);
 
-  const restoreStreamScrollSnapshotForKey = useCallback((key: string): boolean => {
+  const revealEarlierMessages = useCallback(() => {
     const stream = streamRef.current;
-    if (!stream) return false;
-    const snapshot = streamScrollSnapshotsRef.current.get(key);
-    stickToBottomRef.current = snapshot?.atBottom ?? true;
-    return restoreStreamScrollSnapshot(stream, messageRefs.current, snapshot);
-  }, []);
+    const previousScrollHeight = stream?.scrollHeight ?? null;
+    setMessageWindow((current) => {
+      const currentSize =
+        current.key === activeStreamScrollKey
+          ? current.size
+          : effectiveMessageWindowSize;
+      const next = Math.min(
+        messages.length,
+        Math.max(INITIAL_MESSAGE_WINDOW, currentSize) + MESSAGE_WINDOW_PAGE,
+      );
+      messageWindowSizesRef.current.set(activeStreamScrollKey, next);
+      return current.key === activeStreamScrollKey && current.size === next
+        ? current
+        : { key: activeStreamScrollKey, size: next };
+    });
+    window.requestAnimationFrame(() => {
+      const nextStream = streamRef.current;
+      if (!nextStream || previousScrollHeight == null) return;
+      const delta = nextStream.scrollHeight - previousScrollHeight;
+      if (Number.isFinite(delta) && delta > 0) {
+        nextStream.scrollTop += delta;
+        rememberStreamScrollSnapshot();
+      }
+    });
+  }, [
+    activeStreamScrollKey,
+    effectiveMessageWindowSize,
+    messages.length,
+    rememberStreamScrollSnapshot,
+  ]);
+
+  const restoreStreamScrollSnapshotForKey = useCallback(
+    (key: string): boolean => {
+      const stream = streamRef.current;
+      if (!stream) return false;
+      const snapshot = streamScrollSnapshotsRef.current.get(key);
+      stickToBottomRef.current = snapshot?.atBottom ?? true;
+      return restoreStreamScrollSnapshot(stream, messageRefs.current, snapshot);
+    },
+    [],
+  );
 
   // Track whether the user is parked at (or near) the bottom. Manual upward
   // scroll pins this session to the visible message anchor; bottom stays sticky
@@ -3460,7 +4134,11 @@ export default function AIDock({
       if (!target) return;
       messageRefs.current
         .get(target.id)
-        ?.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'smooth' });
+        ?.scrollIntoView({
+          block: "start",
+          inline: "nearest",
+          behavior: "smooth",
+        });
     },
     [topicMessageIds],
   );
@@ -3495,6 +4173,7 @@ export default function AIDock({
 
   const closeFileMentionSuggestions = useCallback(() => {
     fileMentionTriggerRef.current = null;
+    fileMentionInsertModeRef.current = "mention";
     setFileMentionTrigger(null);
     setActiveFileMentionIndex(0);
   }, []);
@@ -3520,7 +4199,11 @@ export default function AIDock({
 
   const syncSlashTrigger = useCallback(
     (target: HTMLTextAreaElement | null = inputRef.current) => {
-      if (!target || isReadOnly || target.selectionStart !== target.selectionEnd) {
+      if (
+        !target ||
+        isReadOnly ||
+        target.selectionStart !== target.selectionEnd
+      ) {
         closeSlashSuggestions();
         return;
       }
@@ -3542,7 +4225,11 @@ export default function AIDock({
 
   const syncGameSkillTrigger = useCallback(
     (target: HTMLTextAreaElement | null = inputRef.current) => {
-      if (!target || isReadOnly || target.selectionStart !== target.selectionEnd) {
+      if (
+        !target ||
+        isReadOnly ||
+        target.selectionStart !== target.selectionEnd
+      ) {
         closeGameSkillSuggestions();
         return;
       }
@@ -3564,10 +4251,15 @@ export default function AIDock({
 
   const syncFileMentionTrigger = useCallback(
     (target: HTMLTextAreaElement | null = inputRef.current) => {
-      if (!target || isReadOnly || target.selectionStart !== target.selectionEnd) {
+      if (
+        !target ||
+        isReadOnly ||
+        target.selectionStart !== target.selectionEnd
+      ) {
         closeFileMentionSuggestions();
         return;
       }
+      if (fileMentionInsertModeRef.current === "path") return;
 
       const next = findFileMentionTrigger(target.value, target.selectionStart);
       const prev = fileMentionTriggerRef.current;
@@ -3578,6 +4270,7 @@ export default function AIDock({
         prev?.query === next?.query;
       if (unchanged) return;
 
+      if (next) fileMentionInsertModeRef.current = "mention";
       fileMentionTriggerRef.current = next;
       setFileMentionTrigger(next);
       setActiveFileMentionIndex(0);
@@ -3667,7 +4360,7 @@ export default function AIDock({
       const insertionText = isOrgSlashSuggestion(suggestion)
         ? suggestion.insertText.trim()
         : suggestion.name;
-      const spacer = after.length > 0 && /^\s/.test(after) ? '' : ' ';
+      const spacer = after.length > 0 && /^\s/.test(after) ? "" : " ";
       const inserted = `${insertionText}${spacer}`;
       const next = current.slice(0, start) + inserted + after;
       const caret = start + inserted.length;
@@ -3690,7 +4383,7 @@ export default function AIDock({
   // Replaces the active `#…` token with the GameSkill's canonical `/command`
   // token. We deliberately insert the slash command (not the protocol text) so
   // every existing submit-time route and channel guard keeps working unchanged —
-  // `#` is purely a discovery surface for the FreeUltraCode GameSkills.
+  // `#` is purely a discovery surface for the UltraGameStudio GameSkills.
   const applyGameSkillSuggestion = useCallback(
     (suggestion: SlashSuggestion) => {
       if (isReadOnly) return;
@@ -3702,7 +4395,7 @@ export default function AIDock({
       const start = clampSelection(trigger.start, current.length);
       const end = clampSelection(trigger.end, current.length);
       const after = current.slice(end);
-      const spacer = after.length > 0 && /^\s/.test(after) ? '' : ' ';
+      const spacer = after.length > 0 && /^\s/.test(after) ? "" : " ";
       const inserted = `${suggestion.name}${spacer}`;
       const next = current.slice(0, start) + inserted + after;
       const caret = start + inserted.length;
@@ -3730,13 +4423,14 @@ export default function AIDock({
       const trigger = orgMentionTriggerRef.current;
       if (!trigger) return;
 
-      const command = (node.commandText ?? '').trim();
+      const command = (node.commandText ?? "").trim();
       const current = draftRef.current;
       const start = clampSelection(trigger.start, current.length);
       const end = clampSelection(trigger.end, current.length);
       const after = current.slice(end);
-      const spacer = command && after.length > 0 && /^\s/.test(after) ? '' : ' ';
-      const inserted = command ? `${command}${spacer}` : '';
+      const spacer =
+        command && after.length > 0 && /^\s/.test(after) ? "" : " ";
+      const inserted = command ? `${command}${spacer}` : "";
       const next = current.slice(0, start) + inserted + after;
       const caret = start + inserted.length;
 
@@ -3769,7 +4463,7 @@ export default function AIDock({
       const end = clampSelection(trigger.end, current.length);
       const next = current.slice(0, start + 1) + current.slice(end);
       const caret = start + 1;
-      const resetTrigger: SlashTrigger = { start, end: caret, query: '' };
+      const resetTrigger: SlashTrigger = { start, end: caret, query: "" };
       orgMentionTriggerRef.current = resetTrigger;
       draftRef.current = next;
       selectionRef.current = { start: caret, end: caret };
@@ -3789,24 +4483,24 @@ export default function AIDock({
   const applyOrgMentionOption = useCallback(
     (option: OrgMentionOption) => {
       if (isReadOnly) return;
-      if (option.kind === 'back') {
+      if (option.kind === "back") {
         const parent = orgMentionParentId
-          ? orgNodeById.get(orgMentionParentId) ?? null
+          ? (orgNodeById.get(orgMentionParentId) ?? null)
           : null;
         // Find the node whose children include the current branch. If that is
         // the root, the menu returns to the top (null) level rather than
         // listing the root node itself.
         const owner = parent
-          ? orgNodesFlat.find((candidate) =>
+          ? (orgNodesFlat.find((candidate) =>
               candidate.children.some((child) => child.id === parent.id),
-            ) ?? null
+            ) ?? null)
           : null;
         const grandparentId =
           owner && owner.id !== orgTree.id ? owner.id : null;
         drillOrgMention(grandparentId);
         return;
       }
-      if (option.kind === 'insert-self') {
+      if (option.kind === "insert-self") {
         insertOrgMentionCommand(option.node);
         return;
       }
@@ -3839,12 +4533,20 @@ export default function AIDock({
       const start = clampSelection(trigger.start, current.length);
       const end = clampSelection(trigger.end, current.length);
       const after = current.slice(end);
-      const baseInserted = fileMentionInsertText(entry);
+      const mode = fileMentionInsertModeRef.current;
+      const baseInserted =
+        mode === "path"
+          ? filePathPickerInsertText(entry)
+          : fileMentionInsertText(entry);
+      const prefix =
+        mode === "path" && start > 0 && !/\s/.test(current[start - 1] ?? "")
+          ? " "
+          : "";
       const spacer =
-        entry.kind === 'file' && (after.length === 0 || !/^\s/.test(after))
-          ? ' '
-          : '';
-      const inserted = `${baseInserted}${spacer}`;
+        entry.kind === "file" && (after.length === 0 || !/^\s/.test(after))
+          ? " "
+          : "";
+      const inserted = `${prefix}${baseInserted}${spacer}`;
       const next = current.slice(0, start) + inserted + after;
       const caret = start + inserted.length;
 
@@ -3852,8 +4554,16 @@ export default function AIDock({
       selectionRef.current = { start: caret, end: caret };
       setComposerDraft(next);
 
-      if (entry.kind === 'directory') {
-        const nextTrigger = findFileMentionTrigger(next, caret);
+      if (entry.kind === "directory") {
+        const nextTrigger =
+          mode === "path"
+            ? {
+                start: start + prefix.length,
+                end: caret,
+                directory: normalizeFileMentionPath(entry.relativePath),
+                query: "",
+              }
+            : findFileMentionTrigger(next, caret);
         fileMentionTriggerRef.current = nextTrigger;
         setFileMentionTrigger(nextTrigger);
         setActiveFileMentionIndex(0);
@@ -3886,23 +4596,58 @@ export default function AIDock({
 
   const startFileMention = useCallback(() => {
     if (isReadOnly) return;
+    fileMentionInsertModeRef.current = "mention";
     const current = draftRef.current;
     const start = clampSelection(selectionRef.current.start, current.length);
-    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? '') ? ' ' : '';
+    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? "") ? " " : "";
     insertComposerText(`${prefix}@`);
-    window.requestAnimationFrame(() => syncComposerSuggestions(inputRef.current));
+    window.requestAnimationFrame(() =>
+      syncComposerSuggestions(inputRef.current),
+    );
   }, [insertComposerText, isReadOnly, syncComposerSuggestions]);
+
+  const startRemoteFilePathPicker = useCallback(() => {
+    if (isReadOnly || !activeRemoteWorkspaceRoot) return;
+    const current = draftRef.current;
+    const start = clampSelection(selectionRef.current.start, current.length);
+    const end = clampSelection(selectionRef.current.end, current.length);
+    const nextTrigger: FileMentionTrigger = {
+      start,
+      end,
+      directory: "",
+      query: "",
+    };
+    fileMentionInsertModeRef.current = "path";
+    fileMentionTriggerRef.current = nextTrigger;
+    setFileMentionTrigger(nextTrigger);
+    setActiveFileMentionIndex(0);
+    closeSlashSuggestions();
+    closeGameSkillSuggestions();
+    closeOrgMentionSuggestions();
+    window.requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!(el instanceof HTMLTextAreaElement)) return;
+      el.focus();
+      el.setSelectionRange(start, end);
+    });
+  }, [
+    activeRemoteWorkspaceRoot,
+    closeGameSkillSuggestions,
+    closeOrgMentionSuggestions,
+    closeSlashSuggestions,
+    isReadOnly,
+  ]);
 
   const startSlashCommand = useCallback(() => {
     if (isReadOnly) return;
     const current = draftRef.current;
     const start = clampSelection(selectionRef.current.start, current.length);
-    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? '') ? ' ' : '';
+    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? "") ? " " : "";
     const triggerStart = start + prefix.length;
     const nextTrigger: SlashTrigger = {
       start: triggerStart,
       end: triggerStart + 1,
-      query: '',
+      query: "",
     };
     const openSlashMenu = () => {
       slashTriggerRef.current = nextTrigger;
@@ -3919,12 +4664,12 @@ export default function AIDock({
     if (isReadOnly) return;
     const current = draftRef.current;
     const start = clampSelection(selectionRef.current.start, current.length);
-    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? '') ? ' ' : '';
+    const prefix = start > 0 && !/\s/.test(current[start - 1] ?? "") ? " " : "";
     const triggerStart = start + prefix.length;
     const nextTrigger: SlashTrigger = {
       start: triggerStart,
       end: triggerStart + 1,
-      query: '',
+      query: "",
     };
     const openGameSkillMenu = () => {
       gameSkillTriggerRef.current = nextTrigger;
@@ -3945,7 +4690,9 @@ export default function AIDock({
 
   const handlePaste = useCallback(
     (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
-      if (isReadOnly || !tauriAvailable()) return;
+      if (isReadOnly || (!tauriAvailable() && !activeRemoteWorkspaceRoot)) {
+        return;
+      }
 
       const images = clipboardImageFiles(event.clipboardData);
       if (images.length === 0) return;
@@ -3958,34 +4705,40 @@ export default function AIDock({
       selectionRef.current = selection;
 
       void Promise.allSettled(
-        images.map((file) => savePastedImageFile(file, workspaceCwd)),
+        images.map((file) =>
+          savePastedImageFile(file, workspaceCwd, activeRemoteWorkspaceRoot),
+        ),
       ).then((results) => {
-        const paths = results
-          .filter(
-            (result): result is PromiseFulfilledResult<string> =>
-              result.status === 'fulfilled',
-          )
-          .map((result) => result.value);
+        const paths = uploadedPathsFromResults(results, {
+          remote: !!activeRemoteWorkspaceRoot,
+        });
         if (paths.length === 0) return;
         closeComposerSuggestions();
         insertFilePaths(paths, selection);
       });
     },
-    [closeComposerSuggestions, insertFilePaths, isReadOnly, workspaceCwd],
+    [
+      activeRemoteWorkspaceRoot,
+      closeComposerSuggestions,
+      insertFilePaths,
+      isReadOnly,
+      uploadedPathsFromResults,
+      workspaceCwd,
+    ],
   );
 
   const handleComposerDragOver = useCallback(
     (event: ReactDragEvent<HTMLElement>) => {
       const hasProjectPaths = hasProjectFileDragData(event.dataTransfer);
       const hasFiles = Array.from(event.dataTransfer?.types ?? []).includes(
-        'Files',
+        "Files",
       );
       // Project-tree drags use HTML5 DnD. Browser/no-native builds can also
       // expose external files here, though those may only carry File.name.
       // Desktop full paths come from the Tauri native drag handler below.
       if (isReadOnly || (!hasProjectPaths && !hasFiles)) return;
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
+      event.dataTransfer.dropEffect = "copy";
       if (hasProjectPaths) {
         setProjectFileDragAccepted(true);
         applyProjectFileDragDropEffect(event.dataTransfer);
@@ -4013,7 +4766,9 @@ export default function AIDock({
   const handleComposerDrop = useCallback(
     (event: ReactDragEvent<HTMLElement>) => {
       const hasProjectPaths = hasProjectFileDragData(event.dataTransfer);
-      const projectPaths = projectFilePathsFromDataTransfer(event.dataTransfer);
+      const projectPaths = activeRemoteWorkspaceRoot
+        ? projectFileRelativePathsFromDataTransfer(event.dataTransfer)
+        : projectFilePathsFromDataTransfer(event.dataTransfer);
       if (isReadOnly) return;
 
       const targetSelection =
@@ -4043,9 +4798,26 @@ export default function AIDock({
       setDropActive(false);
       setProjectFileDragAccepted(false);
       closeComposerSuggestions();
+      if (activeRemoteWorkspaceRoot) {
+        const files = filesFromDataTransfer(event.dataTransfer);
+        void Promise.allSettled(
+          files.map((file) => uploadRemoteFile(activeRemoteWorkspaceRoot, file)),
+        ).then((results) => {
+          const paths = uploadedPathsFromResults(results, { remote: true });
+          if (paths.length === 0) return;
+          insertFilePaths(paths, targetSelection);
+        });
+        return;
+      }
       insertFilePaths(pathsFromDataTransfer(event.dataTransfer), targetSelection);
     },
-    [closeComposerSuggestions, insertFilePaths, isReadOnly],
+    [
+      activeRemoteWorkspaceRoot,
+      closeComposerSuggestions,
+      insertFilePaths,
+      isReadOnly,
+      uploadedPathsFromResults,
+    ],
   );
 
   const updateProjectDragFeedbackAtPoint = useCallback(
@@ -4062,7 +4834,10 @@ export default function AIDock({
 
   /** Clamp the input width to keep both panes usable within the dock. */
   const clampInputWidth = useCallback((w: number): number => {
-    const total = Math.max(0, dockRef.current?.clientWidth ?? window.innerWidth);
+    const total = Math.max(
+      0,
+      dockRef.current?.clientWidth ?? window.innerWidth,
+    );
     const constrained = total < MIN_INPUT_WIDTH + MIN_RETURN_WIDTH;
     const minInput = constrained
       ? Math.min(
@@ -4107,19 +4882,19 @@ export default function AIDock({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (keyModalChannel || localSetupChannel) return;
-      if (matchesShortcut(event, shortcutSettings['return-search'])) {
+      if (matchesShortcut(event, shortcutSettings["return-search"])) {
         event.preventDefault();
         openReturnSearch();
         return;
       }
-      if (event.key === 'Escape' && returnSearchOpen) {
+      if (event.key === "Escape" && returnSearchOpen) {
         event.preventDefault();
         closeReturnSearch();
       }
     };
 
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     closeReturnSearch,
     keyModalChannel,
@@ -4168,12 +4943,14 @@ export default function AIDock({
   }, [activeStreamScrollKey]);
 
   useLayoutEffect(() => {
-    if (pendingStreamScrollRestoreKeyRef.current !== activeStreamScrollKey) return;
+    if (pendingStreamScrollRestoreKeyRef.current !== activeStreamScrollKey)
+      return;
     if (restoreStreamScrollSnapshotForKey(activeStreamScrollKey)) {
       pendingStreamScrollRestoreKeyRef.current = null;
     }
   }, [
     activeStreamScrollKey,
+    hiddenMessageCount,
     messages.length,
     restoreStreamScrollSnapshotForKey,
   ]);
@@ -4223,7 +5000,7 @@ export default function AIDock({
       }
       rememberStreamScrollSnapshot(key);
     };
-    if (typeof ResizeObserver === 'undefined') {
+    if (typeof ResizeObserver === "undefined") {
       syncScrollAfterLayout();
       return;
     }
@@ -4239,11 +5016,15 @@ export default function AIDock({
   }, [rememberStreamScrollSnapshot, messages.length]);
 
   useEffect(() => {
-    if (!normalizedSearch || !activeSearchMatchId || !activeSearchMatchMessageId) {
+    if (
+      !normalizedSearch ||
+      !activeSearchMatchId ||
+      !activeSearchMatchMessageId
+    ) {
       return;
     }
     const target =
-      activeSearchMatchSource === 'text'
+      activeSearchMatchSource === "text"
         ? activeSearchMatchNodeRef.current
         : null;
     const messageEl = messageRefs.current.get(activeSearchMatchMessageId);
@@ -4251,7 +5032,7 @@ export default function AIDock({
       target && target.dataset.searchMatchId === activeSearchMatchId
         ? target
         : messageEl;
-    scrollTarget?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    scrollTarget?.scrollIntoView?.({ block: "center", inline: "nearest" });
   }, [
     activeSearchMatchId,
     activeSearchMatchMessageId,
@@ -4265,7 +5046,11 @@ export default function AIDock({
     if (composerFocusVersion === lastComposerFocusVersion.current) return;
     lastComposerFocusVersion.current = composerFocusVersion;
     const el = inputRef.current;
-    if (!(el instanceof HTMLTextAreaElement) || !shouldRefocusComposerAfterAppend(mode)) return;
+    if (
+      !(el instanceof HTMLTextAreaElement) ||
+      !shouldRefocusComposerAfterAppend(mode)
+    )
+      return;
     el.focus();
     const end = el.value.length;
     el.setSelectionRange(end, end);
@@ -4281,13 +5066,13 @@ export default function AIDock({
     let unlisten: (() => void) | undefined;
 
     const setup = async () => {
-      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
       const dispose = await getCurrentWebview().onDragDropEvent((event) => {
         if (disposed) return;
         const payload = event.payload;
         const el = inputDropRef.current ?? inputRef.current;
 
-        if (payload.type === 'leave') {
+        if (payload.type === "leave") {
           setDropActive(false);
           return;
         }
@@ -4295,18 +5080,30 @@ export default function AIDock({
           setDropActive(false);
           return;
         }
-        if (payload.type === 'enter') {
+        if (payload.type === "enter") {
           setDropActive(pointInsideElement(payload.position, el));
           return;
         }
-        if (payload.type === 'over') {
+        if (payload.type === "over") {
           setDropActive(pointInsideElement(payload.position, el));
           return;
         }
-        if (payload.type === 'drop') {
+        if (payload.type === "drop") {
           const inside = pointInsideElement(payload.position, el);
           setDropActive(false);
-          if (inside) insertFilePaths(payload.paths);
+          if (!inside) return;
+          if (activeRemoteWorkspaceRoot) {
+            void Promise.allSettled(
+              payload.paths.map((path) =>
+                uploadLocalPathToRemote(activeRemoteWorkspaceRoot, path),
+              ),
+            ).then((results) => {
+              const paths = uploadedPathsFromResults(results, { remote: true });
+              if (paths.length > 0) insertFilePaths(paths);
+            });
+            return;
+          }
+          insertFilePaths(payload.paths);
         }
       });
       if (disposed) {
@@ -4324,7 +5121,12 @@ export default function AIDock({
       disposed = true;
       unlisten?.();
     };
-  }, [insertFilePaths, isReadOnly]);
+  }, [
+    activeRemoteWorkspaceRoot,
+    insertFilePaths,
+    isReadOnly,
+    uploadedPathsFromResults,
+  ]);
 
   useEffect(() => {
     const onProjectFileDragMove = (event: Event) => {
@@ -4342,7 +5144,7 @@ export default function AIDock({
       if (!accepted) return;
 
       event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
+      event.dataTransfer.dropEffect = "copy";
       applyProjectFileDragDropEffect(event.dataTransfer);
     };
 
@@ -4350,15 +5152,15 @@ export default function AIDock({
       PROJECT_FILE_DRAG_MOVE_EVENT,
       onProjectFileDragMove,
     );
-    window.addEventListener('dragenter', onProjectFileDragOver, true);
-    window.addEventListener('dragover', onProjectFileDragOver, true);
+    window.addEventListener("dragenter", onProjectFileDragOver, true);
+    window.addEventListener("dragover", onProjectFileDragOver, true);
     return () => {
       window.removeEventListener(
         PROJECT_FILE_DRAG_MOVE_EVENT,
         onProjectFileDragMove,
       );
-      window.removeEventListener('dragenter', onProjectFileDragOver, true);
-      window.removeEventListener('dragover', onProjectFileDragOver, true);
+      window.removeEventListener("dragenter", onProjectFileDragOver, true);
+      window.removeEventListener("dragover", onProjectFileDragOver, true);
       setProjectFileDragAccepted(false);
     };
   }, [updateProjectDragFeedbackAtPoint]);
@@ -4374,6 +5176,26 @@ export default function AIDock({
       if (!clientPointInsideElement(detail, el)) return;
 
       closeComposerSuggestions();
+      if (activeRemoteWorkspaceRoot) {
+        const remotePaths = remoteProjectDragInsertPaths(
+          activeRemoteWorkspaceRoot,
+          detail.paths,
+          detail.relativePaths,
+        );
+        if (remotePaths.length > 0) {
+          insertFilePaths(remotePaths);
+          return;
+        }
+        void Promise.allSettled(
+          detail.paths.map((path) =>
+            uploadLocalPathToRemote(activeRemoteWorkspaceRoot, path),
+          ),
+        ).then((results) => {
+          const paths = uploadedPathsFromResults(results, { remote: true });
+          if (paths.length > 0) insertFilePaths(paths);
+        });
+        return;
+      }
       insertFilePaths(detail.paths);
     };
 
@@ -4384,15 +5206,21 @@ export default function AIDock({
         onProjectFileDragEnd,
       );
     };
-  }, [closeComposerSuggestions, insertFilePaths, isReadOnly]);
+  }, [
+    activeRemoteWorkspaceRoot,
+    closeComposerSuggestions,
+    insertFilePaths,
+    isReadOnly,
+    uploadedPathsFromResults,
+  ]);
 
   // Re-clamp the input width when the window (and thus the dock) resizes so
   // neither pane collapses below its minimum.
   useLayoutEffect(() => {
     const onResize = () => setRenderedInputWidth(clampInputWidth(inputWidth));
     onResize();
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, [clampInputWidth, inputWidth]);
 
   // Drag the top edge to resize. The panel is anchored to the bottom, so
@@ -4404,15 +5232,15 @@ export default function AIDock({
       const startHeight = height;
       const prevUserSelect = document.body.style.userSelect;
       const prevCursor = document.body.style.cursor;
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "row-resize";
 
       const onMove = (ev: MouseEvent) => {
         setHeight(clampHeight(startHeight - (ev.clientY - startY)));
       };
       const onUp = () => {
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
         document.body.style.userSelect = prevUserSelect;
         document.body.style.cursor = prevCursor;
         setHeight((h) => {
@@ -4420,8 +5248,8 @@ export default function AIDock({
           return h;
         });
       };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
     },
     [height],
   );
@@ -4435,8 +5263,8 @@ export default function AIDock({
       const startWidth = renderedInputWidth;
       const prevUserSelect = document.body.style.userSelect;
       const prevCursor = document.body.style.cursor;
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
 
       const onMove = (ev: MouseEvent) => {
         const next = clampInputWidth(startWidth - (ev.clientX - startX));
@@ -4444,8 +5272,8 @@ export default function AIDock({
         setRenderedInputWidth(next);
       };
       const onUp = () => {
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
         document.body.style.userSelect = prevUserSelect;
         document.body.style.cursor = prevCursor;
         setInputWidth((w) => {
@@ -4453,8 +5281,8 @@ export default function AIDock({
           return w;
         });
       };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
     },
     [renderedInputWidth, clampInputWidth],
   );
@@ -4469,15 +5297,17 @@ export default function AIDock({
       const startHeight = chatInputHeight;
       const prevUserSelect = document.body.style.userSelect;
       const prevCursor = document.body.style.cursor;
-      document.body.style.userSelect = 'none';
-      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "row-resize";
 
       const onMove = (ev: MouseEvent) => {
-        setChatInputHeight(clampChatInputHeight(startHeight - (ev.clientY - startY)));
+        setChatInputHeight(
+          clampChatInputHeight(startHeight - (ev.clientY - startY)),
+        );
       };
       const onUp = () => {
-        window.removeEventListener('mousemove', onMove);
-        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
         document.body.style.userSelect = prevUserSelect;
         document.body.style.cursor = prevCursor;
         setChatInputHeight((h) => {
@@ -4485,8 +5315,8 @@ export default function AIDock({
           return h;
         });
       };
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('mouseup', onUp);
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
     },
     [chatInputHeight],
   );
@@ -4496,27 +5326,33 @@ export default function AIDock({
   // image), waits two frames + a short settle for markdown/highlight/katex to
   // paint, then rasterizes the full scroll box (auto-paged when very long).
   const runSessionScreenshot = useCallback(async () => {
-    const zh = locale === 'zh-CN';
+    const zh = locale === "zh-CN";
     if (captureInFlightRef.current) return;
     // Echo the command so the action is visible in the transcript even if the
     // capture itself no-ops or fails.
-    appendChatNote('/screenshot', 'user');
+    appendChatNote("/screenshot", "user");
     const el = streamRef.current;
     if (!el) {
       appendChatNote(
-        zh ? '✗ 截图失败：找不到会话视图。' : '✗ Screenshot failed: conversation view not found.',
+        zh
+          ? "✗ 截图失败：找不到会话视图。"
+          : "✗ Screenshot failed: conversation view not found.",
       );
       return;
     }
     if (messages.length === 0) {
-      appendChatNote(zh ? '当前会话为空，没有可截图的内容。' : 'Conversation is empty — nothing to capture.');
+      appendChatNote(
+        zh
+          ? "当前会话为空，没有可截图的内容。"
+          : "Conversation is empty — nothing to capture.",
+      );
       return;
     }
     captureInFlightRef.current = true;
     setForceEagerCapture(true);
     setCaptureStatus({
-      kind: 'busy',
-      text: zh ? '正在生成长截图…' : 'Capturing…',
+      kind: "busy",
+      text: zh ? "正在生成长截图…" : "Capturing…",
     });
     const nextFrame = () =>
       new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -4527,72 +5363,94 @@ export default function AIDock({
       await new Promise((resolve) => setTimeout(resolve, 350));
       const result = await captureConversation(el, {
         cwd: workspaceCwd || undefined,
+        save: activeRemoteWorkspaceRoot
+          ? (request) =>
+              saveRemoteSessionCapture(activeRemoteWorkspaceRoot, request)
+          : undefined,
       });
       const preview = result.previewDataUrl
-        ? `\n\n![${zh ? '截图预览' : 'screenshot preview'}](${result.previewDataUrl})`
-        : '';
+        ? `\n\n![${zh ? "截图预览" : "screenshot preview"}](${result.previewDataUrl})`
+        : "";
       let note: string;
       let status: string;
-      if (result.destination === 'browser-download') {
-        status = zh ? `已下载长截图（${result.pages} 张）` : `Downloaded ${result.pages} image(s)`;
+      if (result.destination === "browser-download") {
+        status = zh
+          ? `已下载长截图（${result.pages} 张）`
+          : `Downloaded ${result.pages} image(s)`;
         note =
           (zh
             ? `✓ 已截图当前会话（${result.pages} 张），已通过浏览器下载到默认下载目录。`
             : `✓ Captured this conversation (${result.pages} image(s)) — downloaded via your browser.`) +
           preview;
       } else {
-        const paths = result.paths.length > 0
-          ? result.paths
-          : result.destination.split('\n').filter(Boolean);
+        const paths =
+          result.paths.length > 0
+            ? result.paths
+            : result.destination.split("\n").filter(Boolean);
         status = result.stitched
           ? zh
             ? `已保存 ${result.pages} 张拼接长图`
             : `Saved ${result.pages} stitched pages`
           : zh
-            ? '已保存长截图'
-            : 'Screenshot saved';
-        const pathLines = paths.map((p) => `- \`${p}\``).join('\n');
+            ? "已保存长截图"
+            : "Screenshot saved";
+        const pathLines = paths.map((p) => `- \`${p}\``).join("\n");
         note =
           (zh
-            ? `✓ 已截图当前会话${result.stitched ? `（${result.pages} 张拼接长图）` : ''}，保存到（点击路径可预览）：\n${pathLines}`
-            : `✓ Captured this conversation${result.stitched ? ` (${result.pages} stitched pages)` : ''}, saved to (click a path to preview):\n${pathLines}`) +
+            ? `✓ 已截图当前会话${result.stitched ? `（${result.pages} 张拼接长图）` : ""}，保存到（点击路径可预览）：\n${pathLines}`
+            : `✓ Captured this conversation${result.stitched ? ` (${result.pages} stitched pages)` : ""}, saved to (click a path to preview):\n${pathLines}`) +
           preview;
       }
       appendChatNote(note);
-      setCaptureStatus({ kind: 'done', text: status });
+      setCaptureStatus({ kind: "done", text: status });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setCaptureStatus({ kind: 'error', text: (zh ? '截图失败：' : 'Capture failed: ') + msg });
-      appendChatNote((zh ? '✗ 截图失败：' : '✗ Screenshot failed: ') + msg);
+      const msg = friendlyCaptureError(err, locale);
+      setCaptureStatus({
+        kind: "error",
+        text: (zh ? "截图失败：" : "Capture failed: ") + msg,
+      });
+      appendChatNote((zh ? "✗ 截图失败：" : "✗ Screenshot failed: ") + msg);
     } finally {
       setForceEagerCapture(false);
       captureInFlightRef.current = false;
     }
-  }, [messages.length, locale, appendChatNote, workspaceCwd]);
+  }, [
+    activeRemoteWorkspaceRoot,
+    messages.length,
+    locale,
+    appendChatNote,
+    workspaceCwd,
+  ]);
 
   // Record the whole conversation as a top-to-bottom scrolling GIF. Shares the
   // same eager-render + settle machinery as the static screenshot, then hands
   // the expanded stream to the GIF recorder (renders once, scrolls in frames).
   const runSessionGif = useCallback(async () => {
-    const zh = locale === 'zh-CN';
+    const zh = locale === "zh-CN";
     if (captureInFlightRef.current) return;
-    appendChatNote('/screenshot-gif', 'user');
+    appendChatNote("/screenshot-gif", "user");
     const el = streamRef.current;
     if (!el) {
       appendChatNote(
-        zh ? '✗ GIF 录制失败：找不到会话视图。' : '✗ GIF recording failed: conversation view not found.',
+        zh
+          ? "✗ GIF 录制失败：找不到会话视图。"
+          : "✗ GIF recording failed: conversation view not found.",
       );
       return;
     }
     if (messages.length === 0) {
-      appendChatNote(zh ? '当前会话为空，没有可录制的内容。' : 'Conversation is empty — nothing to record.');
+      appendChatNote(
+        zh
+          ? "当前会话为空，没有可录制的内容。"
+          : "Conversation is empty — nothing to record.",
+      );
       return;
     }
     captureInFlightRef.current = true;
     setForceEagerCapture(true);
     setCaptureStatus({
-      kind: 'busy',
-      text: zh ? '正在录制 GIF…' : 'Recording GIF…',
+      kind: "busy",
+      text: zh ? "正在录制 GIF…" : "Recording GIF…",
     });
     const nextFrame = () =>
       new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -4602,25 +5460,34 @@ export default function AIDock({
       await new Promise((resolve) => setTimeout(resolve, 350));
       const result = await recordConversationGif(el, {
         cwd: workspaceCwd || undefined,
+        save: activeRemoteWorkspaceRoot
+          ? (request) =>
+              saveRemoteSessionCapture(activeRemoteWorkspaceRoot, request)
+          : undefined,
       });
       const preview = result.previewDataUrl
-        ? `\n\n![${zh ? 'GIF 预览' : 'GIF preview'}](${result.previewDataUrl})`
-        : '';
+        ? `\n\n![${zh ? "GIF 预览" : "GIF preview"}](${result.previewDataUrl})`
+        : "";
       let note: string;
       let status: string;
-      if (result.destination === 'browser-download') {
-        status = zh ? `已下载 GIF（${result.frames} 帧）` : `Downloaded GIF (${result.frames} frames)`;
+      if (result.destination === "browser-download") {
+        status = zh
+          ? `已下载 GIF（${result.frames} 帧）`
+          : `Downloaded GIF (${result.frames} frames)`;
         note =
           (zh
             ? `✓ 已把当前会话录成滚动 GIF（${result.frames} 帧），已通过浏览器下载到默认下载目录。`
             : `✓ Recorded this conversation as a scrolling GIF (${result.frames} frames) — downloaded via your browser.`) +
           preview;
       } else {
-        const paths = result.paths.length > 0
-          ? result.paths
-          : [result.destination].filter(Boolean);
-        const pathLines = paths.map((p) => `- \`${p}\``).join('\n');
-        status = zh ? `已保存 GIF（${result.frames} 帧）` : `Saved GIF (${result.frames} frames)`;
+        const paths =
+          result.paths.length > 0
+            ? result.paths
+            : [result.destination].filter(Boolean);
+        const pathLines = paths.map((p) => `- \`${p}\``).join("\n");
+        status = zh
+          ? `已保存 GIF（${result.frames} 帧）`
+          : `Saved GIF (${result.frames} frames)`;
         note =
           (zh
             ? `✓ 已把当前会话录成滚动 GIF（${result.frames} 帧），保存到（点击路径可预览）：\n${pathLines}`
@@ -4628,21 +5495,32 @@ export default function AIDock({
           preview;
       }
       appendChatNote(note);
-      setCaptureStatus({ kind: 'done', text: status });
+      setCaptureStatus({ kind: "done", text: status });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setCaptureStatus({ kind: 'error', text: (zh ? 'GIF 录制失败：' : 'GIF recording failed: ') + msg });
-      appendChatNote((zh ? '✗ GIF 录制失败：' : '✗ GIF recording failed: ') + msg);
+      const msg = friendlyCaptureError(err, locale);
+      setCaptureStatus({
+        kind: "error",
+        text: (zh ? "GIF 录制失败：" : "GIF recording failed: ") + msg,
+      });
+      appendChatNote(
+        (zh ? "✗ GIF 录制失败：" : "✗ GIF recording failed: ") + msg,
+      );
     } finally {
       setForceEagerCapture(false);
       captureInFlightRef.current = false;
     }
-  }, [messages.length, locale, appendChatNote, workspaceCwd]);
+  }, [
+    activeRemoteWorkspaceRoot,
+    messages.length,
+    locale,
+    appendChatNote,
+    workspaceCwd,
+  ]);
 
   // Auto-dismiss the screenshot status banner once it settles (keep the
   // "busy" state until capture finishes).
   useEffect(() => {
-    if (!captureStatus || captureStatus.kind === 'busy') return;
+    if (!captureStatus || captureStatus.kind === "busy") return;
     const timer = setTimeout(() => setCaptureStatus(null), 4000);
     return () => clearTimeout(timer);
   }, [captureStatus]);
@@ -4658,8 +5536,8 @@ export default function AIDock({
     if (sendGuard && !sendGuard.ok) {
       useStore.setState({
         blockedSendTip: {
-          kind: 'slash-command-unavailable',
-          message: sendGuard.message ?? '当前指令缺少必要渠道配置。',
+          kind: "slash-command-unavailable",
+          message: sendGuard.message ?? "当前指令缺少必要渠道配置。",
         },
       });
       return;
@@ -4670,8 +5548,8 @@ export default function AIDock({
     pinActiveStreamToBottom();
     const clearDraftIfNeeded = () => {
       if (overrideText === undefined || options.clearDraft) {
-        setComposerDraft('');
-        draftRef.current = '';
+        setComposerDraft("");
+        draftRef.current = "";
         selectionRef.current = { start: 0, end: 0 };
       }
     };
@@ -4698,7 +5576,7 @@ export default function AIDock({
     if (imageModeStart) {
       const wasImageMode = composer.imageMode;
       const startedAt = wasImageMode
-        ? composer.imageModeStartedAt ?? Date.now()
+        ? (composer.imageModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: true,
@@ -4722,9 +5600,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasImageMode) {
-        appendChatNote(t(locale, 'dock.imageModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.imageModeEntered"), "system");
       }
-      const prompt = (imageModeStart[1] ?? '').trim();
+      const prompt = (imageModeStart[1] ?? "").trim();
       if (prompt) generateImagePrompt(prompt);
       return;
     }
@@ -4734,14 +5612,16 @@ export default function AIDock({
       setComposer({ imageMode: false, imageModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasImageMode) {
-        appendChatNote(t(locale, 'dock.imageModeExited'), 'system');
+        appendChatNote(t(locale, "dock.imageModeExited"), "system");
       }
       return;
     }
     const imageMatch =
-      /^\/(?:image|img|draw|生图|画图|绘图|出图)(?:\s+([\s\S]*))?$/iu.exec(text);
+      /^\/(?:image|img|draw|生图|画图|绘图|出图)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (imageMatch) {
-      const prompt = (imageMatch[1] ?? '').trim();
+      const prompt = (imageMatch[1] ?? "").trim();
       if (!prompt) return;
       generateImagePrompt(text);
       clearDraftIfNeeded();
@@ -4751,7 +5631,7 @@ export default function AIDock({
     if (musicModeStart) {
       const wasMusicMode = composer.musicMode;
       const startedAt = wasMusicMode
-        ? composer.musicModeStartedAt ?? Date.now()
+        ? (composer.musicModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -4775,9 +5655,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasMusicMode) {
-        appendChatNote(t(locale, 'dock.musicModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.musicModeEntered"), "system");
       }
-      const prompt = (musicModeStart[1] ?? '').trim();
+      const prompt = (musicModeStart[1] ?? "").trim();
       if (prompt) generateMusicPrompt(prompt);
       return;
     }
@@ -4787,13 +5667,16 @@ export default function AIDock({
       setComposer({ musicMode: false, musicModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasMusicMode) {
-        appendChatNote(t(locale, 'dock.musicModeExited'), 'system');
+        appendChatNote(t(locale, "dock.musicModeExited"), "system");
       }
       return;
     }
-    const musicMatch = /^\/(?:music|song|audio|compose|作曲|音乐|生成音乐)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const musicMatch =
+      /^\/(?:music|song|audio|compose|作曲|音乐|生成音乐)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (musicMatch) {
-      const prompt = (musicMatch[1] ?? '').trim();
+      const prompt = (musicMatch[1] ?? "").trim();
       if (!prompt) return;
       generateMusicPrompt(text);
       clearDraftIfNeeded();
@@ -4803,7 +5686,7 @@ export default function AIDock({
     if (videoModeStart) {
       const wasVideoMode = composer.videoMode;
       const startedAt = wasVideoMode
-        ? composer.videoModeStartedAt ?? Date.now()
+        ? (composer.videoModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -4829,9 +5712,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasVideoMode) {
-        appendChatNote(t(locale, 'dock.videoModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.videoModeEntered"), "system");
       }
-      const prompt = (videoModeStart[1] ?? '').trim();
+      const prompt = (videoModeStart[1] ?? "").trim();
       if (prompt) generateVideoPrompt(prompt);
       return;
     }
@@ -4841,23 +5724,28 @@ export default function AIDock({
       setComposer({ videoMode: false, videoModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasVideoMode) {
-        appendChatNote(t(locale, 'dock.videoModeExited'), 'system');
+        appendChatNote(t(locale, "dock.videoModeExited"), "system");
       }
       return;
     }
-    const videoMatch = /^\/(?:video|movie|film|clip|视频|生成视频|短片)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const videoMatch =
+      /^\/(?:video|movie|film|clip|视频|生成视频|短片)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (videoMatch) {
-      const prompt = (videoMatch[1] ?? '').trim();
+      const prompt = (videoMatch[1] ?? "").trim();
       if (!prompt) return;
       generateVideoPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    const speechModeStart = /^\/speech-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const speechModeStart = /^\/speech-mode-start(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
     if (speechModeStart) {
       const wasSpeechMode = composer.speechMode;
       const startedAt = wasSpeechMode
-        ? composer.speechModeStartedAt ?? Date.now()
+        ? (composer.speechModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -4883,9 +5771,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasSpeechMode) {
-        appendChatNote(t(locale, 'dock.speechModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.speechModeEntered"), "system");
       }
-      const prompt = (speechModeStart[1] ?? '').trim();
+      const prompt = (speechModeStart[1] ?? "").trim();
       if (prompt) generateSpeechPrompt(prompt);
       return;
     }
@@ -4895,23 +5783,28 @@ export default function AIDock({
       setComposer({ speechMode: false, speechModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasSpeechMode) {
-        appendChatNote(t(locale, 'dock.speechModeExited'), 'system');
+        appendChatNote(t(locale, "dock.speechModeExited"), "system");
       }
       return;
     }
-    const speechMatch = /^\/(?:tts|speak|speech|say|voice|配音|朗读|语音|念)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const speechMatch =
+      /^\/(?:tts|speak|speech|say|voice|配音|朗读|语音|念)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (speechMatch) {
-      const prompt = (speechMatch[1] ?? '').trim();
+      const prompt = (speechMatch[1] ?? "").trim();
       if (!prompt) return;
       generateSpeechPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    const spriteModeStart = /^\/sprite-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const spriteModeStart = /^\/sprite-mode-start(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
     if (spriteModeStart) {
       const wasSpriteMode = composer.spriteMode;
       const startedAt = wasSpriteMode
-        ? composer.spriteModeStartedAt ?? Date.now()
+        ? (composer.spriteModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -4937,9 +5830,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasSpriteMode) {
-        appendChatNote(t(locale, 'dock.spriteModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.spriteModeEntered"), "system");
       }
-      const prompt = (spriteModeStart[1] ?? '').trim();
+      const prompt = (spriteModeStart[1] ?? "").trim();
       if (prompt) generateSpritePrompt(prompt);
       return;
     }
@@ -4949,13 +5842,16 @@ export default function AIDock({
       setComposer({ spriteMode: false, spriteModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasSpriteMode) {
-        appendChatNote(t(locale, 'dock.spriteModeExited'), 'system');
+        appendChatNote(t(locale, "dock.spriteModeExited"), "system");
       }
       return;
     }
-    const spriteMatch = /^\/(?:sprite|spritesheet|sprite-sheet|精灵|精灵图|序列帧)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const spriteMatch =
+      /^\/(?:sprite|spritesheet|sprite-sheet|精灵|精灵图|序列帧)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (spriteMatch) {
-      const prompt = (spriteMatch[1] ?? '').trim();
+      const prompt = (spriteMatch[1] ?? "").trim();
       if (!prompt) return;
       generateSpritePrompt(text);
       clearDraftIfNeeded();
@@ -4965,7 +5861,7 @@ export default function AIDock({
     if (threeDModeStart) {
       const wasThreeDMode = composer.threeDMode;
       const startedAt = wasThreeDMode
-        ? composer.threeDModeStartedAt ?? Date.now()
+        ? (composer.threeDModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -4989,9 +5885,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasThreeDMode) {
-        appendChatNote(t(locale, 'dock.threeDModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.threeDModeEntered"), "system");
       }
-      const prompt = (threeDModeStart[1] ?? '').trim();
+      const prompt = (threeDModeStart[1] ?? "").trim();
       if (prompt) generateThreeDPrompt(prompt);
       return;
     }
@@ -5001,15 +5897,17 @@ export default function AIDock({
       setComposer({ threeDMode: false, threeDModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasThreeDMode) {
-        appendChatNote(t(locale, 'dock.threeDModeExited'), 'system');
+        appendChatNote(t(locale, "dock.threeDModeExited"), "system");
       }
       return;
     }
-    const comfyModeStart = /^\/comfyui-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const comfyModeStart = /^\/comfyui-mode-start(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
     if (comfyModeStart) {
       const wasComfyMode = composer.comfyMode;
       const startedAt = wasComfyMode
-        ? composer.comfyModeStartedAt ?? Date.now()
+        ? (composer.comfyModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -5035,9 +5933,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasComfyMode) {
-        appendChatNote(t(locale, 'dock.comfyModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.comfyModeEntered"), "system");
       }
-      const prompt = (comfyModeStart[1] ?? '').trim();
+      const prompt = (comfyModeStart[1] ?? "").trim();
       if (prompt) generateComfyPrompt(prompt);
       return;
     }
@@ -5047,15 +5945,16 @@ export default function AIDock({
       setComposer({ comfyMode: false, comfyModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasComfyMode) {
-        appendChatNote(t(locale, 'dock.comfyModeExited'), 'system');
+        appendChatNote(t(locale, "dock.comfyModeExited"), "system");
       }
       return;
     }
-    const worldModeStart = /^\/(?:worldmodel|world-model)-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const worldModeStart =
+      /^\/(?:worldmodel|world-model)-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
     if (worldModeStart) {
       const wasWorldMode = composer.worldMode;
       const startedAt = wasWorldMode
-        ? composer.worldModeStartedAt ?? Date.now()
+        ? (composer.worldModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -5081,25 +5980,27 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasWorldMode) {
-        appendChatNote(t(locale, 'dock.worldModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.worldModeEntered"), "system");
       }
-      const prompt = (worldModeStart[1] ?? '').trim();
+      const prompt = (worldModeStart[1] ?? "").trim();
       if (prompt) generateWorldPrompt(prompt);
       return;
     }
-    const worldModeEnd = /^\/(?:worldmodel|world-model)-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    const worldModeEnd =
+      /^\/(?:worldmodel|world-model)-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
     if (worldModeEnd) {
       const wasWorldMode = composer.worldMode;
       setComposer({ worldMode: false, worldModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasWorldMode) {
-        appendChatNote(t(locale, 'dock.worldModeExited'), 'system');
+        appendChatNote(t(locale, "dock.worldModeExited"), "system");
       }
       return;
     }
-    const worldMatch = /^\/(?:worldmodel|world-model|世界模型)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const worldMatch =
+      /^\/(?:worldmodel|world-model|世界模型)(?:\s+([\s\S]*))?$/iu.exec(text);
     if (worldMatch) {
-      const prompt = (worldMatch[1] ?? '').trim();
+      const prompt = (worldMatch[1] ?? "").trim();
       if (!prompt) return;
       generateWorldPrompt(text);
       clearDraftIfNeeded();
@@ -5109,7 +6010,7 @@ export default function AIDock({
     if (uiModeStart) {
       const wasUiMode = composer.uiMode;
       const startedAt = wasUiMode
-        ? composer.uiModeStartedAt ?? Date.now()
+        ? (composer.uiModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -5135,9 +6036,9 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasUiMode) {
-        appendChatNote(t(locale, 'dock.uiModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.uiModeEntered"), "system");
       }
-      const prompt = (uiModeStart[1] ?? '').trim();
+      const prompt = (uiModeStart[1] ?? "").trim();
       if (prompt) generateUiPrompt(prompt);
       return;
     }
@@ -5147,15 +6048,16 @@ export default function AIDock({
       setComposer({ uiMode: false, uiModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasUiMode) {
-        appendChatNote(t(locale, 'dock.uiModeExited'), 'system');
+        appendChatNote(t(locale, "dock.uiModeExited"), "system");
       }
       return;
     }
-    const metahumanModeStart = /^\/metahuman-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const metahumanModeStart =
+      /^\/metahuman-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
     if (metahumanModeStart) {
       const wasMetaHumanMode = composer.metahumanMode;
       const startedAt = wasMetaHumanMode
-        ? composer.metahumanModeStartedAt ?? Date.now()
+        ? (composer.metahumanModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
         imageMode: false,
@@ -5184,29 +6086,34 @@ export default function AIDock({
       });
       clearDraftIfNeeded();
       if (!wasMetaHumanMode) {
-        appendChatNote(t(locale, 'dock.metahumanModeEntered'), 'system');
+        appendChatNote(t(locale, "dock.metahumanModeEntered"), "system");
       }
-      const prompt = (metahumanModeStart[1] ?? '').trim();
+      const prompt = (metahumanModeStart[1] ?? "").trim();
       if (prompt) generateMetaHumanPrompt(prompt);
       return;
     }
-    const metahumanModeEnd = /^\/metahuman-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    const metahumanModeEnd = /^\/metahuman-mode-end(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
     if (metahumanModeEnd) {
       const wasMetaHumanMode = composer.metahumanMode;
       setComposer({ metahumanMode: false, metahumanModeStartedAt: null });
       clearDraftIfNeeded();
       if (wasMetaHumanMode) {
-        appendChatNote(t(locale, 'dock.metahumanModeExited'), 'system');
+        appendChatNote(t(locale, "dock.metahumanModeExited"), "system");
       }
       return;
     }
-    const blueprintModeStart = /^\/blueprint-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    const blueprintModeStart =
+      /^\/blueprint-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
     if (blueprintModeStart) {
       clearDraftIfNeeded();
-      void startBlueprintModeFromCommand((blueprintModeStart[1] ?? '').trim());
+      void startBlueprintModeFromCommand((blueprintModeStart[1] ?? "").trim());
       return;
     }
-    const blueprintModeEnd = /^\/blueprint-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    const blueprintModeEnd = /^\/blueprint-mode-end(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
     if (blueprintModeEnd) {
       const wasBlueprintMode = composer.blueprintMode;
       setComposer({
@@ -5217,17 +6124,20 @@ export default function AIDock({
       clearDraftIfNeeded();
       if (wasBlueprintMode) {
         appendChatNote(
-          locale === 'zh-CN'
-            ? '↩ 已退出 UE 蓝图模式 · 已切回 AI 编程渠道与模型'
-            : '↩ UE Blueprint mode off · switched back to the AI coding channel and model',
-          'system',
+          locale === "zh-CN"
+            ? "↩ 已退出 UE 蓝图模式 · 已切回 AI 编程渠道与模型"
+            : "↩ UE Blueprint mode off · switched back to the AI coding channel and model",
+          "system",
         );
       }
       return;
     }
-    const threeDMatch = /^\/(?:3d|3d-model|model3d|three-d|三维|3d模型|生成3d)(?:\s+([\s\S]*))?$/iu.exec(text);
+    const threeDMatch =
+      /^\/(?:3d|3d-model|model3d|three-d|三维|3d模型|生成3d)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
     if (threeDMatch) {
-      const prompt = (threeDMatch[1] ?? '').trim();
+      const prompt = (threeDMatch[1] ?? "").trim();
       if (!prompt) return;
       generateThreeDPrompt(text);
       clearDraftIfNeeded();
@@ -5238,95 +6148,96 @@ export default function AIDock({
         text,
       );
     if (meshSearchMatch) {
-      const query = (meshSearchMatch[1] ?? '').trim();
+      const query = (meshSearchMatch[1] ?? "").trim();
       if (!query) return;
       searchMeshLibraryPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    const deepResearchMatch = /^\/deep-research(?:\s+([\s\S]*))?$/i.exec(text);
-    if (deepResearchMatch) {
-      const question = (deepResearchMatch[1] ?? '').trim();
-      if (!question || activeChatting) return;
-      const instruction =
-        slashText(
-          SLASH_COMMANDS.find((command) => command.name === '/deep-research')?.text ?? {},
-          locale,
-        ) || 'Run deep research with source ledger, claim audit, citations, and gaps.';
-      runUltracodePrompt(`${instruction}\n\n研究问题：\n${question}`);
+    const studioMatch = /^\/studio(?:\s+([\s\S]*))?$/i.exec(text);
+    if (studioMatch) {
+      appendChatNote(
+        locale === "zh-CN"
+          ? "已关闭 /studio 动态多智能体编排。请直接描述编程、文档或分析需求，默认由当前编程模型单模型总控处理；素材生成、引擎识别、文件操作和验证仍由 UltraGameStudio 的专用能力承接。"
+          : "/studio dynamic multi-agent orchestration is disabled. Describe the coding, writing, or analysis task directly; the current coding model handles it as the single controller, while UltraGameStudio keeps specialized asset, engine, file, and verification capabilities.",
+        "system",
+      );
       if (overrideText === undefined || options.clearDraft) {
-        setComposerDraft('');
-        draftRef.current = '';
+        setComposerDraft("");
+        draftRef.current = "";
         selectionRef.current = { start: 0, end: 0 };
       }
       return;
     }
-    const ultracodeMatch = /^\/ultracode(?:\s+([\s\S]*))?$/i.exec(text);
-    if (ultracodeMatch) {
-      const task = (ultracodeMatch[1] ?? '').trim();
-      if (!task || activeChatting) return;
-      runUltracodePrompt(task);
+    const deepResearchMatch = /^\/deep-research(?:\s+([\s\S]*))?$/i.exec(text);
+    if (deepResearchMatch) {
+      appendChatNote(
+        locale === "zh-CN"
+          ? "已移除 UltraGameStudio 内置 /deep-research Skill。需要调研时请直接描述问题，当前编程模型会按普通对话/工具能力处理；是否拆分检索、复核或写报告由模型根据任务自行决定。"
+          : "The built-in UltraGameStudio /deep-research Skill has been removed. Describe the research request directly; the current coding model will decide whether search, verification, or reporting should be split.",
+        "system",
+      );
       if (overrideText === undefined || options.clearDraft) {
-        setComposerDraft('');
-        draftRef.current = '';
+        setComposerDraft("");
+        draftRef.current = "";
         selectionRef.current = { start: 0, end: 0 };
       }
       return;
     }
     // Sticky image mode: bare text (no slash command matched above) generates an
     // image instead of editing the workflow. Slash commands still win so the user
-    // can drop a /ultracode or /plan without leaving image mode.
-    if (composer.imageMode && !text.startsWith('/')) {
+    // can drop a /studio or /plan without leaving image mode.
+    if (composer.imageMode && !text.startsWith("/")) {
       generateImagePrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.musicMode && !text.startsWith('/')) {
+    if (composer.musicMode && !text.startsWith("/")) {
       generateMusicPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.threeDMode && !text.startsWith('/')) {
+    if (composer.threeDMode && !text.startsWith("/")) {
       generateThreeDPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.videoMode && !text.startsWith('/')) {
+    if (composer.videoMode && !text.startsWith("/")) {
       generateVideoPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.speechMode && !text.startsWith('/')) {
+    if (composer.speechMode && !text.startsWith("/")) {
       generateSpeechPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.spriteMode && !text.startsWith('/')) {
+    if (composer.spriteMode && !text.startsWith("/")) {
       generateSpritePrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.comfyMode && !text.startsWith('/')) {
+    if (composer.comfyMode && !text.startsWith("/")) {
       generateComfyPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.worldMode && !text.startsWith('/')) {
+    if (composer.worldMode && !text.startsWith("/")) {
       generateWorldPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.uiMode && !text.startsWith('/')) {
+    if (composer.uiMode && !text.startsWith("/")) {
       generateUiPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.metahumanMode && !text.startsWith('/')) {
+    if (composer.metahumanMode && !text.startsWith("/")) {
       generateMetaHumanPrompt(text);
       clearDraftIfNeeded();
       return;
     }
-    if (composer.blueprintMode && !text.startsWith('/')) {
+    if (composer.blueprintMode && !text.startsWith("/")) {
       generateBlueprintPrompt(text);
       clearDraftIfNeeded();
       return;
@@ -5369,18 +6280,26 @@ export default function AIDock({
   const addFiles = async () => {
     if (isReadOnly) return;
     rememberSelection();
-    const paths = await pickComposerFiles(t(locale, 'dock.addFileDialogTitle'));
-    if (paths?.length) insertFilePaths(paths);
+    if (activeRemoteWorkspaceRoot) {
+      startRemoteFilePathPicker();
+      return;
+    }
+    const paths = await pickComposerFiles(t(locale, "dock.addFileDialogTitle"));
+    if (!paths?.length) return;
+    insertFilePaths(paths);
   };
 
   const searchStatus = normalizedSearch
     ? searchMatches.length === 0
-      ? t(locale, 'dock.searchNoMatch')
+      ? t(locale, "dock.searchNoMatch")
       : `${activeSearchMatchIndex + 1}/${searchMatches.length}`
-    : '';
+    : "";
   const handleCopyConversation = useCallback(async () => {
     if (messages.every((m) => m.localOnly)) {
-      setCaptureStatus({ kind: 'error', text: t(locale, 'dock.conversationEmpty') });
+      setCaptureStatus({
+        kind: "error",
+        text: t(locale, "dock.conversationEmpty"),
+      });
       return;
     }
     const text = serializeConversation(messages);
@@ -5388,48 +6307,54 @@ export default function AIDock({
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        const ta = document.createElement('textarea');
+        const ta = document.createElement("textarea");
         ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
         document.body.appendChild(ta);
         try {
           ta.select();
-          document.execCommand('copy');
+          document.execCommand("copy");
         } finally {
           if (ta.parentNode) ta.parentNode.removeChild(ta);
         }
       }
-      setCaptureStatus({ kind: 'done', text: t(locale, 'dock.conversationCopied') });
+      setCaptureStatus({
+        kind: "done",
+        text: t(locale, "dock.conversationCopied"),
+      });
     } catch {
       /* clipboard unavailable — ignore */
     }
   }, [messages, locale]);
   const handleExportConversation = useCallback(async () => {
     if (messages.every((m) => m.localOnly)) {
-      setCaptureStatus({ kind: 'error', text: t(locale, 'dock.conversationEmpty') });
+      setCaptureStatus({
+        kind: "error",
+        text: t(locale, "dock.conversationEmpty"),
+      });
       return;
     }
     const text = serializeConversation(messages);
-    const safeTitle = (chatTitle || t(locale, 'dock.newSession'))
-      .replace(/[\\/:*?"<>|]/g, '_')
+    const safeTitle = (chatTitle || t(locale, "dock.newSession"))
+      .replace(/[\\/:*?"<>|]/g, "_")
       .slice(0, 60);
-    const filename = `${safeTitle || 'conversation'}.md`;
+    const filename = `${safeTitle || "conversation"}.md`;
     try {
       if (tauriAvailable()) {
-        const { save } = await import('@tauri-apps/plugin-dialog');
+        const { save } = await import("@tauri-apps/plugin-dialog");
         const picked = await save({
           defaultPath: filename,
-          filters: [{ name: 'Markdown', extensions: ['md'] }],
+          filters: [{ name: "Markdown", extensions: ["md"] }],
         });
         if (!picked) return;
-        const target = typeof picked === 'string' ? picked : String(picked);
-        const { writeTextFile } = await import('@tauri-apps/plugin-fs');
+        const target = typeof picked === "string" ? picked : String(picked);
+        const { writeTextFile } = await import("@tauri-apps/plugin-fs");
         await writeTextFile(target, text);
       } else {
-        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+        const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
         a.download = filename;
         document.body.appendChild(a);
@@ -5437,17 +6362,20 @@ export default function AIDock({
         a.remove();
         URL.revokeObjectURL(url);
       }
-      setCaptureStatus({ kind: 'done', text: t(locale, 'dock.conversationExported') });
+      setCaptureStatus({
+        kind: "done",
+        text: t(locale, "dock.conversationExported"),
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setCaptureStatus({
-        kind: 'error',
-        text: `${t(locale, 'dock.exportFailed')}: ${msg}`,
+        kind: "error",
+        text: `${t(locale, "dock.exportFailed")}: ${msg}`,
       });
     }
   }, [messages, locale, chatTitle]);
   const headerActionButtonClass =
-    'flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-panel-2 px-2 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40';
+    "flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-panel-2 px-2 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40";
   const openTeamDetailsFromMain = useCallback((nodeId: string) => {
     window.dispatchEvent(
       new CustomEvent(OPEN_GAME_TEAM_DETAILS_EVENT, { detail: { nodeId } }),
@@ -5458,29 +6386,29 @@ export default function AIDock({
       <button
         type="button"
         onClick={() => void handleCopyConversation()}
-        title={t(locale, 'dock.copyConversation')}
+        title={t(locale, "dock.copyConversation")}
         className={headerActionButtonClass}
       >
         <Copy size={13} />
-        <span>{t(locale, 'dock.copyConversation')}</span>
+        <span>{t(locale, "dock.copyConversation")}</span>
       </button>
       <button
         type="button"
         onClick={() => void handleExportConversation()}
-        title={t(locale, 'dock.exportConversation')}
+        title={t(locale, "dock.exportConversation")}
         className={headerActionButtonClass}
       >
         <ArrowDownToLine size={13} />
-        <span>{t(locale, 'dock.exportConversation')}</span>
+        <span>{t(locale, "dock.exportConversation")}</span>
       </button>
       <button
         type="button"
         onClick={() => newSession()}
-        title={t(locale, 'dock.newSession')}
+        title={t(locale, "dock.newSession")}
         className={headerActionButtonClass}
       >
         <Plus size={13} />
-        <span>{t(locale, 'dock.newSession')}</span>
+        <span>{t(locale, "dock.newSession")}</span>
       </button>
     </>
   );
@@ -5491,34 +6419,34 @@ export default function AIDock({
         if (returnSearchOpen) closeReturnSearch();
         else openReturnSearch();
       }}
-      title={t(locale, 'dock.searchAria')}
-      aria-label={t(locale, 'dock.searchAria')}
+      title={t(locale, "dock.searchAria")}
+      aria-label={t(locale, "dock.searchAria")}
       aria-expanded={returnSearchOpen}
       aria-controls="ai-return-search"
       className={
-        'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors ' +
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-md border transition-colors " +
         (returnSearchOpen
-          ? 'border-accent bg-accent/10 text-accent'
-          : 'border-border bg-panel-2 text-fg-dim hover:border-accent hover:text-fg')
+          ? "border-accent bg-accent/10 text-accent"
+          : "border-border bg-panel-2 text-fg-dim hover:border-accent hover:text-fg")
       }
     >
       <Search size={14} />
     </button>
   );
   const streamNavButtonClass =
-    'fuc-stream-nav-button flex h-7 w-7 items-center justify-center rounded-md text-fg-dim transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-35';
+    "ugs-stream-nav-button flex h-7 w-7 items-center justify-center rounded-md text-fg-dim transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-35";
   const composerToolButtonClass =
-    'flex h-7 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent px-2 text-xs text-fg-dim transition-colors hover:bg-border-soft/55 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40';
+    "flex h-7 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent px-2 text-xs text-fg-dim transition-colors hover:bg-border-soft/55 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40";
   const streamNavigation = isChat && messages.length > 0 && (
     <div
-      className="fuc-stream-nav absolute right-2 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-lg p-1"
-      aria-label={t(locale, 'dock.streamNavAria')}
+      className="ugs-stream-nav absolute right-2 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-lg p-1"
+      aria-label={t(locale, "dock.streamNavAria")}
     >
       <button
         type="button"
-        onClick={() => scrollToStreamEdge('top')}
-        title={t(locale, 'dock.navTop')}
-        aria-label={t(locale, 'dock.navTop')}
+        onClick={() => scrollToStreamEdge("top")}
+        title={t(locale, "dock.navTop")}
+        aria-label={t(locale, "dock.navTop")}
         className={streamNavButtonClass}
       >
         <ArrowUpToLine size={14} />
@@ -5527,8 +6455,8 @@ export default function AIDock({
         type="button"
         onClick={() => scrollToTopic(-1)}
         disabled={topicMessageIds.length === 0}
-        title={t(locale, 'dock.navPrevTopic')}
-        aria-label={t(locale, 'dock.navPrevTopic')}
+        title={t(locale, "dock.navPrevTopic")}
+        aria-label={t(locale, "dock.navPrevTopic")}
         className={streamNavButtonClass}
       >
         <ChevronUp size={14} />
@@ -5537,150 +6465,157 @@ export default function AIDock({
         type="button"
         onClick={() => scrollToTopic(1)}
         disabled={topicMessageIds.length === 0}
-        title={t(locale, 'dock.navNextTopic')}
-        aria-label={t(locale, 'dock.navNextTopic')}
+        title={t(locale, "dock.navNextTopic")}
+        aria-label={t(locale, "dock.navNextTopic")}
         className={streamNavButtonClass}
       >
         <ChevronDown size={14} />
       </button>
       <button
         type="button"
-        onClick={() => scrollToStreamEdge('bottom')}
-        title={t(locale, 'dock.navBottom')}
-        aria-label={t(locale, 'dock.navBottom')}
+        onClick={() => scrollToStreamEdge("bottom")}
+        title={t(locale, "dock.navBottom")}
+        aria-label={t(locale, "dock.navBottom")}
         className={streamNavButtonClass}
       >
         <ArrowDownToLine size={14} />
       </button>
     </div>
   );
-  const generationMode: 'image' | 'music' | 'threeD' | 'video' | 'sprite' | 'speech' | null = composer.imageMode
-    ? 'image'
+  const generationMode:
+    | "image"
+    | "music"
+    | "threeD"
+    | "video"
+    | "sprite"
+    | "speech"
+    | null = composer.imageMode
+    ? "image"
     : composer.musicMode
-      ? 'music'
+      ? "music"
       : composer.threeDMode
-        ? 'threeD'
+        ? "threeD"
         : composer.videoMode
-          ? 'video'
+          ? "video"
           : composer.spriteMode
-            ? 'sprite'
+            ? "sprite"
             : composer.speechMode
-              ? 'speech'
+              ? "speech"
               : null;
   const channelOptions =
-    generationMode === 'image'
+    generationMode === "image"
       ? imageChannelOptions
-      : generationMode === 'music'
+      : generationMode === "music"
         ? musicChannelOptions
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? threeDChannelOptions
-          : generationMode === 'video'
+          : generationMode === "video"
             ? videoChannelOptions
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? imageChannelOptions
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? speechChannelOptions
                 : channelSelectOptions;
   const channelValue =
-    generationMode === 'image'
+    generationMode === "image"
       ? imageChannelValue
-      : generationMode === 'music'
+      : generationMode === "music"
         ? musicChannelValue
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? threeDChannelValue
-          : generationMode === 'video'
+          : generationMode === "video"
             ? videoChannelValue
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? imageChannelValue
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? speechChannelValue
                 : channelSelectValue;
   const handleChannelChange =
-    generationMode === 'image'
+    generationMode === "image"
       ? onImageChannelChange
-      : generationMode === 'music'
+      : generationMode === "music"
         ? onMusicChannelChange
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? onThreeDChannelChange
-          : generationMode === 'video'
+          : generationMode === "video"
             ? onVideoChannelChange
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? onImageChannelChange
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? onSpeechChannelChange
                 : onChannelChange;
   const modelOptionsForMode =
-    generationMode === 'image'
+    generationMode === "image"
       ? imageModelOptions
-      : generationMode === 'music'
+      : generationMode === "music"
         ? musicModelOptions
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? threeDModelOptions
-          : generationMode === 'video'
+          : generationMode === "video"
             ? videoModelOptions
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? imageModelOptions
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? speechModelOptions
                 : modelSelectOptions;
   const modelValueForMode =
-    generationMode === 'image'
+    generationMode === "image"
       ? imageModelValue
-      : generationMode === 'music'
+      : generationMode === "music"
         ? musicModelValue
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? threeDModelValue
-          : generationMode === 'video'
+          : generationMode === "video"
             ? videoModelValue
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? imageModelValue
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? speechModelValue
                 : modelSelectValue;
   const handleModelChange =
-    generationMode === 'image'
+    generationMode === "image"
       ? onImageModelChange
-      : generationMode === 'music'
+      : generationMode === "music"
         ? onMusicModelChange
-        : generationMode === 'threeD'
+        : generationMode === "threeD"
           ? onThreeDModelChange
-          : generationMode === 'video'
+          : generationMode === "video"
             ? onVideoModelChange
-            : generationMode === 'sprite'
+            : generationMode === "sprite"
               ? onImageModelChange
-              : generationMode === 'speech'
+              : generationMode === "speech"
                 ? onSpeechModelChange
                 : onModelChange;
   const modelTitleForMode =
-    generationMode === 'threeD'
-      ? t(locale, 'dock.threeDModelTitle')
-      : generationMode === 'music'
-      ? t(locale, 'dock.musicModelTitle')
-      : generationMode === 'video'
-        ? t(locale, 'dock.videoModelTitle')
-        : generationMode === 'sprite'
-          ? t(locale, 'dock.imageModelTitle')
-          : generationMode === 'speech'
-            ? t(locale, 'dock.speechModelTitle')
-            : generationMode === 'image'
-              ? t(locale, 'dock.imageModelTitle')
-              : loadingChannelModels
-                ? t(locale, 'dock.modelVersionLoading')
-                : t(locale, 'dock.modelVersionTitle');
+    generationMode === "threeD"
+      ? t(locale, "dock.threeDModelTitle")
+      : generationMode === "music"
+        ? t(locale, "dock.musicModelTitle")
+        : generationMode === "video"
+          ? t(locale, "dock.videoModelTitle")
+          : generationMode === "sprite"
+            ? t(locale, "dock.imageModelTitle")
+            : generationMode === "speech"
+              ? t(locale, "dock.speechModelTitle")
+              : generationMode === "image"
+                ? t(locale, "dock.imageModelTitle")
+                : loadingChannelModels
+                  ? t(locale, "dock.modelVersionLoading")
+                  : t(locale, "dock.modelVersionTitle");
   const composerModeClass =
     composer.imageMode && !dropActive
-      ? 'fuc-ai-input--image '
+      ? "ugs-ai-input--image "
       : composer.musicMode && !dropActive
-        ? 'fuc-ai-input--music '
+        ? "ugs-ai-input--music "
         : composer.threeDMode && !dropActive
-          ? 'fuc-ai-input--three-d '
+          ? "ugs-ai-input--three-d "
           : composer.videoMode && !dropActive
-            ? 'fuc-ai-input--video '
+            ? "ugs-ai-input--video "
             : composer.spriteMode && !dropActive
-              ? 'fuc-ai-input--sprite '
+              ? "ugs-ai-input--sprite "
               : composer.speechMode && !dropActive
-                ? 'fuc-ai-input--speech '
-                : '';
+                ? "ugs-ai-input--speech "
+                : "";
   const regenerateMessage = useCallback(
     (messageId: string) => {
       if (aiBusy) return;
@@ -5702,7 +6637,7 @@ export default function AIDock({
     (messageId: string, target: Locale) => {
       if (aiBusy) return;
       const message = messages.find((item) => item.id === messageId);
-      const text = message ? answerActionText(message.text) : '';
+      const text = message ? answerActionText(message.text) : "";
       if (!text) return;
       setMessageActionMenu(null);
       void (async () => {
@@ -5715,14 +6650,16 @@ export default function AIDock({
           // (e.g. <invoke> → <调用>), which would corrupt the next turn's context.
           appendChatNote(
             `${translatedAnswerTitle(target, locale)}\n\n${translated}`,
-            'assistant',
+            "assistant",
             { localOnly: true },
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           appendChatNote(
-            (locale === 'zh-CN' ? `✗ 翻译失败：${message}` : `✗ Translation failed: ${message}`),
-            'assistant',
+            locale === "zh-CN"
+              ? `✗ 翻译失败：${message}`
+              : `✗ Translation failed: ${message}`,
+            "assistant",
             { localOnly: true },
           );
         }
@@ -5735,20 +6672,26 @@ export default function AIDock({
     <div
       ref={dockRef}
       className={
-        'relative ' +
+        "relative " +
         (isChat
-          ? 'flex h-full min-h-0 flex-col bg-bg' +
-            (centerInput ? ' justify-center' : '')
-          : 'flex shrink-0 border-t border-border bg-panel')
+          ? "flex h-full min-h-0 flex-col bg-bg" +
+            (centerInput ? " justify-center" : "")
+          : "flex shrink-0 border-t border-border bg-panel")
       }
-      style={isChat ? undefined : { height }}
+      style={
+        isChat
+          ? ({
+              "--ugs-chat-visible-right-inset": `${chatVisibleRightInset}px`,
+            } as CSSProperties)
+          : { height }
+      }
     >
       {/* Resize handle — sits on the top edge, cursor becomes row-resize.
           Hidden in chat layout (the surface fills its parent). */}
       {!isChat && (
         <div
           onMouseDown={onResizeStart}
-          title={t(locale, 'common.resizeHeight')}
+          title={t(locale, "common.resizeHeight")}
           className="group absolute -top-1 left-0 right-0 z-20 flex h-2 cursor-row-resize items-center justify-center"
         >
           <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -5757,14 +6700,21 @@ export default function AIDock({
       {/* AI return stream */}
       <section
         className={
-          'fuc-ai-return-pane flex min-h-0 min-w-0 flex-col ' +
-          (centerInput ? 'shrink-0' : 'flex-1')
+          "ugs-ai-return-pane flex min-h-0 min-w-0 flex-col " +
+          (centerInput ? "shrink-0" : "flex-1")
         }
       >
         <header
           className={
-            'fuc-ai-return-header flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2 ' +
-            (centerInput ? 'absolute left-0 right-0 top-0 z-20 bg-bg/95' : 'relative')
+            "ugs-ai-return-header flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2 " +
+            (centerInput ? "absolute left-0 top-0 z-20 bg-bg/95" : "relative")
+          }
+          style={
+            centerInput
+              ? {
+                  right: "var(--ugs-chat-visible-right-inset)",
+                }
+              : undefined
           }
         >
           {isChat ? (
@@ -5772,7 +6722,7 @@ export default function AIDock({
               <input
                 ref={chatTitleInputRef}
                 type="text"
-                aria-label={t(locale, 'sidebar.renameSession')}
+                aria-label={t(locale, "sidebar.renameSession")}
                 data-testid="chat-title-input"
                 value={chatTitleDraft}
                 maxLength={MAX_CHAT_TITLE_LENGTH}
@@ -5787,10 +6737,10 @@ export default function AIDock({
                   void commitChatTitleEdit();
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
+                  if (e.key === "Enter") {
                     e.preventDefault();
                     void commitChatTitleEdit();
-                  } else if (e.key === 'Escape') {
+                  } else if (e.key === "Escape") {
                     e.preventDefault();
                     cancelChatTitleEdit();
                   }
@@ -5805,25 +6755,25 @@ export default function AIDock({
                 title={chatTitle}
                 data-testid="chat-title-display"
               >
-                {chatTitle || t(locale, 'dock.aiReturn')}
+                {chatTitle || t(locale, "dock.aiReturn")}
               </button>
             ) : (
               <span
                 className="min-w-0 flex-1 truncate text-sm font-medium text-fg"
                 title={chatTitle}
               >
-                {chatTitle || t(locale, 'dock.aiReturn')}
+                {chatTitle || t(locale, "dock.aiReturn")}
               </span>
             )
           ) : (
             <span className="font-mono text-[10px] uppercase tracking-wider text-accent">
-              {t(locale, 'dock.aiReturn')}
+              {t(locale, "dock.aiReturn")}
             </span>
           )}
           {activeAiEditing && (
             <span className="flex items-center gap-1 font-mono text-[10px] text-accent-2">
               <span className="omc-pulse-dot" />
-              {t(locale, 'dock.generating')}
+              {t(locale, "dock.generating")}
             </span>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-1">
@@ -5833,11 +6783,11 @@ export default function AIDock({
           {returnSearchOpen && (
             <div
               className={
-                'fuc-ai-return-search absolute left-3 right-3 top-full z-30 mt-2 flex items-center gap-1 rounded-lg border border-border bg-panel/95 p-1.5 shadow-2xl backdrop-blur sm:w-96 ' +
-                (isChat ? 'sm:right-auto' : 'sm:left-auto')
+                "ugs-ai-return-search absolute left-3 right-3 top-full z-30 mt-2 flex items-center gap-1 rounded-lg border border-border bg-panel/95 p-1.5 shadow-2xl backdrop-blur sm:w-96 " +
+                (isChat ? "sm:right-auto" : "sm:left-auto")
               }
             >
-              <div className="fuc-ai-return-search-input flex min-w-0 flex-1 items-center gap-1 rounded-md border border-border bg-bg px-2 py-1 transition-colors focus-within:border-accent">
+              <div className="ugs-ai-return-search-input flex min-w-0 flex-1 items-center gap-1 rounded-md border border-border bg-bg px-2 py-1 transition-colors focus-within:border-accent">
                 <Search size={13} className="shrink-0 text-fg-faint" />
                 <input
                   id="ai-return-search"
@@ -5846,17 +6796,17 @@ export default function AIDock({
                   value={returnSearch}
                   onChange={(e) => setReturnSearch(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === "Enter") {
                       e.preventDefault();
                       moveSearchMatch(e.shiftKey ? -1 : 1);
-                    } else if (e.key === 'Escape') {
+                    } else if (e.key === "Escape") {
                       e.preventDefault();
                       e.stopPropagation();
                       closeReturnSearch();
                     }
                   }}
-                  placeholder={t(locale, 'dock.searchPlaceholder')}
-                  aria-label={t(locale, 'dock.searchAria')}
+                  placeholder={t(locale, "dock.searchPlaceholder")}
+                  aria-label={t(locale, "dock.searchAria")}
                   spellCheck={false}
                   className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-fg-faint"
                 />
@@ -5865,8 +6815,8 @@ export default function AIDock({
                     type="button"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={clearReturnSearch}
-                    title={t(locale, 'dock.searchClear')}
-                    aria-label={t(locale, 'dock.searchClear')}
+                    title={t(locale, "dock.searchClear")}
+                    aria-label={t(locale, "dock.searchClear")}
                     className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg"
                   >
                     <X size={12} />
@@ -5878,9 +6828,9 @@ export default function AIDock({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => moveSearchMatch(-1)}
                 disabled={searchMatches.length === 0}
-                title={t(locale, 'dock.searchPrevious')}
-                aria-label={t(locale, 'dock.searchPrevious')}
-                className="fuc-ai-return-search-button flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                title={t(locale, "dock.searchPrevious")}
+                aria-label={t(locale, "dock.searchPrevious")}
+                className="ugs-ai-return-search-button flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronUp size={14} />
               </button>
@@ -5889,19 +6839,19 @@ export default function AIDock({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => moveSearchMatch(1)}
                 disabled={searchMatches.length === 0}
-                title={t(locale, 'dock.searchNext')}
-                aria-label={t(locale, 'dock.searchNext')}
-                className="fuc-ai-return-search-button flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                title={t(locale, "dock.searchNext")}
+                aria-label={t(locale, "dock.searchNext")}
+                className="ugs-ai-return-search-button flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronDown size={14} />
               </button>
               <span
                 aria-live="polite"
                 className={
-                  'min-w-[3.75rem] whitespace-nowrap text-right font-mono text-[10px] ' +
+                  "min-w-[3.75rem] whitespace-nowrap text-right font-mono text-[10px] " +
                   (normalizedSearch && searchMatches.length === 0
-                    ? 'text-accent-3'
-                    : 'text-fg-faint')
+                    ? "text-accent-3"
+                    : "text-fg-faint")
                 }
               >
                 {searchStatus}
@@ -5909,16 +6859,16 @@ export default function AIDock({
             </div>
           )}
         </header>
-        <div className={'relative min-h-0 ' + (centerInput ? '' : 'flex-1')}>
+        <div className={"relative min-h-0 " + (centerInput ? "" : "flex-1")}>
           {captureStatus && (
             <div
               className={
-                'pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs shadow-lg ' +
-                (captureStatus.kind === 'error'
-                  ? 'border-accent-3/50 bg-panel-2 text-accent-3'
-                  : captureStatus.kind === 'busy'
-                    ? 'border-accent/40 bg-panel-2 text-fg-dim'
-                    : 'border-accent/50 bg-panel-2 text-fg')
+                "pointer-events-none absolute left-1/2 top-2 z-30 -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs shadow-lg " +
+                (captureStatus.kind === "error"
+                  ? "border-accent-3/50 bg-panel-2 text-accent-3"
+                  : captureStatus.kind === "busy"
+                    ? "border-accent/40 bg-panel-2 text-fg-dim"
+                    : "border-accent/50 bg-panel-2 text-fg")
               }
               role="status"
               aria-live="polite"
@@ -5930,44 +6880,70 @@ export default function AIDock({
             ref={streamRef}
             onScroll={handleStreamScroll}
             className={
-              'fuc-ai-return-stream min-h-0 overflow-y-auto p-3 ' +
-              (centerInput ? '' : 'h-full')
+              "ugs-ai-return-stream min-h-0 overflow-y-auto p-3 " +
+              (centerInput ? "mx-auto w-full" : "h-full")
+            }
+            style={
+              centerInput
+                ? {
+                    maxWidth:
+                      "min(72rem, calc(100% - var(--ugs-chat-visible-right-inset)))",
+                    transform:
+                      "translateX(calc(var(--ugs-chat-visible-right-inset) / -2))",
+                  }
+                : undefined
             }
           >
             {messages.length === 0 ? (
               <div
                 className={
                   isChat
-                    ? 'fuc-ai-return-empty flex items-center justify-center px-4 pb-6 text-center text-xl font-medium text-fg-dim' +
-                      (centerInput ? '' : ' h-full')
-                    : 'fuc-ai-return-empty text-xs text-fg-faint'
+                    ? "ugs-ai-return-empty flex items-center justify-center px-4 pb-6 text-center text-xl font-medium text-fg-dim" +
+                      (centerInput ? "" : " h-full")
+                    : "ugs-ai-return-empty text-xs text-fg-faint"
                 }
               >
-                {t(locale, isChat ? 'dock.chatEmpty' : 'dock.empty')}
+                {t(locale, isChat ? "dock.chatEmpty" : "dock.empty")}
               </div>
             ) : (
               <ul ref={streamContentRef} className="flex flex-col gap-3">
-                {messages.map((m) => {
-                  const isUser = m.role === 'user';
+                {hiddenMessageCount > 0 && (
+                  <li className="flex justify-center py-1">
+                    <button
+                      type="button"
+                      data-ugs-load-earlier-messages="true"
+                      onClick={revealEarlierMessages}
+                      className="rounded-md border border-border bg-panel-2 px-3 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    >
+                      {t(locale, "dock.loadEarlierMessages").replace(
+                        "{count}",
+                        String(hiddenMessageCount),
+                      )}
+                    </button>
+                  </li>
+                )}
+                {visibleMessages.map((m) => {
+                  const isUser = m.role === "user";
                   const isChatUser = isChat && isUser;
-                  const isSystem = m.role === 'system';
+                  const isSystem = m.role === "system";
                   const isSearchHit = searchMatchMessageIds.has(m.id);
-                  const isCurrentSearchHit = activeSearchMatchMessageId === m.id;
+                  const isCurrentSearchHit =
+                    activeSearchMatchMessageId === m.id;
                   const isAssetJumpHit = assetJumpHighlightId === m.id;
                   const assistantLabel =
-                    !isUser && !isSystem ? assistantHeaderLabel(m) : '';
+                    !isUser && !isSystem ? assistantHeaderLabel(m) : "";
                   const roleLabel = isUser
-                    ? '› you'
+                    ? "› you"
                     : isSystem
-                      ? '• system'
+                      ? "• system"
                       : assistantLabel
                         ? `⟳ ${assistantLabel}`
-                        : '⟳ assistant';
+                        : "⟳ assistant";
                   const roleClass = isUser
-                    ? 'text-accent'
+                    ? "text-accent"
                     : isSystem
-                      ? 'text-accent-3'
-                      : 'text-accent-2';
+                      ? "text-accent-3"
+                      : "text-accent-2";
                   const preserveRoleCase = !!assistantLabel;
                   const captureUtility = isCaptureUtilityMessage(m);
                   const assistantActions =
@@ -5977,7 +6953,9 @@ export default function AIDock({
                     !captureUtility &&
                     !m.interaction &&
                     !normalizedSearch;
-                  const actionText = assistantActions ? answerActionText(m.text) : '';
+                  const actionText = assistantActions
+                    ? answerActionText(m.text)
+                    : "";
                   const canRegenerate =
                     assistantActions &&
                     !aiBusy &&
@@ -5985,29 +6963,32 @@ export default function AIDock({
                   return (
                     <li
                       key={m.id}
-                      data-fuc-capture-exclude={captureUtility ? 'true' : undefined}
+                      data-ugs-message-row="true"
+                      data-ugs-capture-exclude={
+                        captureUtility ? "true" : undefined
+                      }
                       ref={(node) => {
                         if (node) messageRefs.current.set(m.id, node);
                         else messageRefs.current.delete(m.id);
                       }}
                       className={
-                        'group/msg flex flex-col gap-1 rounded-md px-1 py-0.5 transition-colors ' +
-                        (isChatUser ? 'items-end ' : '') +
+                        "group/msg flex flex-col gap-1 rounded-md px-1 py-0.5 transition-colors " +
+                        (isChatUser ? "items-end " : "") +
                         (isCurrentSearchHit || isAssetJumpHit
-                          ? 'bg-accent/5 ring-1 ring-inset ring-accent-3/40'
+                          ? "bg-accent/5 ring-1 ring-inset ring-accent-3/40"
                           : isSearchHit
-                            ? 'ring-1 ring-inset ring-accent/20'
-                            : '')
+                            ? "ring-1 ring-inset ring-accent/20"
+                            : "")
                       }
                     >
                       <div className="flex min-w-0 items-center gap-2">
                         <span
                           title={roleLabel}
                           className={
-                            'min-w-0 truncate py-0.5 font-mono text-[10px] leading-4 ' +
+                            "min-w-0 truncate py-0.5 font-mono text-[10px] leading-4 " +
                             (preserveRoleCase
-                              ? 'normal-case tracking-normal '
-                              : 'uppercase tracking-wider ') +
+                              ? "normal-case tracking-normal "
+                              : "uppercase tracking-wider ") +
                             roleClass
                           }
                         >
@@ -6022,13 +7003,13 @@ export default function AIDock({
                         {isUser && m.text.trim() && (
                           <CopyButton
                             value={m.text}
-                            title={t(locale, 'dock.copy')}
+                            title={t(locale, "dock.copy")}
                             className="shrink-0 opacity-0 transition-opacity group-hover/msg:opacity-100"
                           />
                         )}
                       </div>
                       {m.runProgress && (
-                        <UltracodeRunCard
+                        <StudioRunCard
                           progress={m.runProgress}
                           locale={locale}
                           active={aiBusy && m.id === lastAssistantId}
@@ -6040,29 +7021,31 @@ export default function AIDock({
                           message={m}
                           locale={locale}
                           active={
-                            (m.interactionStatus ?? 'pending') === 'pending' &&
+                            (m.interactionStatus ?? "pending") === "pending" &&
                             (!!m.appAction ||
-                              mode === 'running' ||
+                              mode === "running" ||
                               activeAiEditing ||
                               activeChatting)
                           }
-                          onAnswer={(answer) => handleInteractionAnswer(m, answer)}
+                          onAnswer={(answer) =>
+                            handleInteractionAnswer(m, answer)
+                          }
                           onDismiss={() => handleInteractionDismiss(m)}
                         />
                       ) : normalizedSearch ? (
                         // While a return search is active we fall back to the
                         // plain highlighter for every message so match marks
                         // land on real text nodes.
-                          <span
-                            className={
-                              'whitespace-pre-wrap break-words text-sm leading-relaxed ' +
-                              (isChatUser
-                                ? 'ai-stream-user-bubble max-w-[86%] rounded-md px-3 py-2 text-left'
-                                : isChat
-                                  ? 'ai-stream-text w-[min(100%,calc(100%_-_2rem))]'
-                                  : 'ai-stream-text')
-                            }
-                          >
+                        <span
+                          className={
+                            "whitespace-pre-wrap break-words text-sm leading-relaxed " +
+                            (isChatUser
+                              ? "ai-stream-user-bubble max-w-[86%] rounded-md px-3 py-2 text-left"
+                              : isChat
+                                ? "ai-stream-text w-[min(100%,calc(100%_-_2rem))]"
+                                : "ai-stream-text")
+                          }
+                        >
                           {renderHighlightedText(
                             isUser ? m.text : cleanMessageText(m.text),
                             m.id,
@@ -6074,12 +7057,12 @@ export default function AIDock({
                       ) : isUser ? (
                         <span
                           className={
-                            'whitespace-pre-wrap break-words text-sm leading-relaxed ' +
+                            "whitespace-pre-wrap break-words text-sm leading-relaxed " +
                             (isChatUser
-                              ? 'ai-stream-user-bubble max-w-[86%] rounded-md px-3 py-2 text-left'
+                              ? "ai-stream-user-bubble max-w-[86%] rounded-md px-3 py-2 text-left"
                               : isChat
-                                ? 'ai-stream-text w-[min(100%,calc(100%_-_2rem))]'
-                                : 'ai-stream-text')
+                                ? "ai-stream-text w-[min(100%,calc(100%_-_2rem))]"
+                                : "ai-stream-text")
                           }
                         >
                           <FileText
@@ -6095,7 +7078,9 @@ export default function AIDock({
                         // opening a long history doesn't block on parsing every one.
                         <div
                           className={
-                            isChat ? 'w-[min(100%,calc(100%_-_2rem))]' : 'w-full'
+                            isChat
+                              ? "w-[min(100%,calc(100%_-_2rem))]"
+                              : "w-full"
                           }
                         >
                           <LazyMessageContent
@@ -6136,7 +7121,9 @@ export default function AIDock({
                           onRegenerateWithModel={(model) =>
                             regenerateMessageWithModel(m.id, model)
                           }
-                          onTranslate={(target) => translateMessage(m.id, target)}
+                          onTranslate={(target) =>
+                            translateMessage(m.id, target)
+                          }
                           onBranch={() => {
                             setMessageActionMenu(null);
                             branchSessionFromMessage(m.id);
@@ -6162,7 +7149,7 @@ export default function AIDock({
       {!isChat && (
         <div
           onMouseDown={onSplitStart}
-          title={t(locale, 'common.resizeSplit')}
+          title={t(locale, "common.resizeSplit")}
           className="group relative z-20 flex w-1.5 shrink-0 cursor-col-resize items-stretch justify-center border-l border-border-soft"
         >
           <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -6177,48 +7164,59 @@ export default function AIDock({
       <section
         ref={inputSectionRef}
         className={
-          'relative flex shrink-0 flex-col bg-transparent p-3 ' +
-          (centerInput ? 'mx-auto w-full max-w-6xl px-4 sm:px-6' : '')
+          "relative flex shrink-0 flex-col bg-transparent p-3 " +
+          (centerInput ? "mx-auto w-full max-w-6xl px-4 sm:px-6" : "")
         }
         style={
           isChat
             ? centerInput
-              ? undefined
-              : { height: chatInputHeight }
+              ? {
+                  maxWidth:
+                    "min(72rem, calc(100% - var(--ugs-chat-visible-right-inset)))",
+                  transform:
+                    "translateX(calc(var(--ugs-chat-visible-right-inset) / -2))",
+                }
+              : {
+                  height: chatInputHeight,
+                  marginRight: "var(--ugs-chat-visible-right-inset)",
+                }
             : { width: renderedInputWidth }
         }
-        aria-label={t(locale, 'dock.aiInput') + (isReadOnly ? t(locale, 'dock.readonlySuffix') : '')}
+        aria-label={
+          t(locale, "dock.aiInput") +
+          (isReadOnly ? t(locale, "dock.readonlySuffix") : "")
+        }
       >
         {orgMentionOpen && (
           <div
             ref={orgMentionRef}
-            id="fuc-org-mention-suggestions"
+            id="ugs-org-mention-suggestions"
             role="listbox"
-            aria-label={t(locale, 'dock.tabOrganization')}
+            aria-label={t(locale, "dock.tabOrganization")}
             className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-72 overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             <div className="flex items-center gap-1.5 border-b border-border-soft px-2.5 py-1.5 text-[11px] text-fg-faint">
               <GitBranch size={12} className="shrink-0 text-accent" />
               <span className="truncate">
                 {orgMentionQuery
-                  ? t(locale, 'dock.tabOrganization')
+                  ? t(locale, "dock.tabOrganization")
                   : orgMentionParent
-                    ? orgMentionParent.path.join(' / ')
+                    ? orgMentionParent.path.join(" / ")
                     : orgTree.label}
               </span>
             </div>
             {orgMentionOptions.map((option, index) => {
               const active = index === activeOrgMentionIndex;
               const rowClass =
-                'flex w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left transition-colors ' +
+                "flex w-full min-w-0 items-center gap-2 border-l-2 px-2.5 py-2 text-left transition-colors " +
                 (active
-                  ? 'border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40'
-                  : 'border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg');
-              if (option.kind === 'back') {
+                  ? "border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40"
+                  : "border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg");
+              if (option.kind === "back") {
                 return (
                   <button
                     key="__org-back"
-                    id={`fuc-org-mention-suggestion-${index}`}
+                    id={`ugs-org-mention-suggestion-${index}`}
                     type="button"
                     role="option"
                     aria-selected={active}
@@ -6229,18 +7227,18 @@ export default function AIDock({
                   >
                     <ChevronUp size={14} className="shrink-0 -rotate-90" />
                     <span className="truncate text-sm">
-                      {t(locale, 'common.back')}
+                      {t(locale, "common.back")}
                     </span>
                   </button>
                 );
               }
               const node = option.node;
-              const isSelf = option.kind === 'insert-self';
-              const hasChildren = option.kind === 'node' && option.hasChildren;
+              const isSelf = option.kind === "insert-self";
+              const hasChildren = option.kind === "node" && option.hasChildren;
               return (
                 <button
                   key={`${option.kind}-${node.id}`}
-                  id={`fuc-org-mention-suggestion-${index}`}
+                  id={`ugs-org-mention-suggestion-${index}`}
                   type="button"
                   role="option"
                   aria-selected={active}
@@ -6252,7 +7250,7 @@ export default function AIDock({
                   <GitBranch
                     size={14}
                     className={
-                      'shrink-0 ' + (active ? 'text-accent' : 'text-fg-faint')
+                      "shrink-0 " + (active ? "text-accent" : "text-fg-faint")
                     }
                   />
                   <span className="min-w-0 flex-1">
@@ -6261,9 +7259,9 @@ export default function AIDock({
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-fg-faint">
                       {isSelf
-                        ? t(locale, 'dock.orgMentionInsertSelf')
+                        ? t(locale, "dock.orgMentionInsertSelf")
                         : orgMentionQuery
-                          ? node.path.join(' / ')
+                          ? node.path.join(" / ")
                           : node.role}
                     </span>
                   </span>
@@ -6281,7 +7279,7 @@ export default function AIDock({
 
         {slashOpen && (
           <div
-            id="fuc-slash-suggestions"
+            id="ugs-slash-suggestions"
             role="listbox"
             aria-label="Slash suggestions"
             className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[32rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
@@ -6291,7 +7289,7 @@ export default function AIDock({
               return (
                 <button
                   key={suggestion.id}
-                  id={`fuc-slash-suggestion-${index}`}
+                  id={`ugs-slash-suggestion-${index}`}
                   type="button"
                   role="option"
                   aria-selected={active}
@@ -6299,18 +7297,18 @@ export default function AIDock({
                   onMouseEnter={() => setActiveSlashIndex(index)}
                   onClick={() => applySlashSuggestion(suggestion)}
                   className={
-                    'flex w-full items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors ' +
+                    "flex w-full items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors " +
                     (active
-                      ? 'border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40'
-                      : 'border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg')
+                      ? "border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40"
+                      : "border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg")
                   }
                 >
                   <span
                     className={
-                      'mt-0.5 rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none ' +
+                      "mt-0.5 rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none " +
                       (active
-                        ? 'border-accent bg-accent text-bg'
-                        : 'border-border bg-bg text-accent')
+                        ? "border-accent bg-accent text-bg"
+                        : "border-border bg-bg text-accent")
                     }
                   >
                     {suggestion.name}
@@ -6322,10 +7320,10 @@ export default function AIDock({
                       </span>
                       <span
                         className={
-                          'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ' +
+                          "shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider " +
                           (active
-                            ? 'border-accent/50 text-accent'
-                            : 'border-border-soft text-fg-faint')
+                            ? "border-accent/50 text-accent"
+                            : "border-border-soft text-fg-faint")
                         }
                       >
                         {suggestion.kind}
@@ -6343,20 +7341,20 @@ export default function AIDock({
 
         {gameSkillOpen && (
           <div
-            id="fuc-game-skill-suggestions"
+            id="ugs-game-skill-suggestions"
             role="listbox"
-            aria-label={t(locale, 'dock.gameSkillSuggestions')}
+            aria-label={t(locale, "dock.gameSkillSuggestions")}
             className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[32rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             <div className="sticky top-0 border-b border-border-soft bg-panel px-2.5 py-1.5 text-[11px] font-medium text-fg-faint">
-              {t(locale, 'dock.hintGameSkill')}
+              {t(locale, "dock.hintGameSkill")}
             </div>
             {filteredGameSkillSuggestions.map((suggestion, index) => {
               const active = index === activeGameSkillIndex;
               return (
                 <button
                   key={suggestion.id}
-                  id={`fuc-game-skill-suggestion-${index}`}
+                  id={`ugs-game-skill-suggestion-${index}`}
                   type="button"
                   role="option"
                   aria-selected={active}
@@ -6364,18 +7362,18 @@ export default function AIDock({
                   onMouseEnter={() => setActiveGameSkillIndex(index)}
                   onClick={() => applyGameSkillSuggestion(suggestion)}
                   className={
-                    'flex w-full items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors ' +
+                    "flex w-full items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors " +
                     (active
-                      ? 'border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40'
-                      : 'border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg')
+                      ? "border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40"
+                      : "border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg")
                   }
                 >
                   <span
                     className={
-                      'mt-0.5 rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none ' +
+                      "mt-0.5 rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none " +
                       (active
-                        ? 'border-accent bg-accent text-bg'
-                        : 'border-border bg-bg text-accent')
+                        ? "border-accent bg-accent text-bg"
+                        : "border-border bg-bg text-accent")
                     }
                   >
                     {suggestion.name}
@@ -6398,18 +7396,18 @@ export default function AIDock({
 
         {fileMentionOpen && (
           <div
-            id="fuc-file-mention-suggestions"
+            id="ugs-file-mention-suggestions"
             role="listbox"
-            aria-label={t(locale, 'dock.fileSuggestions')}
+            aria-label={t(locale, "dock.fileSuggestions")}
             className="absolute bottom-[calc(100%+0.375rem)] left-3 right-3 z-50 max-h-[36rem] overflow-y-auto rounded-md border border-border bg-panel shadow-2xl"
           >
             {fileMentionOptions.map((entry, index) => {
               const active = index === activeFileMentionIndex;
-              const isDirectory = entry.kind === 'directory';
+              const isDirectory = entry.kind === "directory";
               return (
                 <button
                   key={entry.path}
-                  id={`fuc-file-mention-suggestion-${index}`}
+                  id={`ugs-file-mention-suggestion-${index}`}
                   type="button"
                   role="option"
                   aria-selected={active}
@@ -6417,18 +7415,18 @@ export default function AIDock({
                   onMouseEnter={() => setActiveFileMentionIndex(index)}
                   onClick={() => applyFileMentionOption(entry)}
                   className={
-                    'flex w-full min-w-0 items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors ' +
+                    "flex w-full min-w-0 items-start gap-2 border-l-2 px-2.5 py-2 text-left transition-colors " +
                     (active
-                      ? 'border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40'
-                      : 'border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg')
+                      ? "border-l-accent bg-accent/20 text-fg ring-1 ring-inset ring-accent/40"
+                      : "border-l-transparent text-fg-dim hover:border-l-accent/50 hover:bg-border-soft hover:text-fg")
                   }
                 >
                   <span
                     className={
-                      'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border ' +
+                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border " +
                       (active
-                        ? 'border-accent bg-accent text-bg'
-                        : 'border-border bg-bg text-fg-faint')
+                        ? "border-accent bg-accent text-bg"
+                        : "border-border bg-bg text-fg-faint")
                     }
                   >
                     {isDirectory ? (
@@ -6440,33 +7438,33 @@ export default function AIDock({
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">
                       {entry.name}
-                      {isDirectory ? '/' : ''}
+                      {isDirectory ? "/" : ""}
                     </span>
                     <span className="mt-0.5 block truncate font-mono text-xs text-fg-faint">
                       {normalizeFileMentionPath(entry.relativePath)}
-                      {isDirectory ? '/' : ''}
+                      {isDirectory ? "/" : ""}
                     </span>
                   </span>
                 </button>
               );
             })}
-            {fileMentionListing.status === 'loading' &&
+            {fileMentionListing.status === "loading" &&
               fileMentionOptions.length === 0 && (
                 <div className="flex items-center gap-2 px-3 py-2 text-sm text-fg-faint">
                   <Loader2 size={14} className="animate-spin text-accent" />
-                  <span>{t(locale, 'dock.loading')}</span>
+                  <span>{t(locale, "dock.loading")}</span>
                 </div>
               )}
-            {fileMentionListing.status === 'error' &&
+            {fileMentionListing.status === "error" &&
               fileMentionOptions.length === 0 && (
                 <div className="px-3 py-2 text-sm leading-snug text-status-error">
                   {fileMentionListing.message}
                 </div>
               )}
-            {fileMentionListing.status === 'ready' &&
+            {fileMentionListing.status === "ready" &&
               fileMentionOptions.length === 0 && (
                 <div className="px-3 py-2 text-sm text-fg-faint">
-                  {t(locale, 'dock.noMatchingFiles')}
+                  {t(locale, "dock.noMatchingFiles")}
                 </div>
               )}
           </div>
@@ -6481,16 +7479,16 @@ export default function AIDock({
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="inline-flex items-center gap-1">
               <span className="font-mono text-fg-dim">/</span>
-              {t(locale, 'dock.hintSlash')}
+              {t(locale, "dock.hintSlash")}
             </span>
             <span className="text-border">·</span>
             <span className="inline-flex items-center gap-1">
               <span className="font-mono text-fg-dim">@</span>
-              {t(locale, 'dock.hintMention')}
+              {t(locale, "dock.hintMention")}
             </span>
             <span className="text-border">·</span>
             <span className="inline-flex items-center gap-1">
-              {shortcutParts(shortcutSettings['return-search']).map((part) => (
+              {shortcutParts(shortcutSettings["return-search"]).map((part) => (
                 <kbd
                   key={part}
                   className="rounded border border-border bg-panel-2 px-1 py-0.5 font-mono text-[10px] leading-none text-fg-dim"
@@ -6498,19 +7496,19 @@ export default function AIDock({
                   {part}
                 </kbd>
               ))}
-              <span>{t(locale, 'dock.hintSearch')}</span>
+              <span>{t(locale, "dock.hintSearch")}</span>
             </span>
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <div
               role="radiogroup"
-              aria-label={t(locale, 'dock.permissionTitle')}
+              aria-label={t(locale, "dock.permissionTitle")}
               className={
-                'flex shrink-0 items-center gap-0.5 rounded-md border p-0.5 transition-colors ' +
-                (permissionVisual(composer.permission).tone === 'danger'
-                  ? 'border-status-error/60 bg-status-error/10'
-                  : 'border-border bg-panel-2')
+                "flex shrink-0 items-center gap-0.5 rounded-md border p-0.5 transition-colors " +
+                (permissionVisual(composer.permission).tone === "danger"
+                  ? "border-status-error/60 bg-status-error/10"
+                  : "border-border bg-panel-2")
               }
             >
               {[...permissionOptions]
@@ -6522,7 +7520,7 @@ export default function AIDock({
                   // The most permissive ("danger") segment, when active, fills
                   // solid like the mockup's yolo state; safer segments just tint
                   // their label with the tone color on a neutral chip.
-                  const activeDanger = active && tone === 'danger';
+                  const activeDanger = active && tone === "danger";
                   return (
                     <button
                       key={opt.id}
@@ -6531,16 +7529,16 @@ export default function AIDock({
                       aria-checked={active}
                       disabled={isReadOnly}
                       title={`${localized.label}${
-                        localized.hint ? ` · ${localized.hint}` : ''
+                        localized.hint ? ` · ${localized.hint}` : ""
                       }`}
                       onClick={() => setComposer({ permission: opt.id })}
                       className={
-                        'flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50 ' +
+                        "flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium leading-none transition-colors disabled:cursor-not-allowed disabled:opacity-50 " +
                         (activeDanger
-                          ? 'bg-status-error text-status-error-contrast'
+                          ? "bg-status-error text-status-error-contrast"
                           : active
-                            ? 'bg-bg'
-                            : 'text-fg-faint hover:text-fg-dim')
+                            ? "bg-bg"
+                            : "text-fg-faint hover:text-fg-dim")
                       }
                       style={active && !activeDanger ? { color } : undefined}
                     >
@@ -6553,18 +7551,7 @@ export default function AIDock({
 
             <div className="hidden shrink-0 items-center gap-2 sm:flex">
               <span className="inline-flex items-center gap-1">
-                {shortcutParts(shortcutSettings['composer-send']).map((part) => (
-                  <kbd
-                    key={part}
-                    className="rounded border border-border bg-panel-2 px-1 py-0.5 font-mono text-[10px] leading-none text-fg-dim"
-                  >
-                    {part}
-                  </kbd>
-                ))}
-                <span>{t(locale, 'dock.sendShortcutAction')}</span>
-              </span>
-              <span className="inline-flex items-center gap-1">
-                {shortcutParts(shortcutSettings['composer-newline']).map(
+                {shortcutParts(shortcutSettings["composer-send"]).map(
                   (part) => (
                     <kbd
                       key={part}
@@ -6574,7 +7561,20 @@ export default function AIDock({
                     </kbd>
                   ),
                 )}
-                <span>{t(locale, 'dock.newlineShortcutAction')}</span>
+                <span>{t(locale, "dock.sendShortcutAction")}</span>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                {shortcutParts(shortcutSettings["composer-newline"]).map(
+                  (part) => (
+                    <kbd
+                      key={part}
+                      className="rounded border border-border bg-panel-2 px-1 py-0.5 font-mono text-[10px] leading-none text-fg-dim"
+                    >
+                      {part}
+                    </kbd>
+                  ),
+                )}
+                <span>{t(locale, "dock.newlineShortcutAction")}</span>
               </span>
             </div>
           </div>
@@ -6586,15 +7586,15 @@ export default function AIDock({
           onDragLeave={handleComposerDragLeave}
           onDrop={handleComposerDrop}
           className={
-            'fuc-ai-input-card relative flex min-h-0 flex-1 flex-col rounded-lg border transition-colors focus-within:border-accent ' +
-            (centerInput ? 'min-h-[14rem] ' : '') +
+            "ugs-ai-input-card relative flex min-h-0 flex-1 flex-col rounded-lg border transition-colors focus-within:border-accent " +
+            (centerInput ? "min-h-[14rem] " : "") +
             (dropActive
-              ? 'fuc-ai-input--drop border-accent '
+              ? "ugs-ai-input--drop border-accent "
               : isChat
-                ? 'fuc-ai-input--chat border-border '
-                : 'border-border ') +
+                ? "ugs-ai-input--chat border-border "
+                : "border-border ") +
             composerModeClass +
-            (isReadOnly ? 'opacity-60 ' : '')
+            (isReadOnly ? "opacity-60 " : "")
           }
         >
           {isChat && !centerInput && (
@@ -6603,7 +7603,7 @@ export default function AIDock({
                 event.stopPropagation();
                 onChatSplitStart(event);
               }}
-              title={t(locale, 'common.resizeHeight')}
+              title={t(locale, "common.resizeHeight")}
               className="group absolute -top-1 left-0 right-0 z-20 flex h-2 cursor-row-resize items-center justify-center"
             >
               <div className="h-0.5 w-full bg-transparent transition-colors group-hover:bg-accent/40" />
@@ -6642,14 +7642,14 @@ export default function AIDock({
             onPaste={handlePaste}
             onKeyDown={(e) => {
               if (orgMentionOpen) {
-                if (e.key === 'ArrowDown' && orgMentionOptions.length > 0) {
+                if (e.key === "ArrowDown" && orgMentionOptions.length > 0) {
                   e.preventDefault();
-                  setActiveOrgMentionIndex((index) =>
-                    (index + 1) % orgMentionOptions.length,
+                  setActiveOrgMentionIndex(
+                    (index) => (index + 1) % orgMentionOptions.length,
                   );
                   return;
                 }
-                if (e.key === 'ArrowUp' && orgMentionOptions.length > 0) {
+                if (e.key === "ArrowUp" && orgMentionOptions.length > 0) {
                   e.preventDefault();
                   setActiveOrgMentionIndex(
                     (index) =>
@@ -6658,13 +7658,13 @@ export default function AIDock({
                   );
                   return;
                 }
-                if (e.key === 'Escape') {
+                if (e.key === "Escape") {
                   e.preventDefault();
                   closeOrgMentionSuggestions();
                   return;
                 }
                 if (
-                  (e.key === 'Tab' || (e.key === 'Enter' && !e.ctrlKey)) &&
+                  (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey)) &&
                   orgMentionOptions.length > 0
                 ) {
                   e.preventDefault();
@@ -6674,14 +7674,14 @@ export default function AIDock({
                 }
               }
               if (fileMentionOpen) {
-                if (e.key === 'ArrowDown' && fileMentionOptions.length > 0) {
+                if (e.key === "ArrowDown" && fileMentionOptions.length > 0) {
                   e.preventDefault();
-                  setActiveFileMentionIndex((index) =>
-                    (index + 1) % fileMentionOptions.length,
+                  setActiveFileMentionIndex(
+                    (index) => (index + 1) % fileMentionOptions.length,
                   );
                   return;
                 }
-                if (e.key === 'ArrowUp' && fileMentionOptions.length > 0) {
+                if (e.key === "ArrowUp" && fileMentionOptions.length > 0) {
                   e.preventDefault();
                   setActiveFileMentionIndex(
                     (index) =>
@@ -6690,13 +7690,13 @@ export default function AIDock({
                   );
                   return;
                 }
-                if (e.key === 'Escape') {
+                if (e.key === "Escape") {
                   e.preventDefault();
                   closeFileMentionSuggestions();
                   return;
                 }
                 if (
-                  (e.key === 'Tab' || (e.key === 'Enter' && !e.ctrlKey)) &&
+                  (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey)) &&
                   fileMentionOptions.length > 0
                 ) {
                   e.preventDefault();
@@ -6706,14 +7706,14 @@ export default function AIDock({
                 }
               }
               if (slashOpen) {
-                if (e.key === 'ArrowDown') {
+                if (e.key === "ArrowDown") {
                   e.preventDefault();
-                  setActiveSlashIndex((index) =>
-                    (index + 1) % filteredSlashSuggestions.length,
+                  setActiveSlashIndex(
+                    (index) => (index + 1) % filteredSlashSuggestions.length,
                   );
                   return;
                 }
-                if (e.key === 'ArrowUp') {
+                if (e.key === "ArrowUp") {
                   e.preventDefault();
                   setActiveSlashIndex(
                     (index) =>
@@ -6722,12 +7722,12 @@ export default function AIDock({
                   );
                   return;
                 }
-                if (e.key === 'Escape') {
+                if (e.key === "Escape") {
                   e.preventDefault();
                   closeSlashSuggestions();
                   return;
                 }
-                if (e.key === 'Tab' || (e.key === 'Enter' && !e.ctrlKey)) {
+                if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey)) {
                   e.preventDefault();
                   const suggestion = filteredSlashSuggestions[activeSlashIndex];
                   if (suggestion) applySlashSuggestion(suggestion);
@@ -6735,14 +7735,15 @@ export default function AIDock({
                 }
               }
               if (gameSkillOpen) {
-                if (e.key === 'ArrowDown') {
+                if (e.key === "ArrowDown") {
                   e.preventDefault();
-                  setActiveGameSkillIndex((index) =>
-                    (index + 1) % filteredGameSkillSuggestions.length,
+                  setActiveGameSkillIndex(
+                    (index) =>
+                      (index + 1) % filteredGameSkillSuggestions.length,
                   );
                   return;
                 }
-                if (e.key === 'ArrowUp') {
+                if (e.key === "ArrowUp") {
                   e.preventDefault();
                   setActiveGameSkillIndex(
                     (index) =>
@@ -6751,12 +7752,12 @@ export default function AIDock({
                   );
                   return;
                 }
-                if (e.key === 'Escape') {
+                if (e.key === "Escape") {
                   e.preventDefault();
                   closeGameSkillSuggestions();
                   return;
                 }
-                if (e.key === 'Tab' || (e.key === 'Enter' && !e.ctrlKey)) {
+                if (e.key === "Tab" || (e.key === "Enter" && !e.ctrlKey)) {
                   e.preventDefault();
                   const suggestion =
                     filteredGameSkillSuggestions[activeGameSkillIndex];
@@ -6764,7 +7765,12 @@ export default function AIDock({
                   return;
                 }
               }
-              if (matchesShortcut(e.nativeEvent, shortcutSettings['composer-send'])) {
+              if (
+                matchesShortcut(
+                  e.nativeEvent,
+                  shortcutSettings["composer-send"],
+                )
+              ) {
                 e.preventDefault();
                 closeComposerSuggestions();
                 submit();
@@ -6773,13 +7779,13 @@ export default function AIDock({
               if (
                 matchesShortcut(
                   e.nativeEvent,
-                  shortcutSettings['composer-newline'],
+                  shortcutSettings["composer-newline"],
                 )
               ) {
                 if (!isNativeTextareaNewlineShortcut(e.nativeEvent)) {
                   e.preventDefault();
                   closeComposerSuggestions();
-                  insertComposerText('\n', {
+                  insertComposerText("\n", {
                     start: e.currentTarget.selectionStart,
                     end: e.currentTarget.selectionEnd,
                   });
@@ -6790,52 +7796,52 @@ export default function AIDock({
             disabled={isReadOnly}
             placeholder={
               isReadOnly
-                ? t(locale, 'dock.runningPlaceholder')
+                ? t(locale, "dock.runningPlaceholder")
                 : composer.imageMode
-                  ? t(locale, 'dock.imageModePlaceholder')
+                  ? t(locale, "dock.imageModePlaceholder")
                   : composer.musicMode
-                    ? t(locale, 'dock.musicModePlaceholder')
+                    ? t(locale, "dock.musicModePlaceholder")
                     : composer.threeDMode
-                    ? t(locale, 'dock.threeDModePlaceholder')
-                    : composer.videoMode
-                      ? t(locale, 'dock.videoModePlaceholder')
-                      : composer.spriteMode
-                        ? t(locale, 'dock.spriteModePlaceholder')
-                        : composer.speechMode
-                          ? t(locale, 'dock.speechModePlaceholder')
-                          : composer.uiMode
-                            ? t(locale, 'dock.uiModePlaceholder')
-                            : composer.metahumanMode
-                              ? t(locale, 'dock.metahumanModePlaceholder')
-                            : composer.blueprintMode
-                              ? t(locale, 'dock.blueprintModePlaceholder')
-                            : composer.worldMode
-                              ? t(locale, 'dock.worldModePlaceholder')
-                              : t(locale, 'dock.placeholder')
+                      ? t(locale, "dock.threeDModePlaceholder")
+                      : composer.videoMode
+                        ? t(locale, "dock.videoModePlaceholder")
+                        : composer.spriteMode
+                          ? t(locale, "dock.spriteModePlaceholder")
+                          : composer.speechMode
+                            ? t(locale, "dock.speechModePlaceholder")
+                            : composer.uiMode
+                              ? t(locale, "dock.uiModePlaceholder")
+                              : composer.metahumanMode
+                                ? t(locale, "dock.metahumanModePlaceholder")
+                                : composer.blueprintMode
+                                  ? t(locale, "dock.blueprintModePlaceholder")
+                                  : composer.worldMode
+                                    ? t(locale, "dock.worldModePlaceholder")
+                                    : t(locale, "dock.placeholder")
             }
             aria-expanded={slashOpen || gameSkillOpen || fileMentionOpen}
             aria-controls={
               fileMentionOpen
-                ? 'fuc-file-mention-suggestions'
+                ? "ugs-file-mention-suggestions"
                 : slashOpen
-                  ? 'fuc-slash-suggestions'
+                  ? "ugs-slash-suggestions"
                   : gameSkillOpen
-                    ? 'fuc-game-skill-suggestions'
+                    ? "ugs-game-skill-suggestions"
                     : undefined
             }
             aria-activedescendant={
               fileMentionOpen && fileMentionOptions.length > 0
-                ? `fuc-file-mention-suggestion-${activeFileMentionIndex}`
+                ? `ugs-file-mention-suggestion-${activeFileMentionIndex}`
                 : slashOpen
-                  ? `fuc-slash-suggestion-${activeSlashIndex}`
+                  ? `ugs-slash-suggestion-${activeSlashIndex}`
                   : gameSkillOpen
-                    ? `fuc-game-skill-suggestion-${activeGameSkillIndex}`
+                    ? `ugs-game-skill-suggestion-${activeGameSkillIndex}`
                     : undefined
             }
             className={
-              'min-h-0 flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-fg outline-none placeholder:text-fg-faint ' +
-              (centerInput ? 'px-4 pt-4 pb-3 ' : 'px-3 pt-3 pb-2 ') +
-              (isReadOnly ? 'cursor-not-allowed' : '')
+              "min-h-0 flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-fg outline-none placeholder:text-fg-faint " +
+              (centerInput ? "px-4 pt-4 pb-3 " : "px-3 pt-3 pb-2 ") +
+              (isReadOnly ? "cursor-not-allowed" : "")
             }
           />
 
@@ -6874,15 +7880,15 @@ export default function AIDock({
               the parent's rounded bottom corners. */}
           <div
             className={
-              'fuc-ai-input-toolbar flex flex-wrap items-center gap-2 rounded-b-lg px-2 py-2'
+              "ugs-ai-input-toolbar flex flex-wrap items-center gap-2 rounded-b-lg px-2 py-2"
             }
           >
             {!generationMode && !simpleChatMode && activeSessionIsWorkflow && (
               <button
                 type="button"
-                title={t(locale, 'dock.modelStrategyTitle')}
+                title={t(locale, "dock.modelStrategyTitle")}
                 onClick={() => setModelStrategyOpen((v) => !v)}
-                className={cn(composerToolButtonClass, 'gap-1')}
+                className={cn(composerToolButtonClass, "gap-1")}
               >
                 <span className="text-fg-faint">◇</span>
                 <span className="truncate">
@@ -6893,29 +7899,34 @@ export default function AIDock({
             {modelStrategyOpen && (
               <div className="absolute bottom-full left-0 mb-1 w-56 rounded-md border border-border bg-panel shadow-lg">
                 <ul role="listbox">
-                  {(['inherit', 'smart', 'prefer-better', 'prefer-cheaper'] as const).map(
-                    (strategy) => (
-                      <li key={strategy}>
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={composer.modelStrategy === strategy}
-                          onClick={() => {
-                            setComposer({ modelStrategy: strategy });
-                            setModelStrategyOpen(false);
-                          }}
-                          className={
-                            'block w-full px-3 py-1.5 text-left text-xs transition-colors ' +
-                            (composer.modelStrategy === strategy
-                              ? 'bg-border-soft text-fg'
-                              : 'text-fg-dim hover:bg-border-soft hover:text-fg')
-                          }
-                        >
-                          {t(locale, modelStrategyLabelKey(strategy))}
-                        </button>
-                      </li>
-                    ),
-                  )}
+                  {(
+                    [
+                      "inherit",
+                      "smart",
+                      "prefer-better",
+                      "prefer-cheaper",
+                    ] as const
+                  ).map((strategy) => (
+                    <li key={strategy}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={composer.modelStrategy === strategy}
+                        onClick={() => {
+                          setComposer({ modelStrategy: strategy });
+                          setModelStrategyOpen(false);
+                        }}
+                        className={
+                          "block w-full px-3 py-1.5 text-left text-xs transition-colors " +
+                          (composer.modelStrategy === strategy
+                            ? "bg-border-soft text-fg"
+                            : "text-fg-dim hover:bg-border-soft hover:text-fg")
+                        }
+                      >
+                        {t(locale, modelStrategyLabelKey(strategy))}
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
@@ -6928,11 +7939,11 @@ export default function AIDock({
               disabled={isReadOnly}
               title={
                 isReadOnly
-                  ? t(locale, 'dock.inputLockedTitle')
-                  : t(locale, 'dock.addFileTitle')
+                  ? t(locale, "dock.inputLockedTitle")
+                  : t(locale, "dock.addFileTitle")
               }
-              aria-label={t(locale, 'dock.addFileTitle')}
-              className={cn(composerToolButtonClass, 'w-7 px-0')}
+              aria-label={t(locale, "dock.addFileTitle")}
+              className={cn(composerToolButtonClass, "w-7 px-0")}
             >
               <Plus size={15} strokeWidth={2} />
             </button>
@@ -6941,36 +7952,36 @@ export default function AIDock({
               onMouseDown={(e) => e.preventDefault()}
               onClick={startSlashCommand}
               disabled={isReadOnly}
-              title={t(locale, 'dock.hintSlash')}
-              aria-label={t(locale, 'dock.hintSlash')}
-              className={cn(composerToolButtonClass, 'gap-1 font-medium')}
+              title={t(locale, "dock.hintSlash")}
+              aria-label={t(locale, "dock.hintSlash")}
+              className={cn(composerToolButtonClass, "gap-1 font-medium")}
             >
               <span className="font-mono text-sm font-semibold">/</span>
-              <span>{t(locale, 'dock.hintSlash')}</span>
+              <span>{t(locale, "dock.hintSlash")}</span>
             </button>
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={startGameSkill}
               disabled={isReadOnly}
-              title={t(locale, 'dock.hintGameSkill')}
-              aria-label={t(locale, 'dock.hintGameSkill')}
-              className={cn(composerToolButtonClass, 'gap-1 font-medium')}
+              title={t(locale, "dock.hintGameSkill")}
+              aria-label={t(locale, "dock.hintGameSkill")}
+              className={cn(composerToolButtonClass, "gap-1 font-medium")}
             >
               <span className="font-mono text-sm font-semibold">#</span>
-              <span>{t(locale, 'dock.hintGameSkill')}</span>
+              <span>{t(locale, "dock.hintGameSkill")}</span>
             </button>
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={startFileMention}
               disabled={isReadOnly}
-              title={t(locale, 'dock.hintMention')}
-              aria-label={t(locale, 'dock.hintMention')}
-              className={cn(composerToolButtonClass, 'gap-1 font-medium')}
+              title={t(locale, "dock.hintMention")}
+              aria-label={t(locale, "dock.hintMention")}
+              className={cn(composerToolButtonClass, "gap-1 font-medium")}
             >
               <span className="font-mono text-sm font-semibold">@</span>
-              <span>{t(locale, 'dock.hintMentionShort')}</span>
+              <span>{t(locale, "dock.hintMentionShort")}</span>
             </button>
             {isChat && (
               <button
@@ -6979,71 +7990,100 @@ export default function AIDock({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => setOrgPanelOpen((open) => !open)}
                 aria-pressed={orgPanelOpen}
-                title={t(locale, 'dock.tabOrganization')}
-                aria-label={t(locale, 'dock.tabOrganization')}
+                title={t(locale, "dock.tabOrganization")}
+                aria-label={t(locale, "dock.tabOrganization")}
                 className={cn(
                   composerToolButtonClass,
-                  'gap-1 font-medium',
-                  orgPanelOpen && 'bg-border-soft/55 text-fg',
+                  "gap-1 font-medium",
+                  orgPanelOpen && "bg-border-soft/55 text-fg",
                 )}
               >
                 <span className="font-mono text-sm font-semibold">$</span>
-                <span>{t(locale, 'dock.tabOrganization')}</span>
+                <span>{t(locale, "dock.tabOrganization")}</span>
               </button>
             )}
 
-            {/* Session cache TTL — chosen before the conversation starts and
-                locked once the first message is sent so a single session keeps
-                one consistent value. */}
-            <Select
-              title={
-                cacheTtlLocked
-                  ? t(locale, 'dock.cacheTtlLocked')
-                  : t(locale, 'dock.cacheTtlTitle')
-              }
-              options={cacheTtlOptions.map((opt) =>
-                localizeSelectOption(opt, locale),
-              )}
-              value={String(composer.cacheTtlMinutes)}
-              onChange={(id) =>
-                setComposer({ cacheTtlMinutes: Number(id) })
-              }
-              disabled={cacheTtlLocked}
-              className="min-w-0 max-w-[8rem]"
-              icon="⏱"
-              variant="ghost"
-              showSelectedHint={false}
-            />
+            {activeRemoteWorkspaceRoot ? (
+              <>
+                <Select
+                  title={t(locale, "dock.remoteCacheTitle")}
+                  options={remoteCacheOptions}
+                  value="remote"
+                  onChange={() => {}}
+                  disabled
+                  className="min-w-0 max-w-[8rem]"
+                  icon="☁"
+                  variant="ghost"
+                  showSelectedHint={false}
+                />
+                <Select
+                  title={t(locale, "dock.remoteStartupModeTitle")}
+                  options={remoteStartupModeOptions}
+                  value="remote"
+                  onChange={() => {}}
+                  disabled
+                  className="min-w-0 max-w-[9rem]"
+                  icon="⎇"
+                  variant="ghost"
+                  showSelectedHint={false}
+                />
+              </>
+            ) : (
+              <>
+                {/* Session cache TTL — chosen before the conversation starts and
+                    locked once the first message is sent so a single session keeps
+                    one consistent value. */}
+                <Select
+                  title={
+                    cacheTtlLocked
+                      ? t(locale, "dock.cacheTtlLocked")
+                      : t(locale, "dock.cacheTtlTitle")
+                  }
+                  options={cacheTtlOptions.map((opt) =>
+                    localizeSelectOption(opt, locale),
+                  )}
+                  value={String(composer.cacheTtlMinutes)}
+                  onChange={(id) =>
+                    setComposer({ cacheTtlMinutes: Number(id) })
+                  }
+                  disabled={cacheTtlLocked}
+                  className="min-w-0 max-w-[8rem]"
+                  icon="⏱"
+                  variant="ghost"
+                  showSelectedHint={false}
+                />
 
-            {/* Session startup mode — choose whether a new session runs in the
-                workspace directly (本地) or in an isolated git worktree / copy
-                (新工作树). Like cache TTL it only affects brand-new sessions and
-                locks once the first message is sent. */}
-            <Select
-              title={
-                startupModeLocked
-                  ? t(locale, 'dock.startupModeLocked')
-                  : t(locale, 'dock.startupModeTitle')
-              }
-              options={startupModeOptions.map((opt) =>
-                localizeSelectOption(opt, locale),
-              )}
-              value={composer.startupMode}
-              onChange={(id) =>
-                setComposer({
-                  startupMode: id === 'worktree' ? 'worktree' : 'local',
-                })
-              }
-              disabled={startupModeLocked}
-              className="min-w-0 max-w-[9rem]"
-              icon="⎇"
-              variant="ghost"
-              showSelectedHint={false}
-            />
+                {/* Session startup mode — choose whether a new session runs in the
+                    workspace directly (本地) or in an isolated git worktree / copy
+                    (新工作树). Like cache TTL it only affects brand-new sessions and
+                    locks once the first message is sent. */}
+                <Select
+                  title={
+                    startupModeLocked
+                      ? t(locale, "dock.startupModeLocked")
+                      : t(locale, "dock.startupModeTitle")
+                  }
+                  options={startupModeOptions.map((opt) =>
+                    localizeSelectOption(opt, locale),
+                  )}
+                  value={composer.startupMode}
+                  onChange={(id) =>
+                    setComposer({
+                      startupMode: id === "worktree" ? "worktree" : "local",
+                    })
+                  }
+                  disabled={startupModeLocked}
+                  className="min-w-0 max-w-[9rem]"
+                  icon="⎇"
+                  variant="ghost"
+                  showSelectedHint={false}
+                />
+              </>
+            )}
 
             <div className="ml-auto flex items-center gap-2">
               <Select
-                title={t(locale, 'dock.channelTitle')}
+                title={t(locale, "dock.channelTitle")}
                 options={channelOptions}
                 value={channelValue}
                 onChange={handleChannelChange}
@@ -7061,7 +8101,7 @@ export default function AIDock({
                   onChange={handleModelChange}
                   disabled={isReadOnly}
                   className="min-w-0 max-w-[14rem]"
-                  icon={!generationMode && loadingChannelModels ? '↻' : '◇'}
+                  icon={!generationMode && loadingChannelModels ? "↻" : "◇"}
                   variant="ghost"
                 />
               )}
@@ -7089,47 +8129,46 @@ export default function AIDock({
                   !chatRunActive &&
                   (!(useChatRunButton ? chatRunText : draft.trim()) ||
                     isReadOnly ||
-                    activeAiEditing
-                  )
+                    activeAiEditing)
                 }
                 title={
                   chatInterject
-                    ? t(locale, 'dock.interjectTitle')
+                    ? t(locale, "dock.interjectTitle")
                     : chatRunActive
-                      ? t(locale, 'dock.stopChatTitle')
+                      ? t(locale, "dock.stopChatTitle")
                       : isReadOnly
-                        ? t(locale, 'dock.inputLockedTitle')
+                        ? t(locale, "dock.inputLockedTitle")
                         : activeAiEditing
-                          ? t(locale, 'dock.aiGeneratingTitle')
+                          ? t(locale, "dock.aiGeneratingTitle")
                           : useChatRunButton
-                            ? t(locale, 'dock.runChatTitle')
+                            ? t(locale, "dock.runChatTitle")
                             : sendShortcutHint
                 }
                 aria-label={
                   chatInterject
-                    ? t(locale, 'dock.interjectTitle')
+                    ? t(locale, "dock.interjectTitle")
                     : chatRunActive
-                      ? t(locale, 'dock.stopChatTitle')
+                      ? t(locale, "dock.stopChatTitle")
                       : useChatRunButton
-                        ? t(locale, 'dock.runChatTitle')
+                        ? t(locale, "dock.runChatTitle")
                         : sendShortcutHint
                 }
                 className={
-                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ' +
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 " +
                   (chatRunActive && !chatInterject
-                    ? 'border border-border bg-panel-2 text-fg-dim hover:border-accent hover:text-fg'
-                    : 'bg-fg-dim text-bg hover:bg-fg')
+                    ? "border border-border bg-panel-2 text-fg-dim hover:border-accent hover:text-fg"
+                    : "bg-fg-dim text-bg hover:bg-fg")
                 }
               >
                 {chatInterject ? (
                   <ArrowUp size={16} strokeWidth={2.4} />
                 ) : chatRunActive ? (
                   <Square size={12} strokeWidth={2.2} />
-                ) : activeAiEditing
-                  ? '…'
-                  : (
-                    <ArrowUp size={16} strokeWidth={2.4} />
-                  )}
+                ) : activeAiEditing ? (
+                  "…"
+                ) : (
+                  <ArrowUp size={16} strokeWidth={2.4} />
+                )}
               </button>
             </div>
           </div>
@@ -7139,20 +8178,23 @@ export default function AIDock({
         <div
           ref={orgPanelRef}
           role="dialog"
-          aria-label={t(locale, 'dock.tabOrganization')}
-          className="fuc-ai-input--blueprint absolute inset-x-4 top-12 z-40 flex flex-col overflow-hidden rounded-xl border shadow-2xl"
-          style={{ bottom: orgPanelBottomOffset }}
+          aria-label={t(locale, "dock.tabOrganization")}
+          className="ugs-ai-input--blueprint absolute left-4 top-12 z-40 flex flex-col overflow-hidden rounded-xl border shadow-2xl"
+          style={{
+            bottom: orgPanelBottomOffset,
+            right: `calc(1rem + var(--ugs-chat-visible-right-inset))`,
+          }}
         >
           <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-3 py-2">
             <GitBranch size={14} className="shrink-0 text-accent" />
             <span className="text-sm font-medium text-fg">
-              {t(locale, 'dock.tabOrganization')}
+              {t(locale, "dock.tabOrganization")}
             </span>
             <button
               type="button"
               onClick={() => setOrgPanelOpen(false)}
-              title={t(locale, 'common.close')}
-              aria-label={t(locale, 'common.close')}
+              title={t(locale, "common.close")}
+              aria-label={t(locale, "common.close")}
               className="ml-auto flex h-7 w-7 items-center justify-center rounded-md text-fg-dim transition-colors hover:bg-border-soft/55 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             >
               <X size={15} />
@@ -7180,20 +8222,20 @@ export default function AIDock({
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-fg">
-                  {t(locale, 'dock.freeKeyTitle')} · {keyModalChannel.label}
+                  {t(locale, "dock.freeKeyTitle")} · {keyModalChannel.label}
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {t(locale, 'dock.freeKeyDescription')}
+                  {t(locale, "dock.freeKeyDescription")}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setKeyModalChannel(null);
-                  setKeyModalValue('');
+                  setKeyModalValue("");
                 }}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-border-soft hover:text-fg"
-                title={t(locale, 'common.close')}
+                title={t(locale, "common.close")}
               >
                 <X size={15} strokeWidth={2} />
               </button>
@@ -7205,14 +8247,14 @@ export default function AIDock({
                 value={keyModalValue}
                 onChange={(event) => setKeyModalValue(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') saveKeyModal();
-                  if (event.key === 'Escape') {
+                  if (event.key === "Enter") saveKeyModal();
+                  if (event.key === "Escape") {
                     setKeyModalChannel(null);
-                    setKeyModalValue('');
+                    setKeyModalValue("");
                   }
                 }}
                 autoFocus
-                placeholder={t(locale, 'dock.freeKeyPlaceholder')}
+                placeholder={t(locale, "dock.freeKeyPlaceholder")}
                 autoComplete="off"
                 spellCheck={false}
                 className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg outline-none transition-colors focus:border-accent"
@@ -7226,11 +8268,11 @@ export default function AIDock({
                     }
                     className="rounded-md border border-border bg-panel-2 px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
                   >
-                    {t(locale, 'dock.freeKeyGet')}
+                    {t(locale, "dock.freeKeyGet")}
                   </button>
                 ) : (
                   <span className="text-xs text-fg-faint">
-                    {t(locale, 'dock.freeKeyNoUrl')}
+                    {t(locale, "dock.freeKeyNoUrl")}
                   </span>
                 )}
                 <div className="flex items-center gap-2">
@@ -7238,11 +8280,11 @@ export default function AIDock({
                     type="button"
                     onClick={() => {
                       setKeyModalChannel(null);
-                      setKeyModalValue('');
+                      setKeyModalValue("");
                     }}
                     className="rounded-md border border-border bg-panel-2 px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
                   >
-                    {t(locale, 'dock.freeKeyCancel')}
+                    {t(locale, "dock.freeKeyCancel")}
                   </button>
                   <button
                     type="button"
@@ -7250,7 +8292,7 @@ export default function AIDock({
                     disabled={!keyModalValue.trim()}
                     className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {t(locale, 'dock.freeKeySave')}
+                    {t(locale, "dock.freeKeySave")}
                   </button>
                 </div>
               </div>
@@ -7258,24 +8300,24 @@ export default function AIDock({
           </div>
         </div>
       )}
-      {localSetupChannel?.id === 'ollama' && (
+      {localSetupChannel?.id === "ollama" && (
         <LocalModelSetupDialog
           locale={locale}
           downloadUrl={localSetupChannel.setupUrl}
           statusMessage={localSetupMessage}
           onClose={() => {
             setLocalSetupChannel(null);
-            setLocalModelValue('');
+            setLocalModelValue("");
             setLocalSetupMessage(null);
           }}
           onModelSelected={(model) => {
             setFreeChannelModel(localSetupChannel.id, model);
             setLocalModelValue(model);
-            setLocalSetupMessage(t(locale, 'settings.localModel.setupStarted'));
+            setLocalSetupMessage(t(locale, "settings.localModel.setupStarted"));
           }}
         />
       )}
-      {localSetupChannel && localSetupChannel.id !== 'ollama' && (
+      {localSetupChannel && localSetupChannel.id !== "ollama" && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-bg/75 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-lg border border-border bg-panel p-4 shadow-2xl">
             <div className="flex items-start gap-3">
@@ -7284,21 +8326,22 @@ export default function AIDock({
               </div>
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-fg">
-                  {t(locale, 'dock.localModelTitle')} · {localSetupChannel.label}
+                  {t(locale, "dock.localModelTitle")} ·{" "}
+                  {localSetupChannel.label}
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-                  {t(locale, 'dock.localModelDescription')}
+                  {t(locale, "dock.localModelDescription")}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setLocalSetupChannel(null);
-                  setLocalModelValue('');
+                  setLocalModelValue("");
                   setLocalSetupMessage(null);
                 }}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-border-soft hover:text-fg"
-                title={t(locale, 'common.close')}
+                title={t(locale, "common.close")}
               >
                 <X size={15} strokeWidth={2} />
               </button>
@@ -7312,22 +8355,22 @@ export default function AIDock({
               )}
               <label className="block space-y-1">
                 <span className="text-[11px] font-medium text-fg-dim">
-                  {t(locale, 'settings.freeChannels.modelLabel')}
+                  {t(locale, "settings.freeChannels.modelLabel")}
                 </span>
                 <input
                   type="text"
                   value={localModelValue}
                   onChange={(event) => setLocalModelValue(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.key === 'Enter') saveLocalModelModal();
-                    if (event.key === 'Escape') {
+                    if (event.key === "Enter") saveLocalModelModal();
+                    if (event.key === "Escape") {
                       setLocalSetupChannel(null);
-                      setLocalModelValue('');
+                      setLocalModelValue("");
                       setLocalSetupMessage(null);
                     }
                   }}
                   autoFocus
-                  placeholder={t(locale, 'dock.localModelPlaceholder')}
+                  placeholder={t(locale, "dock.localModelPlaceholder")}
                   autoComplete="off"
                   spellCheck={false}
                   className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg outline-none transition-colors focus:border-accent"
@@ -7342,11 +8385,11 @@ export default function AIDock({
                     }
                     className="rounded-md border border-border bg-panel-2 px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
                   >
-                    {t(locale, 'dock.localModelDownload')}
+                    {t(locale, "dock.localModelDownload")}
                   </button>
                 ) : (
                   <span className="text-xs text-fg-faint">
-                    {t(locale, 'dock.localModelNoUrl')}
+                    {t(locale, "dock.localModelNoUrl")}
                   </span>
                 )}
                 <div className="flex items-center gap-2">
@@ -7354,12 +8397,12 @@ export default function AIDock({
                     type="button"
                     onClick={() => {
                       setLocalSetupChannel(null);
-                      setLocalModelValue('');
+                      setLocalModelValue("");
                       setLocalSetupMessage(null);
                     }}
                     className="rounded-md border border-border bg-panel-2 px-3 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
                   >
-                    {t(locale, 'dock.freeKeyCancel')}
+                    {t(locale, "dock.freeKeyCancel")}
                   </button>
                   <button
                     type="button"
@@ -7368,8 +8411,8 @@ export default function AIDock({
                     className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {checkingLocalModel
-                      ? t(locale, 'settings.freeChannels.localChecking')
-                      : t(locale, 'dock.localModelSave')}
+                      ? t(locale, "settings.freeChannels.localChecking")
+                      : t(locale, "dock.localModelSave")}
                   </button>
                 </div>
               </div>

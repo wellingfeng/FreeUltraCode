@@ -55,7 +55,7 @@ export interface Provider {
   /** Optional custom base URL ('' = default api.anthropic.com). */
   baseUrl: string;
   /**
-   * How FreeUltraCode should execute this provider. Manual Anthropic entries
+   * How UltraGameStudio should execute this provider. Manual Anthropic entries
    * default to browser-direct API calls; cc-switch imports default to CLI
    * because they are copied from local agent environment config.
    */
@@ -78,7 +78,7 @@ export interface ProviderRuntimeInfo {
 }
 
 export interface DefaultChannelsExport {
-  type: 'openworkflow.defaultChannels';
+  type: 'ultragamestudio.defaultChannels';
   version: 1;
   providers: Provider[];
   activeProviderIds: Partial<Record<ProviderKind, string>>;
@@ -91,25 +91,25 @@ export interface DefaultChannelsImportResult {
 }
 
 /** localStorage key holding the JSON array of providers. */
-export const PROVIDERS_STORAGE = 'fuc_providers';
+export const PROVIDERS_STORAGE = 'ugs_providers';
 /**
  * @deprecated Legacy single-active-provider key. Still written as a mirror of
  * the anthropic (Claude Code) default so the gateway's "inherit global"
  * fallback keeps working; superseded by {@link ACTIVE_PROVIDER_BY_KIND_STORAGE}.
  */
-export const ACTIVE_PROVIDER_STORAGE = 'fuc_active_provider_id';
+export const ACTIVE_PROVIDER_STORAGE = 'ugs_active_provider_id';
 /**
  * localStorage key holding the active/default provider id PER category
  * (`{ anthropic, codex, gemini }`). Each runtime family has its own default,
  * so activating a Codex channel never changes the Claude Code default.
  */
-export const ACTIVE_PROVIDER_BY_KIND_STORAGE = 'fuc_active_provider_by_kind_v1';
+export const ACTIVE_PROVIDER_BY_KIND_STORAGE = 'ugs_active_provider_by_kind_v1';
 
 /* --- legacy single-key storage (read once for migration, never removed) --- */
 /** @deprecated legacy single-key storage; kept for migration + rollback. */
-export const API_KEY_STORAGE = 'fuc_anthropic_key';
+export const API_KEY_STORAGE = 'ugs_anthropic_key';
 /** @deprecated legacy single-base-url storage; kept for migration + rollback. */
-export const BASE_URL_STORAGE = 'fuc_anthropic_base_url';
+export const BASE_URL_STORAGE = 'ugs_anthropic_base_url';
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
@@ -229,7 +229,7 @@ function rawRemove(key: string): void {
 function notifyProviderConfigChanged(): void {
   try {
     if (!hasWindow()) return;
-    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    window.dispatchEvent(new Event('ugs:gateway-config-changed'));
   } catch {
     /* ignore */
   }
@@ -730,7 +730,7 @@ export function getActiveProviderIds(): Record<ProviderKind, string> {
 
 export function exportDefaultChannelsConfig(): DefaultChannelsExport {
   return {
-    type: 'openworkflow.defaultChannels',
+    type: 'ultragamestudio.defaultChannels',
     version: 1,
     providers: loadProviders(),
     activeProviderIds: getActiveProviderIds(),
@@ -1016,6 +1016,55 @@ export function importProviders(
   notifyProviderConfigChanged();
 
   return { imported, skipped };
+}
+
+/**
+ * Upsert providers with caller-owned stable ids. Used by integrations where an
+ * external account identity must remain addressable from saved chat selections.
+ */
+export function upsertProviders(
+  incoming: Provider[],
+  opts: { removeIds?: string[]; makeActiveId?: string } = {},
+): void {
+  const list = loadProviders();
+  const byId = new Map(list.map((provider, index) => [provider.id, index]));
+  for (const provider of incoming) {
+    const index = byId.get(provider.id);
+    if (index === undefined) {
+      byId.set(provider.id, list.length);
+      list.push(provider);
+    } else {
+      list[index] = provider;
+    }
+  }
+  const removeIds = new Set(opts.removeIds ?? []);
+  const next = removeIds.size > 0
+    ? list.filter((provider) => !removeIds.has(provider.id))
+    : list;
+  saveProviders(next);
+  syncGatewayProvidersFromProviders(next);
+  for (const id of removeIds) removeGatewayProvider(id);
+
+  const map = loadActiveByKind();
+  if (opts.makeActiveId) {
+    const active = next.find((provider) => provider.id === opts.makeActiveId);
+    if (active) {
+      map[active.kind] = active.id;
+      selectGatewayProvider(active);
+    }
+  }
+  for (const kind of PROVIDER_KINDS) {
+    const valid =
+      !!map[kind] &&
+      next.some((provider) => provider.kind === kind && provider.id === map[kind]);
+    if (!valid) {
+      const first = next.find((provider) => provider.kind === kind);
+      if (first) map[kind] = first.id;
+      else delete map[kind];
+    }
+  }
+  saveActiveByKind(map);
+  notifyProviderConfigChanged();
 }
 
 /**

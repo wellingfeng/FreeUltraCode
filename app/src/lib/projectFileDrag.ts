@@ -1,11 +1,11 @@
 import type { WorkspaceTreeEntry } from '@/lib/tauri';
 
 export const PROJECT_FILE_DRAG_MIME =
-  'application/x-freeultracode-project-file-paths';
+  'application/x-ultragamestudio-project-file-paths';
 export const PROJECT_FILE_DRAG_MOVE_EVENT =
-  'freeultracode:project-file-drag-move';
+  'ultragamestudio:project-file-drag-move';
 export const PROJECT_FILE_DRAG_END_EVENT =
-  'freeultracode:project-file-drag-end';
+  'ultragamestudio:project-file-drag-end';
 
 export interface ProjectFileDragMoveDetail {
   paths: string[];
@@ -15,6 +15,7 @@ export interface ProjectFileDragMoveDetail {
 
 export interface ProjectFileDragEndDetail {
   paths: string[];
+  relativePaths?: string[];
   clientX: number;
   clientY: number;
 }
@@ -35,6 +36,19 @@ const ACTIVE_PROJECT_FILE_DRAG_TTL_MS = 60_000;
 let activeProjectFileDragPayload: ProjectFileDragPayload | null = null;
 let lastProjectFileDragPoint: { clientX: number; clientY: number } | null = null;
 let activeProjectFileDragAccepted = false;
+
+function activeProjectFileDragPayloadOrNull(): ProjectFileDragPayload | null {
+  if (!activeProjectFileDragPayload) return null;
+  if (
+    Date.now() - activeProjectFileDragPayload.startedAtMs >
+    ACTIVE_PROJECT_FILE_DRAG_TTL_MS
+  ) {
+    activeProjectFileDragPayload = null;
+    lastProjectFileDragPoint = null;
+    return null;
+  }
+  return activeProjectFileDragPayload;
+}
 
 function dragPointFromEvent(
   event: { clientX?: number; clientY?: number } | undefined,
@@ -73,16 +87,29 @@ function projectFileDragPayloadFromEntry(
 }
 
 function activeProjectFilePaths(): string[] {
-  if (!activeProjectFileDragPayload) return [];
-  if (
-    Date.now() - activeProjectFileDragPayload.startedAtMs >
-    ACTIVE_PROJECT_FILE_DRAG_TTL_MS
-  ) {
-    activeProjectFileDragPayload = null;
-    lastProjectFileDragPoint = null;
-    return [];
-  }
-  return activeProjectFileDragPayload.paths;
+  return activeProjectFileDragPayloadOrNull()?.paths ?? [];
+}
+
+function relativePathsFromPayload(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const entries = (payload as { entries?: unknown }).entries;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) =>
+      entry &&
+      typeof entry === 'object' &&
+      typeof (entry as { relativePath?: unknown }).relativePath === 'string'
+        ? (entry as { relativePath: string }).relativePath.trim()
+        : '',
+    )
+    .filter(Boolean);
+}
+
+function activeProjectFileRelativePaths(): string[] {
+  const payload = activeProjectFileDragPayloadOrNull();
+  if (!payload) return [];
+  const relativePaths = relativePathsFromPayload(payload);
+  return relativePaths.length > 0 ? relativePaths : payload.paths;
 }
 
 export function setProjectFileDragData(
@@ -165,6 +192,7 @@ export function finishProjectFileDrag(
 ): void {
   if (event) updateProjectFileDragPoint(event);
   const paths = activeProjectFilePaths();
+  const relativePaths = activeProjectFileRelativePaths();
   const point = lastProjectFileDragPoint;
   clearProjectFileDragData();
 
@@ -181,6 +209,7 @@ export function finishProjectFileDrag(
     new CustomEvent<ProjectFileDragEndDetail>(PROJECT_FILE_DRAG_END_EVENT, {
       detail: {
         paths,
+        relativePaths,
         clientX: point.clientX,
         clientY: point.clientY,
       },
@@ -215,5 +244,27 @@ export function projectFilePathsFromDataTransfer(
     return paths.length > 0 ? paths : activeProjectFilePaths();
   } catch {
     return activeProjectFilePaths();
+  }
+}
+
+export function projectFileRelativePathsFromDataTransfer(
+  dataTransfer: DataTransfer,
+): string[] {
+  let raw = '';
+  try {
+    raw = dataTransfer.getData(PROJECT_FILE_DRAG_MIME);
+  } catch {
+    return activeProjectFileRelativePaths();
+  }
+  if (!raw) return activeProjectFileRelativePaths();
+
+  try {
+    const parsed = JSON.parse(raw);
+    const relativePaths = relativePathsFromPayload(parsed);
+    return relativePaths.length > 0
+      ? relativePaths
+      : projectFilePathsFromDataTransfer(dataTransfer);
+  } catch {
+    return activeProjectFileRelativePaths();
   }
 }

@@ -121,7 +121,7 @@ describe('comfyBaseUrl (shared image channel)', () => {
       providerBaseUrls: { 'local-comfyui': 'https://channel.example.com' },
     });
     window.localStorage.setItem(
-      'freeultracode.comfyui.v1',
+      'ultragamestudio.comfyui.v1',
       JSON.stringify({ baseUrl: 'https://override.example.com' }),
     );
     expect(comfyBaseUrl()).toBe('https://override.example.com');

@@ -7,7 +7,7 @@ import {
 } from '@/lib/musicGeneration';
 import { useStore } from './useStore';
 
-const MUSIC_SETTINGS_KEY = 'freeultracode.musicGeneration.v1';
+const MUSIC_SETTINGS_KEY = 'ultragamestudio.musicGeneration.v1';
 
 function cloneGraph(graph: IRGraph): IRGraph {
   return JSON.parse(JSON.stringify(graph)) as IRGraph;

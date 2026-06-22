@@ -4,7 +4,7 @@ import {
   type AppearanceSettings,
 } from '@/lib/appearance';
 
-export const APPEARANCE_STORAGE_KEY = 'freeultracode.appearance.v1';
+export const APPEARANCE_STORAGE_KEY = 'ultragamestudio.appearance.v1';
 
 function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;

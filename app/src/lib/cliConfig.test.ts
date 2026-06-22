@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { refreshCliRuntime } from './cliConfig';
 
-const HISTORY_CONFIG_STORAGE = 'freeultracode.history.v1:config.json';
+const HISTORY_CONFIG_STORAGE = 'ultragamestudio.history.v1:config.json';
 
 function seedHistoryConfig(config: Record<string, unknown>): void {
   window.localStorage.setItem(

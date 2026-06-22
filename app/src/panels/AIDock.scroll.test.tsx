@@ -6,6 +6,7 @@ import { simpleBlueprint } from '@/core/defaultBlueprint';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import type { Message } from '@/store/types';
 import { useStore } from '@/store/useStore';
+import { FILE_PREVIEW_DRAWER_LAYOUT_EVENT } from '@/components/ai/FilePreviewDrawer';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -41,6 +42,15 @@ afterEach(() => {
 
 function chatMessages(prefix: string): Message[] {
   return Array.from({ length: 8 }, (_, index) => ({
+    id: `${prefix}_${index}`,
+    role: index % 2 === 0 ? 'user' : 'assistant',
+    text: `${prefix} message ${index}`,
+    createdAt: index + 1,
+  })) as Message[];
+}
+
+function longChatMessages(prefix: string, count: number): Message[] {
+  return Array.from({ length: count }, (_, index) => ({
     id: `${prefix}_${index}`,
     role: index % 2 === 0 ? 'user' : 'assistant',
     text: `${prefix} message ${index}`,
@@ -96,7 +106,7 @@ async function renderChatDock(): Promise<{
 }
 
 function streamElement(container: HTMLElement): HTMLElement {
-  const el = container.querySelector('.fuc-ai-return-stream');
+  const el = container.querySelector('.ugs-ai-return-stream');
   if (!(el instanceof HTMLElement)) throw new Error('Missing AI return stream');
   return el;
 }
@@ -220,11 +230,73 @@ describe('AIDock stream scroll state', () => {
         trigger?.click();
       });
 
-      const panel = view.container.querySelector('.fuc-ai-input--blueprint');
+      const panel = view.container.querySelector('.ugs-ai-input--blueprint');
       expect(panel).toBeInstanceOf(HTMLElement);
       expect((panel as HTMLElement).style.bottom).toBe('312px');
       expect(inputSection?.className).not.toContain('max-w-6xl');
     } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps the new-session composer inside the visible chat area while a file preview drawer is open', async () => {
+    resetChatSession('s_preview_empty', []);
+    const view = await renderChatDock();
+    const originalInnerWidth = window.innerWidth;
+
+    try {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: 1600,
+      });
+      const dock = view.container.firstElementChild;
+      expect(dock).toBeInstanceOf(HTMLElement);
+      Object.defineProperty(dock, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          x: 300,
+          y: 0,
+          left: 300,
+          top: 0,
+          right: 1200,
+          bottom: 900,
+          width: 900,
+          height: 900,
+          toJSON: () => ({}),
+        }),
+      });
+
+      await act(async () => {
+        window.dispatchEvent(
+          new CustomEvent(FILE_PREVIEW_DRAWER_LAYOUT_EVENT, {
+            detail: {
+              id: 'preview',
+              open: true,
+              width: 760,
+              expanded: false,
+            },
+          }),
+        );
+      });
+
+      expect((dock as HTMLElement).style.getPropertyValue(
+        '--ugs-chat-visible-right-inset',
+      )).toBe('360px');
+
+      const inputSection = view.container.querySelector<HTMLElement>(
+        '[aria-label^="AI 输入"]',
+      );
+      expect(inputSection?.style.maxWidth).toBe(
+        'min(72rem, calc(100% - var(--ugs-chat-visible-right-inset)))',
+      );
+      expect(inputSection?.style.transform).toBe(
+        'translateX(calc(var(--ugs-chat-visible-right-inset) / -2))',
+      );
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: originalInnerWidth,
+      });
       await view.cleanup();
     }
   });
@@ -248,7 +320,7 @@ describe('AIDock stream scroll state', () => {
       });
 
       // The inline tree menu is mounted; the full blueprint popup is not.
-      const menu = view.container.querySelector('#fuc-org-mention-suggestions');
+      const menu = view.container.querySelector('#ugs-org-mention-suggestions');
       expect(menu).toBeInstanceOf(HTMLElement);
       expect(menu?.textContent).toContain('制作人');
       // The `$` token stays in the draft as the active trigger.
@@ -276,7 +348,7 @@ describe('AIDock stream scroll state', () => {
         input.dispatchEvent(new Event('input', { bubbles: true }));
       });
 
-      const menu = view.container.querySelector('#fuc-slash-suggestions');
+      const menu = view.container.querySelector('#ugs-slash-suggestions');
       expect(menu).toBeInstanceOf(HTMLElement);
       expect(menu?.textContent).toContain('技术总监');
 
@@ -354,6 +426,43 @@ describe('AIDock stream scroll state', () => {
       );
       expect(observed).toContain(stream);
       expect(observed).toContain(list);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('mounts only the latest message window when opening a long history', async () => {
+    resetChatSession('s_long', longChatMessages('long', 220));
+    const view = await renderChatDock();
+
+    try {
+      const stream = streamElement(view.container);
+      const rows = stream.querySelectorAll('[data-ugs-message-row="true"]');
+
+      expect(rows.length).toBe(80);
+      expect(stream.textContent).toContain('long message 219');
+      expect(stream.textContent).not.toContain('long message 0');
+      expect(
+        stream.querySelector('[data-ugs-load-earlier-messages="true"]'),
+      ).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        stream
+          .querySelector<HTMLButtonElement>(
+            '[data-ugs-load-earlier-messages="true"]',
+          )
+          ?.click();
+      });
+      expect(
+        stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+      ).toBe(160);
+
+      await switchSession('s_other_long', longChatMessages('other', 220));
+      expect(
+        stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+      ).toBe(80);
+      expect(stream.textContent).toContain('other message 219');
+      expect(stream.textContent).not.toContain('other message 0');
     } finally {
       await view.cleanup();
     }

@@ -3,7 +3,7 @@
  *
  * `rehype-highlight` accepts a `languages` record (Record<string, LanguageFn>)
  * and builds its own lowlight instance internally; it does NOT take a prebuilt
- * lowlight instance. We register only the languages FreeUltraCode's AI output
+ * lowlight instance. We register only the languages UltraGameStudio's AI output
  * actually emits (web + workflow scripting) so the highlighter stays ~30-40KB gz
  * instead of pulling highlight.js's full "common" bundle. Unknown languages fall
  * back to auto-detect / plain text — lowlight never throws on partial input.

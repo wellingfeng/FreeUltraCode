@@ -1,6 +1,6 @@
 /**
  * Unit coverage for the extracted-from-store pure helpers in genPrompt.ts.
- * These were lifted out of useStore.ts so the headless CLI (`fuc gen`) can reuse
+ * These were lifted out of useStore.ts so the headless CLI (`ugs gen`) can reuse
  * them without importing zustand; the store now re-imports them unchanged.
  */
 import { describe, expect, it } from 'vitest';

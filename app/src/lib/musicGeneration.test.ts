@@ -89,7 +89,7 @@ describe('music generation settings and routing', () => {
       providerKeys: { 'beatoven-maestro': ' token ', unknown: 'x' },
       providerModels: { 'beatoven-maestro': ' maestro-loop ' },
     });
-    expect(settings.enabled).toBe(false);
+    expect(settings.enabled).toBe(true);
     expect(settings.preferredProviderId).toBe('beatoven-maestro');
     expect(settings.providerKeys['beatoven-maestro']).toBe('token');
     expect(settings.providerModels['beatoven-maestro']).toBe('maestro-loop');

@@ -113,7 +113,7 @@ export interface SpawnCliAgentOpts {
 
 /** Clamp + env-override the hard timeout (mirrors ai_cli_timeout_secs). */
 function resolveTimeoutSecs(override?: number): number {
-  const configuredRaw = Number(process.env.FREEULTRACODE_AI_CLI_TIMEOUT_SECS);
+  const configuredRaw = Number(process.env.ULTRAGAMESTUDIO_AI_CLI_TIMEOUT_SECS);
   const configured =
     Number.isFinite(configuredRaw) && configuredRaw >= 60
       ? Math.floor(configuredRaw)
@@ -125,7 +125,7 @@ function resolveTimeoutSecs(override?: number): number {
 
 /** Clamp + env-override the idle timeout (mirrors ai_cli_idle_timeout_secs). 0 disables. */
 function resolveIdleTimeoutSecs(override?: number): number {
-  const raw = process.env.FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS;
+  const raw = process.env.ULTRAGAMESTUDIO_AI_CLI_IDLE_TIMEOUT_SECS;
   if (raw != null && raw.trim() !== '') {
     const n = Number(raw.trim());
     if (Number.isFinite(n) && (n === 0 || n >= 30)) return Math.floor(n);
@@ -146,7 +146,7 @@ function hasEnvValue(env: Record<string, string> | undefined, key: string): bool
 }
 
 function shouldRunClaudeBare(env: Record<string, string> | undefined): boolean {
-  if (flagEnabled(process.env.FREEULTRACODE_DISABLE_CLAUDE_BARE)) return false;
+  if (flagEnabled(process.env.ULTRAGAMESTUDIO_DISABLE_CLAUDE_BARE)) return false;
   const hasApiKey = hasEnvValue(env, 'ANTHROPIC_API_KEY');
   const hasGatewayRoute =
     hasEnvValue(env, 'ANTHROPIC_BASE_URL') || hasEnvValue(env, 'ANTHROPIC_MODEL');
@@ -202,7 +202,7 @@ function normalizeSpawnEnv(env: NodeJS.ProcessEnv): void {
 }
 
 function mcpEnabled(): boolean {
-  const v = (process.env.FREEULTRACODE_ENABLE_MCP ?? '').trim().toLowerCase();
+  const v = (process.env.ULTRAGAMESTUDIO_ENABLE_MCP ?? '').trim().toLowerCase();
   // Default on: only an explicit disable value turns MCP off.
   return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
@@ -214,16 +214,16 @@ function projectHistoryPathKey(path: string | undefined): string | null {
   return IS_WINDOWS ? normalized.toLowerCase() : normalized;
 }
 
-function freeUltraCodeRoot(): string {
-  const configured = process.env.FUC_HOME?.trim();
-  return configured || join(homedir(), '.freeultracode');
+function freeUltraGameStudioRoot(): string {
+  const configured = process.env.UGS_HOME?.trim();
+  return configured || join(homedir(), '.ultragamestudio');
 }
 
 function projectSettingsForCwd(cwd: string | undefined): Record<string, unknown> | null {
   const cwdKey = projectHistoryPathKey(cwd);
   if (!cwdKey) return null;
   try {
-    const indexPath = join(freeUltraCodeRoot(), 'workspaces', 'index.json');
+    const indexPath = join(freeUltraGameStudioRoot(), 'workspaces', 'index.json');
     const workspaces = JSON.parse(readFileSync(indexPath, 'utf8')) as unknown;
     if (!Array.isArray(workspaces)) return null;
     const workspace = workspaces.find((item) => {
@@ -308,7 +308,7 @@ function projectMcpSettingsJson(cwd: string | undefined): Record<string, unknown
 function writeProjectMcpSettings(cwd: string | undefined): { path: string; dir: string } | null {
   const settings = projectMcpSettingsJson(cwd);
   if (!settings) return null;
-  const dir = mkdtempSync(join(tmpdir(), 'freeultracode-project-mcp-'));
+  const dir = mkdtempSync(join(tmpdir(), 'ultragamestudio-project-mcp-'));
   const path = join(dir, 'settings.json');
   writeFileSync(path, JSON.stringify(settings), 'utf8');
   return { path, dir };
@@ -527,7 +527,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
   let codexDir: string | undefined;
   let codexOutPath: string | undefined;
   if (isCodex) {
-    codexDir = mkdtempSync(join(tmpdir(), 'freeultracode-codex-'));
+    codexDir = mkdtempSync(join(tmpdir(), 'ultragamestudio-codex-'));
     codexOutPath = join(codexDir, 'last-message.txt');
   }
   let tempDirs: string[] = [];

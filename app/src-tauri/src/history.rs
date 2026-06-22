@@ -230,6 +230,66 @@ fn ensure_parent_dir(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn staged_path_for(path: &Path) -> PathBuf {
+    let mut tmp = path.to_path_buf();
+    let mut name = tmp
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_default();
+    name.push(format!(".{}.tmp", timestamp_token()));
+    tmp.set_file_name(name);
+    tmp
+}
+
+fn write_staged_json(path: &Path, json: &str) -> Result<PathBuf, String> {
+    ensure_parent_dir(path)?;
+    let tmp = staged_path_for(path);
+    {
+        let mut f = fs::File::create(&tmp)
+            .map_err(|e| format!("创建临时文件失败 {}: {e}", tmp.display()))?;
+        f.write_all(json.as_bytes())
+            .map_err(|e| format!("写入失败 {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("同步临时文件失败 {}: {e}", tmp.display()))?;
+    }
+    Ok(tmp)
+}
+
+fn write_json_direct(path: &Path, json: &str) -> Result<(), String> {
+    ensure_parent_dir(path)?;
+    let mut f = fs::File::create(path)
+        .map_err(|e| format!("直接写入 JSON 失败 {}: {e}", path.display()))?;
+    f.write_all(json.as_bytes())
+        .map_err(|e| format!("直接写入 JSON 失败 {}: {e}", path.display()))?;
+    f.sync_all()
+        .map_err(|e| format!("同步 JSON 失败 {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn persist_json_file(path: &Path, json: &str) -> Result<(), String> {
+    let mut last_err: Option<String> = None;
+    for _ in 0..2 {
+        let tmp = write_staged_json(path, json)?;
+        match replace_file(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                last_err = Some(err);
+                let _ = fs::remove_file(&tmp);
+            }
+        }
+    }
+
+    // If Windows loses the staged file or MoveFileEx keeps returning a transient
+    // "file not found", keep history usable. JSON was already validated and any
+    // existing target was backed up by the caller before this fallback.
+    write_json_direct(path, json).map_err(|direct_err| {
+        format!(
+            "{} (直接写入也失败: {direct_err})",
+            last_err.unwrap_or_else(|| "替换文件失败".to_string())
+        )
+    })
+}
+
 fn backup_existing_file(root: &Path, rel_path: &str, source: &Path) -> Result<(), String> {
     let (dest, _) = unique_artifact_paths(root, rel_path, "backups", "backup")?;
     ensure_parent_dir(&dest)?;
@@ -382,7 +442,7 @@ fn validate_json(json: &str) -> Result<(), String> {
         .map_err(|e| format!("JSON 无效: {e}"))
 }
 
-/// Return the absolute path of the `.freeultracode` root, creating it on first
+/// Return the absolute path of the `.ultragamestudio` root, creating it on first
 /// access. The frontend uses this for diagnostics; it must not hardcode the
 /// path.
 #[tauri::command]
@@ -395,7 +455,7 @@ pub async fn history_root() -> Result<String, String> {
     .map_err(|e| format!("history_root 调度失败: {e}"))?
 }
 
-/// Read a JSON file under `.freeultracode`, returning `None` if it does not exist.
+/// Read a JSON file under `.ultragamestudio`, returning `None` if it does not exist.
 /// Corrupt JSON is moved into `quarantine/` so a parse failure never keeps
 /// re-crashing the UI on every load.
 #[tauri::command]
@@ -424,7 +484,7 @@ pub async fn history_read_json(rel_path: String) -> Result<Option<String>, Strin
     .map_err(|e| format!("history_read_json 调度失败: {e}"))?
 }
 
-/// Atomically write JSON to a path under `.freeultracode`. The data is staged into
+/// Atomically write JSON to a path under `.ultragamestudio`. The data is staged into
 /// a temp file in the same directory and then renamed over the target. If the
 /// target already exists, a copy is saved under `backups/` first.
 #[tauri::command]
@@ -445,33 +505,14 @@ pub async fn history_write_json(rel_path: String, json: String) -> Result<(), St
             backup_existing_file(&root, &rel_path, &path)?;
         }
 
-        ensure_parent_dir(&path)?;
-
-        let tmp = {
-            let mut t = path.clone();
-            let mut name = t.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-            name.push(format!(".{}.tmp", timestamp_token()));
-            t.set_file_name(name);
-            t
-        };
-
-        {
-            let mut f = fs::File::create(&tmp)
-                .map_err(|e| format!("创建临时文件失败 {}: {e}", tmp.display()))?;
-            f.write_all(json.as_bytes())
-                .map_err(|e| format!("写入失败 {}: {e}", tmp.display()))?;
-            f.sync_all()
-                .map_err(|e| format!("同步临时文件失败 {}: {e}", tmp.display()))?;
-        }
-
-        replace_file(&tmp, &path)?;
+        persist_json_file(&path, &json)?;
         Ok(())
     })
     .await
     .map_err(|e| format!("history_write_json 调度失败: {e}"))?
 }
 
-/// Remove a file or directory under `.freeultracode`. `soft=true` (the default
+/// Remove a file or directory under `.ultragamestudio`. `soft=true` (the default
 /// from the UI) moves the target into `trash/<unix-ms>-<flattened-relpath>`;
 /// `soft=false` deletes it outright. A missing target is treated as success
 /// so callers can be idempotent.
@@ -506,7 +547,7 @@ pub async fn history_remove(rel_path: String, soft: bool) -> Result<(), String> 
     .map_err(|e| format!("history_remove 调度失败: {e}"))?
 }
 
-/// List the direct children inside `rel_path` under `.freeultracode`. Empty
+/// List the direct children inside `rel_path` under `.ultragamestudio`. Empty
 /// `rel_path` lists the root itself. Temp and corrupt files are filtered out so
 /// the caller sees only well-formed entries.
 #[tauri::command]

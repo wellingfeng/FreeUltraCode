@@ -1,6 +1,6 @@
 import type { IRGraph } from '@/core/ir';
 import { loadComposer } from '@/lib/composerStorage';
-import { FUC_STORAGE_KEY } from '@/lib/persist';
+import { UGS_STORAGE_KEY } from '@/lib/persist';
 import { tauriAvailable } from '@/lib/tauri';
 import type { Message } from '@/store/types';
 import {
@@ -72,7 +72,7 @@ export interface HistoryStore {
 
 const CONFIG_PATH = 'config.json';
 const WORKSPACES_INDEX = 'workspaces/index.json';
-const FALLBACK_PREFIX = 'freeultracode.history.v1:';
+const FALLBACK_PREFIX = 'ultragamestudio.history.v1:';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -372,6 +372,34 @@ function sortSessions(records: SessionSummary[]): SessionSummary[] {
   return [...records].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+function sessionFileIdFromName(name: string): string | null {
+  if (!name.endsWith('.json') || name === 'index.json') return null;
+  return name.slice(0, -'.json'.length);
+}
+
+async function listSessionFileIdsInternal(workspaceId: string): Promise<string[]> {
+  const fileNames = await listDir(`workspaces/${workspaceId}/sessions`);
+  return fileNames
+    .map(sessionFileIdFromName)
+    .filter((id): id is string => id != null);
+}
+
+function sessionIndexMatchesFiles(
+  index: SessionSummary[],
+  fileIds: string[],
+): boolean {
+  if (index.length !== fileIds.length) return false;
+  const indexed = new Set(index.map((session) => session.id));
+  return fileIds.every((id) => indexed.has(id));
+}
+
+async function readSessionIndexInternal(
+  workspaceId: string,
+): Promise<SessionSummary[] | null> {
+  const list = await readJson<unknown>(sessionIndexPath(workspaceId));
+  return Array.isArray(list) ? sortSessions(list as SessionSummary[]) : null;
+}
+
 function finiteTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
@@ -467,10 +495,7 @@ async function readSessionRecordsFromWorkspaceDirectoryInternal(
   workspaceId: string,
   allowedWorkspaceIds = new Set([workspaceId]),
 ): Promise<SessionRecord[]> {
-  const fileNames = await listDir(`workspaces/${workspaceId}/sessions`);
-  const sessionIds = fileNames
-    .filter((name) => name.endsWith('.json') && name !== 'index.json')
-    .map((name) => name.slice(0, -'.json'.length));
+  const sessionIds = await listSessionFileIdsInternal(workspaceId);
   return (
     await Promise.all(
       sessionIds.map((sessionId) => getSessionInternal(workspaceId, sessionId)),
@@ -846,6 +871,13 @@ async function resolveWorkspaceInternal(
 async function listSessionsInternal(
   workspaceId: string,
 ): Promise<SessionSummary[]> {
+  const indexed = await readSessionIndexInternal(workspaceId);
+  if (indexed) {
+    const fileIds = await listSessionFileIdsInternal(workspaceId);
+    if (sessionIndexMatchesFiles(indexed, fileIds)) {
+      return indexed;
+    }
+  }
   return rebuildWorkspaceSessionIndexFromFilesInternal(workspaceId);
 }
 
@@ -972,7 +1004,7 @@ async function migrateLocalWorkflowInternal(): Promise<void> {
   const config = await getConfigInternal();
   if (config.migratedFromLocalStorage) return;
 
-  const raw = localGet(FUC_STORAGE_KEY);
+  const raw = localGet(UGS_STORAGE_KEY);
   let migrated = false;
   if (raw) {
     try {
@@ -1046,7 +1078,7 @@ export const historyStore: HistoryStore = {
     if (tauriAvailable()) {
       return command<string>('history_root');
     }
-    return 'localStorage://freeultracode.history.v1';
+    return 'localStorage://ultragamestudio.history.v1';
   },
 
   getConfig() {

@@ -26,7 +26,7 @@ export interface RunShellPayload {
   path?: string;
 }
 
-export const RUN_SHELL_STORAGE = 'fuc_run_shell_v1';
+export const RUN_SHELL_STORAGE = 'ugs_run_shell_v1';
 
 const DEFAULT_CONFIG: RunShellConfig = { kind: 'direct' };
 
@@ -45,7 +45,7 @@ function rawSet(key: string, value: string): void {
   try {
     if (!hasWindow()) return;
     window.localStorage.setItem(key, value);
-    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    window.dispatchEvent(new Event('ugs:gateway-config-changed'));
   } catch {
     /* ignore */
   }

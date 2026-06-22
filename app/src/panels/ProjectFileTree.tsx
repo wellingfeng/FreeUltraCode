@@ -85,6 +85,13 @@ import {
   uniqueWorkspaceHistory,
   workspacePathKey,
 } from '@/lib/workspaceHistory';
+import {
+  isRemoteWorkspacePath,
+  listRemoteWorkspaceDirectory,
+  previewRemoteWorkspaceFile,
+  REMOTE_WORKSPACE_FILES_UPDATED_EVENT,
+  type RemoteWorkspaceFilesUpdatedDetail,
+} from '@/lib/remoteWorkspace';
 import { basename } from '@/lib/folderPicker';
 import {
   buildWorkspaceVcsTreeStatus,
@@ -217,7 +224,7 @@ const CONTEXT_MENU_MARGIN = 8;
 // 文件修改状态扫描已停用，扫描轮询间隔与开关偏好读取不再需要。
 // const VCS_TREE_REFRESH_INTERVAL_MS = 30_000;
 // const VCS_STATUS_SCAN_ENABLED_STORAGE_KEY =
-//   'freeultracode.projectFileTreeVcsScan.v1';
+//   'ultragamestudio.projectFileTreeVcsScan.v1';
 //
 // function readVcsScanEnabledPreference(): boolean {
 //   if (typeof window === 'undefined') return false;
@@ -793,7 +800,7 @@ export default function ProjectFileTree() {
   const activeSessionId = useStore((s) => s.activeSessionId);
   const composerWorkspace = useStore((s) => s.composer.workspace);
   const composerWorkspaceFolders = useStore((s) => s.composer.workspaceFolders);
-  // 「会话文件」标签的数据来源：当前会话里 AI 工具调用（<<FUC_TOOL>> 内联事件）
+  // 「会话文件」标签的数据来源：当前会话里 AI 工具调用（<<UGS_TOOL>> 内联事件）
   // 修改过的文件，并合并运行结束时已经持久化的会话改动缓存。
   const sessionMessages = useStore((s) => s.messages);
   // 文件修改状态扫描已停用，会话忙/闲状态不再用于触发自动重扫。
@@ -819,13 +826,13 @@ export default function ProjectFileTree() {
   const [panelTab, setPanelTab] = useState<ProjectPanelTab>(() => {
     if (typeof window === 'undefined') return 'files';
     const stored = window.localStorage.getItem(
-      'freeultracode.projectRightPanelTab.v1',
+      'ultragamestudio.projectRightPanelTab.v1',
     );
     return stored === 'session' ? stored : 'files';
   });
   const [viewMode, setViewMode] = useState<ProjectTreeViewMode>(() => {
     if (typeof window === 'undefined') return 'tree';
-    return window.localStorage.getItem('freeultracode.projectFileTreeView.v1') ===
+    return window.localStorage.getItem('ultragamestudio.projectFileTreeView.v1') ===
       'preview'
       ? 'preview'
       : 'tree';
@@ -885,6 +892,7 @@ export default function ProjectFileTree() {
     [activeWorkspaceId, workspaces],
   );
   const activeWorkspacePath = activeWorkspace?.path?.trim() ?? '';
+  const remoteWorkspaceSelected = isRemoteWorkspacePath(activeWorkspacePath);
 
 
   // The right-hand panel browses every folder attached to the active session:
@@ -892,13 +900,19 @@ export default function ProjectFileTree() {
   // Project Settings → 概览 and inherited by new sessions). The folder bar lets
   // the user pick which root to browse; the tree below shows that root.
   const rootFolders = useMemo(() => {
+    if (remoteWorkspaceSelected) return activeWorkspacePath ? [activeWorkspacePath] : [];
     const folders = uniqueWorkspaceHistory([
       composerWorkspace,
       ...composerWorkspaceFolders,
       activeWorkspacePath,
     ]);
     return folders;
-  }, [composerWorkspace, composerWorkspaceFolders, activeWorkspacePath]);
+  }, [
+    composerWorkspace,
+    composerWorkspaceFolders,
+    activeWorkspacePath,
+    remoteWorkspaceSelected,
+  ]);
   const sessionChangesRootPath = rootFolders[0] ?? '';
   const activeSessionChangesCacheKey = useMemo(
     () =>
@@ -930,6 +944,10 @@ export default function ProjectFileTree() {
   useEffect(() => {
     let cancelled = false;
     if (!sessionChangesRootPath || !activeSessionChangesCacheKey) {
+      setSessionChangesSnapshot(null);
+      return;
+    }
+    if (isRemoteWorkspacePath(sessionChangesRootPath)) {
       setSessionChangesSnapshot(null);
       return;
     }
@@ -971,6 +989,9 @@ export default function ProjectFileTree() {
     void (async () => {
       const loaded = await Promise.all(
         roots.map(async (root): Promise<SessionIgnoreRoot> => {
+          if (isRemoteWorkspacePath(root)) {
+            return sessionIgnoreRootFromContents(root, []);
+          }
           const contents = await Promise.all(
             IGNORE_FILE_NAMES.map(async (name) => {
               try {
@@ -1073,7 +1094,7 @@ export default function ProjectFileTree() {
   );
 
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'freeultracode.projectFileTreeWidth.v1',
+    storageKey: 'ultragamestudio.projectFileTreeWidth.v1',
     defaultWidth: projectFileTreeDefaultWidth(),
     min: PROJECT_FILE_TREE_MIN_WIDTH,
     max: projectFileTreeMaxWidth(),
@@ -1116,7 +1137,9 @@ export default function ProjectFileTree() {
       });
 
       try {
-        const listing = await listWorkspaceDirectory(rootPath, key);
+        const listing = isRemoteWorkspacePath(rootPath)
+          ? await listRemoteWorkspaceDirectory(rootPath, key)
+          : await listWorkspaceDirectory(rootPath, key);
         setCache((prev) => {
           const previous = prev[workspaceId];
           if (!previous || previous.rootPath !== rootPath) return prev;
@@ -1170,7 +1193,7 @@ export default function ProjectFileTree() {
   const updateViewMode = useCallback((nextMode: ProjectTreeViewMode) => {
     setViewMode(nextMode);
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem('freeultracode.projectFileTreeView.v1', nextMode);
+      window.localStorage.setItem('ultragamestudio.projectFileTreeView.v1', nextMode);
     }
   }, []);
 
@@ -1192,7 +1215,7 @@ export default function ProjectFileTree() {
     setTeamDetailsPreview(null);
     setPanelTab(nextTab);
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem('freeultracode.projectRightPanelTab.v1', nextTab);
+      window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', nextTab);
     }
   }, []);
 
@@ -1378,11 +1401,44 @@ export default function ProjectFileTree() {
   }, [activeRootKey, selectedRootPath, loadDirectory]);
 
   useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      !activeRootKey ||
+      !selectedRootPath ||
+      !isRemoteWorkspacePath(selectedRootPath)
+    ) {
+      return;
+    }
+    const onRemoteFilesUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<RemoteWorkspaceFilesUpdatedDetail>)
+        .detail;
+      if (detail?.workspacePath !== selectedRootPath) return;
+      void loadDirectory(activeRootKey, selectedRootPath, '', { force: true });
+      if (previewDirectoryKey) {
+        void loadDirectory(activeRootKey, selectedRootPath, previewDirectoryKey, {
+          force: true,
+        });
+      }
+    };
+    window.addEventListener(
+      REMOTE_WORKSPACE_FILES_UPDATED_EVENT,
+      onRemoteFilesUpdated,
+    );
+    return () => {
+      window.removeEventListener(
+        REMOTE_WORKSPACE_FILES_UPDATED_EVENT,
+        onRemoteFilesUpdated,
+      );
+    };
+  }, [activeRootKey, loadDirectory, previewDirectoryKey, selectedRootPath]);
+
+  useEffect(() => {
     setVisibleThumbnails({});
   }, [activeRootKey, previewDirectoryKey, viewMode]);
 
   useEffect(() => {
     if (viewMode !== 'preview' || !selectedRootPath) return;
+    if (isRemoteWorkspacePath(selectedRootPath)) return;
     const imageEntries = previewDirectoryEntries.filter(
       (entry) => isImageEntry(entry) && visibleThumbnails[thumbnailKey(entry)],
     );
@@ -1581,6 +1637,17 @@ export default function ProjectFileTree() {
     });
   }, [activeRootKey, selectedRootPath, loadDirectory, refreshVcsTreeStatus]);
 
+  const previewProjectFile = useCallback(
+    (path: string, opts?: { cwd?: string }) => {
+      const cwd = opts?.cwd;
+      if (cwd && isRemoteWorkspacePath(cwd)) {
+        return previewRemoteWorkspaceFile(cwd, path);
+      }
+      return previewLocalFile(path, opts);
+    },
+    [],
+  );
+
   // 工作区改动扫描已停用：原实现会调用 refreshCachedSessionChanges →
   // listWorkspaceChanges → 后端 p4_workspace_changes，对 P4 发起大量 reconcile
   // 请求。改动 tab 入口已移除（改为「会话文件」tab）。
@@ -1732,7 +1799,7 @@ export default function ProjectFileTree() {
                   onDrag={trackEntryDrag}
                   onDragEnd={finishEntryDrag}
                   onContextMenu={(event) => {
-                    if (virtualDeleted) {
+                    if (virtualDeleted || remoteWorkspaceSelected) {
                       event.preventDefault();
                       return;
                     }
@@ -1758,7 +1825,11 @@ export default function ProjectFileTree() {
                     'group flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs transition-colors hover:bg-panel-2 hover:text-fg ' +
                     (virtualDeleted
                       ? 'cursor-default '
-                      : 'cursor-grab active:cursor-grabbing ') +
+                      : remoteWorkspaceSelected && !isDirectory
+                        ? 'cursor-pointer '
+                        : remoteWorkspaceSelected
+                          ? 'cursor-default '
+                          : 'cursor-grab active:cursor-grabbing ') +
                     (entry.hidden ? 'text-fg-faint ' : 'text-fg-dim ') +
                     (isDeleted ? 'opacity-80' : '')
                   }
@@ -1823,6 +1894,7 @@ export default function ProjectFileTree() {
       finishEntryDrag,
       locale,
       openEntryContextMenu,
+      remoteWorkspaceSelected,
       startEntryDrag,
       toggleDirectory,
       trackEntryDrag,
@@ -1911,7 +1983,9 @@ export default function ProjectFileTree() {
                   thumbnailId={key}
                   draggable={!virtualDeleted}
                   thumbnail={
-                    !virtualDeleted && isImageEntry(entry) ? thumbnailCache[key] : undefined
+                    !virtualDeleted && !remoteWorkspaceSelected && isImageEntry(entry)
+                      ? thumbnailCache[key]
+                      : undefined
                   }
                   onVisibilityChange={updateThumbnailVisibility}
                   onDragStart={(event) => {
@@ -1924,7 +1998,7 @@ export default function ProjectFileTree() {
                   onDrag={trackEntryDrag}
                   onDragEnd={finishEntryDrag}
                   onContextMenu={(event) => {
-                    if (virtualDeleted) {
+                    if (virtualDeleted || remoteWorkspaceSelected) {
                       event.preventDefault();
                       return;
                     }
@@ -1935,7 +2009,10 @@ export default function ProjectFileTree() {
                       openPreviewDirectory(entry.relativePath, {
                         skipLoad: virtualDeleted,
                       });
-                    } else if (!virtualDeleted && vcsStatus !== 'deleted') {
+                    } else if (
+                      !virtualDeleted &&
+                      vcsStatus !== 'deleted'
+                    ) {
                       setTeamDetailsPreview(null);
                       setPreviewCwd(selectedRootPath || undefined);
                       setPreviewRef(fileRefFromEntry(entry));
@@ -1968,6 +2045,7 @@ export default function ProjectFileTree() {
     previewDirectoryKey,
     previewDirectoryState,
     projectEngine,
+    remoteWorkspaceSelected,
     finishEntryDrag,
     startEntryDrag,
     thumbnailCache,
@@ -2333,8 +2411,8 @@ export default function ProjectFileTree() {
         customContent={
           teamDetailsPreview
             ? {
-                label: '岗位属性和 Skill',
-                path: '游戏团队 / 岗位描述、人员与 Skill',
+                label: '岗位视角和 Skill',
+                path: '专家视角库 / 岗位视角与 Skill',
                 children: (
                   <GameTeamPanel
                     mode="details"
@@ -2345,6 +2423,9 @@ export default function ProjectFileTree() {
             : null
         }
         cwd={previewCwd}
+        previewFile={previewProjectFile}
+        diffEnabled={!previewCwd || !isRemoteWorkspacePath(previewCwd)}
+        canOpenExternally={!previewCwd || !isRemoteWorkspacePath(previewCwd)}
         onClose={() => {
           setPreviewRef(null);
           setTeamDetailsPreview(null);

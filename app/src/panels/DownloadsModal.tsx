@@ -30,6 +30,7 @@ import {
 import { t } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n';
 import {
+  assetMatchesWorkspace,
   clearFinishedAssets,
   getAssets,
   linkKnownAssetsToNearestMessages,
@@ -61,7 +62,7 @@ import VideoPlayer from '@/components/ai/VideoPlayer';
  * progress" and "ready" sections.
  */
 
-const ASSET_SESSION_JUMP_EVENT = 'fuc:asset-session-jump';
+const ASSET_SESSION_JUMP_EVENT = 'ugs:asset-session-jump';
 const INITIAL_RENDERED_ASSETS = 40;
 const RENDER_ASSET_PAGE_SIZE = 40;
 const ACTIVE_ASSET_MESSAGE_LINK_WINDOW_MS = 2 * 60 * 60 * 1000;
@@ -106,7 +107,7 @@ function formatTime(ts: number | undefined): string {
 
 function isManagedLocalAsset(entry: AssetEntry): boolean {
   return Boolean(
-    entry.localPath?.toLowerCase().includes('.freeultracode'),
+    entry.localPath?.toLowerCase().includes('.ultragamestudio'),
   );
 }
 
@@ -156,7 +157,7 @@ async function linkKnownManagedAssetsFromHistory(
           createdAt: message.createdAt,
         });
         if (message.role === 'assistant') {
-          if (message.text.includes('.freeultracode')) {
+          if (message.text.includes('.ultragamestudio')) {
             linkKnownManagedAssetsFromMessageText({
               text: message.text,
               sessionId: record.id,
@@ -167,7 +168,7 @@ async function linkKnownManagedAssetsFromHistory(
           continue;
         }
         if (message.role === 'user') {
-          if (!message.text.includes('.freeultracode')) continue;
+          if (!message.text.includes('.ultragamestudio')) continue;
           userFallbacks.push({
             text: message.text,
             sessionId: record.id,
@@ -201,7 +202,7 @@ function linkManagedAssetsFromActiveMessage(input: {
   workspaceId: string | null;
   messageId: string;
 }): void {
-  if (input.text.includes('.freeultracode')) {
+  if (input.text.includes('.ultragamestudio')) {
     if (input.role === 'assistant') {
       linkManagedAssetsFromMessageText({
         text: input.text,
@@ -623,7 +624,7 @@ export default function DownloadsModal({
           (entry) =>
             (!entry.sessionId || !entry.messageId) &&
             entry.source !== 'installed' &&
-            (Boolean(entry.localPath?.toLowerCase().includes('.freeultracode')) ||
+            (Boolean(entry.localPath?.toLowerCase().includes('.ultragamestudio')) ||
               entry.source === 'generated' ||
               entry.source === 'downloaded'),
         )
@@ -737,6 +738,7 @@ export default function DownloadsModal({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return assets.filter((entry) => {
+      if (!assetMatchesWorkspace(entry, activeWorkspaceId)) return false;
       if (q) {
         const haystack = [
           entry.title,
@@ -752,12 +754,12 @@ export default function DownloadsModal({
       }
       return true;
     });
-  }, [assets, query]);
+  }, [activeWorkspaceId, assets, query]);
 
   const active = filtered.filter((entry) => entry.status === 'pending');
   const finished = filtered.filter((entry) => entry.status !== 'pending');
-  const finishedAll = assets.filter((entry) => entry.status !== 'pending');
-  const isEmpty = assets.length === 0;
+  const finishedAll = filtered.filter((entry) => entry.status !== 'pending');
+  const isEmpty = filtered.length === 0;
   const noMatch = !isEmpty && filtered.length === 0;
 
   return (
@@ -791,7 +793,11 @@ export default function DownloadsModal({
             {finishedAll.length > 0 && (
               <button
                 type="button"
-                onClick={() => clearFinishedAssets()}
+                onClick={() =>
+                  clearFinishedAssets((entry) =>
+                    assetMatchesWorkspace(entry, activeWorkspaceId),
+                  )
+                }
                 className="shrink-0 rounded-md border border-border bg-panel-2 px-2.5 py-1.5 text-xs text-fg-dim transition-colors hover:border-rose-400 hover:text-rose-300"
               >
                 {t(locale, 'downloads.clearFinished')}

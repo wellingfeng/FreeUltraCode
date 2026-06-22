@@ -1,7 +1,7 @@
 /**
  * CLI-side provider / gateway resolution. Replaces the GUI's localStorage-backed
  * `gatewayConfig` / `apiConfig` / `cliConfig` with environment variables + an
- * `~/.fuc/config.json` / `./.fuc/config.json` file (spec §10.2).
+ * `~/.ugs/config.json` / `./.ugs/config.json` file (spec §10.2).
  *
  * Credentials only ever live in `process.env` or in-memory route objects — they
  * are NEVER written to disk or logged by this module. The config FILE carries
@@ -165,7 +165,7 @@ let cachedConfig: FucConfigFile | null = null;
 let cachedConfigLoaded = false;
 
 /**
- * Load + merge `~/.fuc/config.json` then `./.fuc/config.json` (project wins).
+ * Load + merge `~/.ugs/config.json` then `./.ugs/config.json` (project wins).
  * Pre-rebrand `.owf/` and `.owf.json` paths are read as lower-priority fallbacks.
  */
 export function loadFucConfig(cwd: string = process.cwd()): FucConfigFile {
@@ -173,16 +173,16 @@ export function loadFucConfig(cwd: string = process.cwd()): FucConfigFile {
   cachedConfigLoaded = true;
   const home = homedir();
   // `.owf` paths are the pre-rebrand locations, kept as lower-priority
-  // fallbacks so existing configs keep working; `.fuc` paths override them.
+  // fallbacks so existing configs keep working; `.ugs` paths override them.
   const candidates = [
     join(home, '.owf', 'config.json'),
     join(home, '.owf.json'),
-    join(home, '.fuc', 'config.json'),
-    join(home, '.fuc.json'),
+    join(home, '.ugs', 'config.json'),
+    join(home, '.ugs.json'),
     join(cwd, '.owf', 'config.json'),
     join(cwd, '.owf.json'),
-    join(cwd, '.fuc', 'config.json'),
-    join(cwd, '.fuc.json'),
+    join(cwd, '.ugs', 'config.json'),
+    join(cwd, '.ugs.json'),
   ];
   let merged: FucConfigFile = {};
   for (const path of candidates) {
@@ -252,7 +252,7 @@ export function cliRouteEnv(route: ResolvedRoute): Record<string, string> | unde
 
 /**
  * Resolve the run's default {@link GatewaySelection} from flags + config + env.
- * `flags` come from `fuc run --adapter/--model/--provider`.
+ * `flags` come from `ugs run --adapter/--model/--provider`.
  */
 export function resolveSelection(flags: {
   adapter?: string;

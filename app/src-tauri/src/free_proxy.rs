@@ -1,4 +1,4 @@
-//! Built-in local HTTP translation proxy for FreeUltraCode "free channels".
+//! Built-in local HTTP translation proxy for UltraGameStudio "free channels".
 //!
 //! When the user picks the `claude-code` runtime with a free channel, the
 //! `claude` CLI is pointed at `http://127.0.0.1:<port>/ch/<channelId>`
@@ -58,15 +58,15 @@ static MODEL_SUCCESS_CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock:
 static CHANNEL_COOLDOWNS: OnceLock<Mutex<HashMap<String, ChannelCooldown>>> = OnceLock::new();
 static AUTO_COUNTER: AtomicU64 = AtomicU64::new(0);
 static MSG_COUNTER: AtomicU64 = AtomicU64::new(1);
-const PROXY_AUTH_HEADER: &str = "X-FreeUltraCode-Proxy-Token";
+const PROXY_AUTH_HEADER: &str = "X-UltraGameStudio-Proxy-Token";
 const AUTO_CHANNEL_ID: &str = "auto";
 const DEFAULT_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(60);
 const DEFAULT_UPSTREAM_COOLDOWN: Duration = Duration::from_secs(30);
 const DEFAULT_AUTH_COOLDOWN: Duration = Duration::from_secs(600);
 const DEFAULT_BILLING_COOLDOWN: Duration = Duration::from_secs(300);
 const FREE_CHANNEL_MAX_TOKENS: u64 = 8192;
-const TOOL_OPEN: &str = "<<FUC_TOOL>>";
-const TOOL_CLOSE: &str = "<<FUC_TOOL_END>>";
+const TOOL_OPEN: &str = "<<UGS_TOOL>>";
+const TOOL_CLOSE: &str = "<<UGS_TOOL_END>>";
 const FREE_PROXY_TOOL_NAME: &str = "free_proxy";
 // Keep the port directly below this range reserved for Lark OAuth callback.
 const FREE_PROXY_PORT_START: u16 = 8766;
@@ -161,8 +161,11 @@ fn encode_free_proxy_tool_patch(log: &FreeProxyRouteLog) -> String {
     }
     // Escape `<`/`>` in the payload (the render layer's JSON parse restores
     // them) so a detail string containing the literal sentinel markers can't
-    // emit a stray `<<FUC_TOOL_END>>` that prematurely closes the block.
-    let payload = patch.to_string().replace('<', "\\u003c").replace('>', "\\u003e");
+    // emit a stray `<<UGS_TOOL_END>>` that prematurely closes the block.
+    let payload = patch
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
     format!("\n{TOOL_OPEN}{}{TOOL_CLOSE}\n", payload)
 }
 
@@ -295,7 +298,7 @@ fn start_server() -> Result<FreeProxyInfo, String> {
     let token = generate_proxy_token()?;
 
     std::thread::Builder::new()
-        .name("fuc-free-proxy".to_string())
+        .name("ugs-free-proxy".to_string())
         .spawn(move || {
             for request in server.incoming_requests() {
                 // One worker thread per request so a long-lived stream does not
@@ -1459,8 +1462,8 @@ fn try_openai_translate(
         }
         if cfg.id == "open_router" {
             req = req
-                .set("HTTP-Referer", "https://freeultracode.local")
-                .set("X-Title", "FreeUltraCode");
+                .set("HTTP-Referer", "https://ultragamestudio.local")
+                .set("X-Title", "UltraGameStudio");
         }
         let resp = req.send_string(&openai_body.to_string());
 

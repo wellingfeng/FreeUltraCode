@@ -76,11 +76,11 @@ type UsageRoute = Partial<
   selection?: GatewaySelection;
 };
 
-const LEGACY_USAGE_STORAGE_KEY = 'fuc_usage_meter_v1';
-const USAGE_STORAGE_KEY = 'fuc_usage_meter_by_session_v1';
+const LEGACY_USAGE_STORAGE_KEY = 'ugs_usage_meter_v1';
+const USAGE_STORAGE_KEY = 'ugs_usage_meter_by_session_v1';
 const USAGE_GLOBAL_CONTEXT_KEY = '__global__';
 const USAGE_DEFAULT_WORKSPACE_KEY = '__default_workspace__';
-const USAGE_CHANGE_EVENT = 'fuc:usage-meter-changed';
+const USAGE_CHANGE_EVENT = 'ugs:usage-meter-changed';
 
 const ZERO_CALL: UsageMeterCall = {
   inputTokens: 0,

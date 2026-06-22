@@ -3,11 +3,12 @@ import {
   initializeGenerationSettingsStore,
   readSettingsRaw,
   resetGenerationSettingsStoreForTests,
+  settingsProfileIdForRemoteWorkspace,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
 const REL_PATH = 'settings/imageGeneration.v1.json';
-const LEGACY_KEY = 'freeultracode.imageGeneration.v1';
+const LEGACY_KEY = 'ultragamestudio.imageGeneration.v1';
 
 // In the vitest/jsdom environment tauriAvailable() is false, so the store
 // behaves as the browser fallback: everything goes through localStorage.
@@ -36,6 +37,29 @@ describe('generationSettingsStore (browser fallback)', () => {
     window.localStorage.setItem(LEGACY_KEY, '{"seed":1}');
     await initializeGenerationSettingsStore();
     expect(readSettingsRaw(REL_PATH, LEGACY_KEY)).toBe('{"seed":1}');
+  });
+
+  it('keeps remote profile writes separate from the local shared profile', () => {
+    const profileId = settingsProfileIdForRemoteWorkspace('rw_cloud')!;
+
+    expect(writeSettingsRaw(REL_PATH, LEGACY_KEY, '{"scope":"local"}')).toBe(true);
+    expect(
+      writeSettingsRaw(
+        REL_PATH,
+        LEGACY_KEY,
+        '{"scope":"remote"}',
+        { profileId },
+      ),
+    ).toBe(true);
+
+    expect(readSettingsRaw(REL_PATH, LEGACY_KEY)).toBe('{"scope":"local"}');
+    expect(readSettingsRaw(REL_PATH, LEGACY_KEY, { profileId })).toBe(
+      '{"scope":"remote"}',
+    );
+    expect(window.localStorage.getItem(LEGACY_KEY)).toBe('{"scope":"local"}');
+    expect(window.localStorage.getItem('ultragamestudio.settingsProfiles.v1')).toContain(
+      profileId,
+    );
   });
 
   it('writeSettingsRaw returns false when localStorage.setItem throws (quota)', () => {

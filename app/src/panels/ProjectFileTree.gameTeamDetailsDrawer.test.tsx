@@ -52,8 +52,8 @@ function toolBlock(id: string, name: string, extra: Record<string, unknown>): st
 function resetStore(): void {
   const workspace = {
     id: 'ws_game_team_drawer',
-    path: 'E:\\FreeUltraCode',
-    name: 'FreeUltraCode',
+    path: 'E:\\UltraGameStudio',
+    name: 'UltraGameStudio',
     updatedAt: 1,
     sessionCount: 1,
     lastActiveSessionId: 's_game_team_drawer',
@@ -157,10 +157,10 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
         );
       });
 
-      // 3) The right panel must show the role properties + skills, and the details
+      // 3) The right panel must show the role lens + skills, and the details
       //    state must NOT have been wiped back to the file tree by the drawer's
       //    outside-click onClose.
-      expect(view.container.textContent).toContain('岗位属性和 Skill');
+      expect(view.container.textContent).toContain('岗位视角和 Skill');
       expect(view.container.textContent).toContain('技术总监');
       expect(view.container.textContent).toContain('发起功能开发');
     } finally {

@@ -18,8 +18,8 @@ const mockState = vi.hoisted(() => ({
   workspaces: [
     {
       id: 'w_1',
-      path: 'E:\\OpenWorkflows',
-      name: 'OpenWorkflows',
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
       updatedAt: 1,
       sessionCount: 1,
       lastActiveSessionId: 's_1',
@@ -27,7 +27,7 @@ const mockState = vi.hoisted(() => ({
   ],
   activeSessionId: 's_current',
   activeWorkspaceId: 'w_1',
-  composer: { workspace: 'E:\\OpenWorkflows' },
+  composer: { workspace: 'E:\\UltraGameStudio' },
   messages: [] as Message[],
   selectSession: storeMocks.selectSession,
 }));
@@ -125,7 +125,7 @@ describe('DownloadsModal conversation jumps', () => {
 
   it('links an existing clipboard image from a user message before jumping', async () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\pasted-1.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1.png';
     mergeCachedAssetsFromDisk([
       {
         kind: 'image',
@@ -167,7 +167,7 @@ describe('DownloadsModal conversation jumps', () => {
     const onJump = (event: Event) => {
       events.push((event as CustomEvent).detail);
     };
-    window.addEventListener('fuc:asset-session-jump', onJump);
+    window.addEventListener('ugs:asset-session-jump', onJump);
     const view = await renderModal();
 
     try {
@@ -185,21 +185,21 @@ describe('DownloadsModal conversation jumps', () => {
       expect(storeMocks.selectSession).toHaveBeenCalledWith('s_1', 'w_1');
       expect(events).toEqual([
         {
-          assetId: 'disk:e:/openworkflows/.freeultracode/clipboard-images/pasted-1.png',
+          assetId: 'disk:e:/ultragamestudio/.ultragamestudio/clipboard-images/pasted-1.png',
           sessionId: 's_1',
           workspaceId: 'w_1',
           messageId: 'm_user',
         },
       ]);
     } finally {
-      window.removeEventListener('fuc:asset-session-jump', onJump);
+      window.removeEventListener('ugs:asset-session-jump', onJump);
       await view.cleanup();
     }
   });
 
   it('links a current-session clipboard image from the active user message', async () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\pasted-current.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-current.png';
     mockState.messages = [
       {
         id: 'm_current_user',
@@ -224,7 +224,7 @@ describe('DownloadsModal conversation jumps', () => {
     const onJump = (event: Event) => {
       events.push((event as CustomEvent).detail);
     };
-    window.addEventListener('fuc:asset-session-jump', onJump);
+    window.addEventListener('ugs:asset-session-jump', onJump);
     const view = await renderModal();
 
     try {
@@ -242,21 +242,21 @@ describe('DownloadsModal conversation jumps', () => {
       expect(storeMocks.selectSession).toHaveBeenCalledWith('s_current', 'w_1');
       expect(events).toEqual([
         {
-          assetId: 'disk:e:/openworkflows/.freeultracode/clipboard-images/pasted-current.png',
+          assetId: 'disk:e:/ultragamestudio/.ultragamestudio/clipboard-images/pasted-current.png',
           sessionId: 's_current',
           workspaceId: 'w_1',
           messageId: 'm_current_user',
         },
       ]);
     } finally {
-      window.removeEventListener('fuc:asset-session-jump', onJump);
+      window.removeEventListener('ugs:asset-session-jump', onJump);
       await view.cleanup();
     }
   });
 
   it('links a cached generated image to the nearest active message before jumping', async () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\assets\\image\\image.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\assets\\image\\image.png';
     mockState.messages = [
       {
         id: 'm_current_user',
@@ -288,7 +288,7 @@ describe('DownloadsModal conversation jumps', () => {
     const onJump = (event: Event) => {
       events.push((event as CustomEvent).detail);
     };
-    window.addEventListener('fuc:asset-session-jump', onJump);
+    window.addEventListener('ugs:asset-session-jump', onJump);
     const view = await renderModal();
 
     try {
@@ -310,14 +310,14 @@ describe('DownloadsModal conversation jumps', () => {
       expect(storeMocks.selectSession).toHaveBeenCalledWith('s_current', 'w_1');
       expect(events).toEqual([
         {
-          assetId: 'disk:e:/openworkflows/.freeultracode/assets/image/image.png',
+          assetId: 'disk:e:/ultragamestudio/.ultragamestudio/assets/image/image.png',
           sessionId: 's_current',
           workspaceId: 'w_1',
           messageId: 'm_current_assistant',
         },
       ]);
     } finally {
-      window.removeEventListener('fuc:asset-session-jump', onJump);
+      window.removeEventListener('ugs:asset-session-jump', onJump);
       await view.cleanup();
     }
   });

@@ -19,7 +19,7 @@ import {
  *   manual additions (see modelLists.refreshEndpointModels).
  *
  * All add/remove state lives in the model-list cache (modelLists.ts), keyed by
- * `cacheKey`, and broadcasts `fuc:model-list-changed` so every mounted picker
+ * `cacheKey`, and broadcasts `ugs:model-list-changed` so every mounted picker
  * for the same key stays in sync.
  */
 export function EditableModelSelect({
@@ -56,8 +56,8 @@ export function EditableModelSelect({
   const [, setRevision] = useState(0);
   useEffect(() => {
     const bump = () => setRevision((n) => n + 1);
-    window.addEventListener('fuc:model-list-changed', bump);
-    return () => window.removeEventListener('fuc:model-list-changed', bump);
+    window.addEventListener('ugs:model-list-changed', bump);
+    return () => window.removeEventListener('ugs:model-list-changed', bump);
   }, []);
 
   const options = editableModelOptions(cacheKey, builtins, value);

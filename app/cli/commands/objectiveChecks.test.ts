@@ -7,7 +7,7 @@ import { runObjectiveChecks } from './objectiveChecks';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'fuc-objchecks-'));
+  dir = mkdtempSync(join(tmpdir(), 'ugs-objchecks-'));
 });
 
 afterEach(() => {
@@ -134,7 +134,7 @@ describe('runObjectiveChecks', () => {
   it('rejects Windows drive paths on non-Windows hosts', async () => {
     if (process.platform === 'win32') return;
     const report = await runObjectiveChecks(
-      [{ kind: 'file-exists', path: 'E:\\OpenWorkflow\\artifact.md' }],
+      [{ kind: 'file-exists', path: 'E:\\UltraGameStudio\\artifact.md' }],
       dir,
       { allowCommands: false },
     );

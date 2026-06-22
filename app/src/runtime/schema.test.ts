@@ -118,6 +118,19 @@ describe('validateAgainstSchema (example-object style)', () => {
     expect(validateAgainstSchema('anything', undefined)).toEqual({
       ok: true,
       problems: [],
+      diagnostics: [],
+    });
+  });
+});
+
+describe('validateAgainstSchema diagnostics', () => {
+  it('includes path, expected value, and actual value for structured feedback', () => {
+    const r = validateAgainstSchema({ name: 'x', count: 'bad' }, { name: '', count: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.diagnostics[0]).toMatchObject({
+      path: '根.count',
+      expected: 'number',
+      actual: 'string',
     });
   });
 });

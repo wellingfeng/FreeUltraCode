@@ -1,5 +1,5 @@
 /**
- * Objective-check runner for `/ultracode` — turns the planner's
+ * Objective-check runner for `/studio` — turns the planner's
  * {@link DynamicObjectiveCheck}s into ground-truth signals that do NOT depend on
  * the model's self-verdict.
  *

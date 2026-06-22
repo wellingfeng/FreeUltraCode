@@ -1,16 +1,16 @@
 /**
- * `fuc gen` — generate or modify a workflow script from natural language.
+ * `ugs gen` — generate or modify a workflow script from natural language.
  *
  * This is one of the two user-facing commands (the other is `run`). To the user
  * a workflow IS a `.js` script; IRGraph / emit / parse / validate are hidden
  * intermediate steps reused internally here.
  *
  * Two forms:
- *   1. generate:  fuc gen "<自然语言需求>" -o flow.js   (or: fuc gen "<需求>" flow.js)
- *   2. modify:    fuc gen flow.js "<修改意图>"
+ *   1. generate:  ugs gen "<自然语言需求>" -o flow.js   (or: ugs gen "<需求>" flow.js)
+ *   2. modify:    ugs gen flow.js "<修改意图>"
  *
  * Zero-config credentials: gen drives the **local `claude` CLI login state**
- * (same path as `fuc run`), never ANTHROPIC_API_KEY. It assembles
+ * (same path as `ugs run`), never ANTHROPIC_API_KEY. It assembles
  * UNIFIED_SYSTEM + BLUEPRINT_DIRECT_EDIT_CONTRACT + the current (seed/empty or
  * parsed) IRGraph + the user's intent, sends it to claude via `spawnCliAgent`,
  * extracts the returned IRGraph, merges it with `prepareGraphEdit`, emits a
@@ -71,7 +71,7 @@ function resolveArgs(
     const request = (arg2 ?? '').trim();
     if (!request) {
       throw new CliError(
-        '修改已有脚本需要提供修改意图：fuc gen <flow.js> "<修改意图>"',
+        '修改已有脚本需要提供修改意图：ugs gen <flow.js> "<修改意图>"',
         1,
       );
     }
@@ -80,12 +80,12 @@ function resolveArgs(
   // generate
   const request = arg1.trim();
   if (!request) {
-    throw new CliError('请提供自然语言需求：fuc gen "<需求>" -o flow.js', 1);
+    throw new CliError('请提供自然语言需求：ugs gen "<需求>" -o flow.js', 1);
   }
   const output = (opts.output ?? arg2 ?? '').trim();
   if (!output) {
     throw new CliError(
-      '请用 -o 指定输出脚本路径：fuc gen "<需求>" -o flow.js',
+      '请用 -o 指定输出脚本路径：ugs gen "<需求>" -o flow.js',
       1,
     );
   }
@@ -165,8 +165,8 @@ export async function runGen(
   // NOT an API key. A missing CLI is a configuration error (exit 4).
   if (!isCliAvailable(adapter, { cliCommand: opts.cliCommand })) {
     throw new CliError(
-      `未找到可用的 "${adapter}" CLI。fuc gen 复用本地 claude CLI 登录态（无需 API key）：` +
-        '请先安装 claude CLI 并完成登录（claude login），或用 FUC_CLAUDE_PATH 指定其路径。',
+      `未找到可用的 "${adapter}" CLI。ugs gen 复用本地 claude CLI 登录态（无需 API key）：` +
+        '请先安装 claude CLI 并完成登录（claude login），或用 UGS_CLAUDE_PATH 指定其路径。',
       4,
     );
   }

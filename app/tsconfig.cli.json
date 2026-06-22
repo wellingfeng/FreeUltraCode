@@ -5,8 +5,9 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@ugs/protocol": ["../packages/protocol/index.ts"]
     }
   },
-  "include": ["cli", "src"]
+  "include": ["cli", "src", "../packages/protocol/index.ts"]
 }

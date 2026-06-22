@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UltraGameStudio 技术架构：面向游戏开发的本地优先 Coding Agent</title>
+  <meta name="description" content="一篇面向工程团队的 UltraGameStudio 技术文章：运行引擎、桌面宿主、CLI、免费通道代理、资产生成与游戏开发工作流。">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --surface: #0d1727;
+      --surface-2: #111f34;
+      --text: #eef6ff;
+      --muted: #a9b7c7;
+      --soft: #718096;
+      --line: rgba(148, 163, 184, 0.22);
+      --accent: #43e0a7;
+      --accent-2: #7dd3fc;
+      --warn: #f8c66d;
+      --code: #0a1020;
+      --max: 1120px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 18% 0%, rgba(67, 224, 167, 0.13), transparent 30rem),
+        radial-gradient(circle at 90% 16%, rgba(125, 211, 252, 0.11), transparent 26rem),
+        linear-gradient(180deg, #07111f 0%, #09121e 52%, #060b14 100%);
+      color: var(--text);
+      font-family: "IBM Plex Sans", "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 16px;
+      line-height: 1.72;
+      letter-spacing: 0;
+    }
+
+    main {
+      overflow-x: clip;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    img {
+      display: block;
+      max-width: 100%;
+    }
+
+    .shell {
+      width: min(var(--max), calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(7, 17, 31, 0.82);
+      backdrop-filter: blur(18px);
+    }
+
+    .topbar-inner {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border: 1px solid rgba(67, 224, 167, 0.34);
+      border-radius: 8px;
+      background: linear-gradient(135deg, rgba(67, 224, 167, 0.18), rgba(125, 211, 252, 0.09));
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: 0 0 22px rgba(67, 224, 167, 0.16);
+    }
+
+    .brand-title {
+      font-weight: 700;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .brand-subtitle {
+      color: var(--soft);
+      font-size: 12px;
+      line-height: 1.2;
+      margin-top: 3px;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .nav a {
+      border-bottom: 1px solid transparent;
+      padding: 4px 0;
+      transition: color 180ms ease, border-color 180ms ease;
+    }
+
+    .nav a:hover,
+    .nav a:focus-visible {
+      color: var(--text);
+      border-color: var(--accent);
+      outline: none;
+    }
+
+    .hero {
+      padding: 72px 0 44px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+      gap: 40px;
+      align-items: center;
+    }
+
+    .hero-grid > *,
+    .article > *,
+    .grid > *,
+    .flow > * {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0;
+      margin-bottom: 18px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 26px;
+      height: 1px;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(67, 224, 167, 0.7);
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 780px;
+      font-size: clamp(40px, 6vw, 76px);
+      font-weight: 760;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    h2 {
+      font-size: clamp(28px, 4vw, 44px);
+      margin-bottom: 18px;
+    }
+
+    h3 {
+      font-size: 21px;
+      margin-bottom: 12px;
+    }
+
+    .lede {
+      max-width: 720px;
+      margin: 24px 0 0;
+      color: #cfdae7;
+      font-size: clamp(18px, 2vw, 21px);
+      line-height: 1.65;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      background: rgba(13, 23, 39, 0.64);
+    }
+
+    .hero-visual {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(17, 31, 52, 0.9), rgba(6, 11, 20, 0.96));
+      box-shadow: 0 26px 80px rgba(0, 0, 0, 0.36);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .window-bar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #64748b;
+    }
+
+    .dot:nth-child(1) {
+      background: #ef4444;
+    }
+
+    .dot:nth-child(2) {
+      background: #f59e0b;
+    }
+
+    .dot:nth-child(3) {
+      background: #22c55e;
+    }
+
+    .terminal {
+      padding: 20px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #c9d7e8;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      background:
+        linear-gradient(90deg, rgba(125, 211, 252, 0.06) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(125, 211, 252, 0.04) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    .prompt {
+      color: var(--accent);
+    }
+
+    .comment {
+      color: #7f8ea3;
+    }
+
+    .callout {
+      margin-top: 18px;
+      border-left: 2px solid var(--accent);
+      background: rgba(67, 224, 167, 0.08);
+      padding: 14px 16px;
+      color: #d9f9ef;
+    }
+
+    section {
+      padding: 56px 0;
+      border-top: 1px solid rgba(148, 163, 184, 0.13);
+    }
+
+    .section-kicker {
+      color: var(--accent-2);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .section-intro {
+      max-width: 800px;
+      color: var(--muted);
+      font-size: 18px;
+      margin: 0 0 28px;
+    }
+
+    .article {
+      display: grid;
+      grid-template-columns: minmax(0, 720px) minmax(220px, 1fr);
+      gap: 44px;
+      align-items: start;
+    }
+
+    .article-body p {
+      color: #c8d3df;
+      margin: 0 0 20px;
+    }
+
+    .article-body strong {
+      color: var(--text);
+    }
+
+    .article-body code,
+    .terminal code {
+      color: #d8f7ff;
+      background: rgba(7, 17, 31, 0.68);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    .side-note {
+      position: sticky;
+      top: 92px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(17, 31, 52, 0.64);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .side-note b {
+      color: var(--text);
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    .toc {
+      display: grid;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .toc a {
+      color: var(--muted);
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .toc a:hover,
+    .toc a:focus-visible {
+      color: var(--accent);
+      outline: none;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 31, 52, 0.58);
+      padding: 20px;
+    }
+
+    .panel p {
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .panel .number {
+      color: var(--accent);
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .flow-step {
+      min-height: 114px;
+      border: 1px solid rgba(125, 211, 252, 0.24);
+      border-radius: 8px;
+      background: rgba(10, 16, 32, 0.74);
+      padding: 16px;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 1px;
+      right: -11px;
+      top: 50%;
+      background: rgba(125, 211, 252, 0.46);
+    }
+
+    .flow-step b {
+      display: block;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .flow-step span {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .image-band {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #050a12;
+      margin-top: 28px;
+      box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+    }
+
+    .image-band img {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+      object-position: top center;
+    }
+
+    .caption {
+      border-top: 1px solid var(--line);
+      padding: 12px 14px;
+      color: var(--soft);
+      font-size: 13px;
+      background: rgba(13, 23, 39, 0.84);
+    }
+
+    .compare {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(17, 31, 52, 0.52);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 15px 16px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--text);
+      font-size: 13px;
+      font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+      background: rgba(7, 17, 31, 0.58);
+    }
+
+    td {
+      color: #c7d3df;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .quote {
+      border: 1px solid rgba(67, 224, 167, 0.22);
+      border-radius: 8px;
+      background: rgba(67, 224, 167, 0.07);
+      padding: 22px;
+      color: #d9f9ef;
+      font-size: 19px;
+      line-height: 1.65;
+    }
+
+    .footer {
+      padding: 42px 0 56px;
+      color: var(--soft);
+      border-top: 1px solid rgba(148, 163, 184, 0.13);
+      font-size: 14px;
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid,
+      .article {
+        grid-template-columns: 1fr;
+      }
+
+      .side-note {
+        position: static;
+      }
+
+      .grid,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        width: min(100% - 28px, var(--max));
+      }
+
+      .nav {
+        display: none;
+      }
+
+      .hero {
+        padding-top: 48px;
+      }
+
+      h1 {
+        font-size: clamp(34px, 10vw, 44px);
+        max-width: 100%;
+        line-height: 1.08;
+      }
+
+      section {
+        padding: 42px 0;
+      }
+
+      .terminal {
+        font-size: 12px;
+        padding: 16px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#top" aria-label="UltraGameStudio 首页">
+        <span class="brand-mark">UGS</span>
+        <span>
+          <span class="brand-title">UltraGameStudio</span>
+          <span class="brand-subtitle">Game-dev coding agent</span>
+        </span>
+      </a>
+      <nav class="nav" aria-label="文章导航">
+        <a href="#problem">问题</a>
+        <a href="#runtime">运行时</a>
+        <a href="#routing">通道</a>
+        <a href="#assets">资产</a>
+        <a href="#tradeoffs">取舍</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="shell hero-grid">
+        <div>
+          <div class="eyebrow">TECHNICAL ARTICLE / 2026</div>
+          <h1>UltraGameStudio 的架构选择：把 Coding Agent 放进真实游戏开发链路</h1>
+          <p class="lede">
+            通用代码助手能写脚本、改 UI、跑测试，但游戏项目的主体工作不止代码。UltraGameStudio 的设计目标更窄：让模型理解引擎、资产、构建和运行时，把一次聊天变成可审计、可复现、可切换宿主的工程操作。
+          </p>
+          <div class="meta" aria-label="文章标签">
+            <span class="chip">Tauri 2 + React 18</span>
+            <span class="chip">TypeScript run engine</span>
+            <span class="chip">Local-first provider routing</span>
+            <span class="chip">Game asset pipeline</span>
+          </div>
+        </div>
+
+        <aside class="hero-visual" aria-label="运行时摘要">
+          <div class="window-bar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+          </div>
+          <div class="terminal">
+            <div><span class="prompt">$</span> ugs studio "修复角色控制器输入延迟"</div>
+            <div class="comment"># planner -> DAG -> gateway -> host callbacks</div>
+            <div>graph: classify -> patch -> verify -> summarize</div>
+            <div>host: desktop GUI or Node CLI</div>
+            <div>routing: local proxy / free channel / premium model</div>
+            <div>artifacts: .ugs-run/&lt;run-id&gt;/events + verdict</div>
+            <div class="callout">同一个运行核心，服务桌面端和 CLI。差异留在宿主层，不进入任务语义。</div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="problem">
+      <div class="shell article">
+        <div class="article-body">
+          <div class="section-kicker">01 / PROBLEM</div>
+          <h2>游戏开发不是“代码补全”问题</h2>
+          <p>
+            大部分 coding agent 的默认假设是：项目主要由文本文件组成，任务最终落到代码 diff。这个假设在 Web 后端、工具脚本、库维护里很有效，但放到游戏开发会丢信息。游戏项目有场景、Prefab、蓝图、材质、动画状态机、打包配置、资源导入规则，很多失败不是类型错误，而是资源路径、引擎约定或流水线状态错了。
+          </p>
+          <p>
+            UltraGameStudio 的重点不是再做一个聊天 UI，而是把游戏开发里的“非代码部分”纳入同一个代理工作台。模型可以从代码切到图片、Sprite、3D 模型、音频和视频生成，再回到工程修改；会话历史保留上下文，用户不用在多个工具之间手动搬运 prompt、结果和文件。
+          </p>
+          <p>
+            这也解释了项目为什么采用本地优先的桌面架构。游戏工程通常体积大、路径深、引擎状态复杂，上传到远端服务既慢，也容易碰到授权和隐私边界。桌面端直接贴近工作区，远端模型只处理需要推理的部分，API key、历史记录和运行日志留在本地。
+          </p>
+        </div>
+        <aside class="side-note">
+          <b>本文范围</b>
+          关注 UltraGameStudio 的工程结构和取舍：运行核心、宿主边界、通道代理、资产生成和可观测性。
+          <nav class="toc" aria-label="目录">
+            <a href="#runtime">运行核心</a>
+            <a href="#routing">模型通道</a>
+            <a href="#assets">资产流水线</a>
+            <a href="#tradeoffs">工程取舍</a>
+          </nav>
+        </aside>
+      </div>
+    </section>
+
+    <section id="runtime">
+      <div class="shell">
+        <div class="section-kicker">02 / RUNTIME</div>
+        <h2>运行核心和宿主拆开，才能保证桌面端与 CLI 行为一致</h2>
+        <p class="section-intro">
+          项目的活核心在 <code>app/src/runtime/</code>。它不关心自己运行在 Tauri 窗口、Node CLI，还是未来的远端 runner；它只处理任务图、上下文、回调、网关和验收。
+        </p>
+
+        <div class="flow" aria-label="运行链路">
+          <div class="flow-step">
+            <b>用户请求</b>
+            <span>自然语言、文件路径、当前工作区、选定通道。</span>
+          </div>
+          <div class="flow-step">
+            <b>IRGraph</b>
+            <span>把任务拆成可执行节点，保留依赖关系。</span>
+          </div>
+          <div class="flow-step">
+            <b>RunGateway</b>
+            <span>统一模型调用、工具执行和状态事件。</span>
+          </div>
+          <div class="flow-step">
+            <b>Host callbacks</b>
+            <span>桌面端写入 Zustand；CLI 写入 stdout 和日志。</span>
+          </div>
+          <div class="flow-step">
+            <b>Verdict</b>
+            <span>输出结果、证据、失败原因和可追踪记录。</span>
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top: 28px;">
+          <article class="panel">
+            <div class="number">A</div>
+            <h3>宿主只做宿主的事</h3>
+            <p>桌面端负责窗口、文件选择、状态渲染和 Tauri 命令。CLI 负责参数、流式输出和退出码。核心语义不复制。</p>
+          </article>
+          <article class="panel">
+            <div class="number">B</div>
+            <h3>DAG 比长 prompt 稳</h3>
+            <p>复杂任务需要并行、验收和重试。把任务显式建成图，比把所有步骤塞进一次模型调用更容易观测和恢复。</p>
+          </article>
+          <article class="panel">
+            <div class="number">C</div>
+            <h3>日志是产品能力</h3>
+            <p><code>.ugs-run/</code> 记录事件、ledger 和 verdict。失败时能定位是哪一步、哪个通道、哪个验收条件出问题。</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="routing">
+      <div class="shell article">
+        <div class="article-body">
+          <div class="section-kicker">03 / ROUTING</div>
+          <h2>通道代理解决的不是“更便宜”，而是“可切换”</h2>
+          <p>
+            游戏开发任务的模型需求差异很大。改一个配置文件不需要最贵的推理模型；排查渲染管线、重构系统边界或做最终审查时，强模型的价值更高。UltraGameStudio 把供应商差异收敛到本地代理和通道配置里，让同一个聊天面板可以在 Claude Code、Codex、Gemini、OpenRouter、GitHub Models、本地 Ollama 等路径之间切换。
+          </p>
+          <p>
+            本地 free-channel proxy 负责协议翻译和错误处理。它把 Anthropic 风格和 OpenAI 兼容流式协议接到统一入口，遇到 429 或上游 5xx 时会冷却通道，再尝试下一个候选。这个设计不把“免费模型”包装成质量承诺，只把它当成可调度资源：便宜任务走低成本路径，关键任务走高可信路径。
+          </p>
+          <p>
+            这里的关键边界是：密钥和选择权留在本机。用户配置自己的 provider key，桌面应用只保存本地设置。远端通道可以扩展，但不应该把整个项目控制权交给一个托管服务。
+          </p>
+        </div>
+        <aside class="side-note">
+          <b>路由原则</b>
+          低风险任务用低成本通道；高影响修改用强模型和验收节点。通道失败要被记录，不要被 UI 吞掉。
+        </aside>
+      </div>
+    </section>
+
+    <section id="assets">
+      <div class="shell">
+        <div class="section-kicker">04 / ASSET PIPELINE</div>
+        <h2>资产生成必须和代码会话在一起</h2>
+        <p class="section-intro">
+          游戏里的素材不是“附属品”。一张 UI mockup、一个 tileable texture、一段语音或一个 blockout mesh，都会影响代码结构和引擎配置。把资产生成放进同一会话，模型才能在产物和工程修改之间建立连续上下文。
+        </p>
+
+        <div class="image-band">
+          <img src="assets/asset-workflow.png" alt="UltraGameStudio 在同一工作台管理游戏资产生成">
+          <div class="caption">资产生成和编码工作流共用同一会话，结果可继续交给模型做工程落地。</div>
+        </div>
+
+        <div class="compare" style="margin-top: 28px;">
+          <table>
+            <thead>
+              <tr>
+                <th>能力</th>
+                <th>普通 coding agent</th>
+                <th>UltraGameStudio 的处理方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>引擎上下文</td>
+                <td>主要识别源码和 package 配置。</td>
+                <td>按项目标记判断 Unity、Unreal、Godot、Cocos 或 Web 引擎，再选择对应术语和文件边界。</td>
+              </tr>
+              <tr>
+                <td>素材产物</td>
+                <td>通常要求用户去外部工具生成，再手工导入。</td>
+                <td>图片、Sprite、3D、音乐、语音、视频走内置模式，结果留在聊天记录和工程上下文里。</td>
+              </tr>
+              <tr>
+                <td>专家分工</td>
+                <td>一个通用 assistant 处理所有问题。</td>
+                <td>按任务启用技术总监、玩法、AI、网络、工具、关卡、音频、QA、发布等角色。</td>
+              </tr>
+              <tr>
+                <td>运行证据</td>
+                <td>输出聊天内容，失败时难复盘。</td>
+                <td>运行事件、任务账本、模型选择和 verdict 持久化，便于重跑和审查。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tradeoffs">
+      <div class="shell article">
+        <div class="article-body">
+          <div class="section-kicker">05 / TRADEOFFS</div>
+          <h2>几个刻意接受的复杂度</h2>
+          <p>
+            第一，项目没有把运行逻辑绑死在 React 组件里。代价是接口层更明确，<code>RunGateway</code>、<code>RunCallbacks</code>、<code>RunContext</code> 这些概念需要维护；收益是同一套核心能被桌面端和 CLI 复用，测试和日志也更稳定。
+          </p>
+          <p>
+            第二，通道数量多会带来配置复杂度。这里的取舍是给用户选择权，而不是替用户假设“唯一正确模型”。实际工程里，模型可用性、速率限制、价格和任务风险每天都在变。把路由做成显式能力，比把供应商写死在产品里更耐用。
+          </p>
+          <p>
+            第三，资产生成会让产品边界变宽。它不再只是代码助手，还要处理图片、音频、模型、视频和 provider 配置。但游戏开发本来就不是纯文本工作流。如果产品只覆盖代码，它在最需要上下文的地方会断开。
+          </p>
+
+          <div class="quote">
+            UltraGameStudio 的核心判断很简单：游戏开发代理不该只懂仓库里的 TypeScript 或 C#。它还要理解引擎约定、资源管线、构建结果和人类开发者实际来回切换的工具。
+          </div>
+        </div>
+        <aside class="side-note">
+          <b>工程结论</b>
+          本地优先降低权限风险；运行核心抽象降低宿主差异；通道代理降低供应商锁定；资产模式降低上下文搬运成本。
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      <div>UltraGameStudio technical article. Static HTML, no build step required.</div>
+      <div>Repository: app/src/runtime, app/src-tauri, app/cli, packages/protocol.</div>
+    </div>
+  </footer>
+</body>
+</html>

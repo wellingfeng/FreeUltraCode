@@ -70,7 +70,7 @@ export default function PromptPanel() {
     setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
 
   const { width, onResizeStart } = useResizableWidth({
-    storageKey: 'freeultracode.panelWidth.v1',
+    storageKey: 'ultragamestudio.panelWidth.v1',
     defaultWidth: 288,
     min: 220,
     max: 560,

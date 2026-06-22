@@ -90,7 +90,7 @@ process.stdin.on('end', () => {
 }
 
 beforeAll(() => {
-  dir = mkdtempSync(join(tmpdir(), 'fuc-spawn-test-'));
+  dir = mkdtempSync(join(tmpdir(), 'ugs-spawn-test-'));
 });
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -128,7 +128,7 @@ describe('spawnCliAgent (claude stream-json)', () => {
 
     // tool_use surfaced as a structured tool sentinel; assistant text streamed.
     const joined = progress.join('');
-    expect(joined).toContain('<<FUC_TOOL>>');
+    expect(joined).toContain('<<UGS_TOOL>>');
     expect(joined).toContain('"name":"Read"');
     expect(joined).toContain('"subject":"src/ir.ts"');
     expect(joined).toContain('PROMPT[hello-prompt]');
@@ -137,9 +137,9 @@ describe('spawnCliAgent (claude stream-json)', () => {
 
   it('injects project MCP servers into claude mcp-config', async () => {
     const projectDir = join(dir, 'claude-mcp-project');
-    const fucHome = join(dir, 'fuc-home-claude');
+    const ugsHome = join(dir, 'ugs-home-claude');
     mkdirSync(projectDir, { recursive: true });
-    const workspacesDir = join(fucHome, 'workspaces');
+    const workspacesDir = join(ugsHome, 'workspaces');
     mkdirSync(workspacesDir, { recursive: true });
     writeFileSync(
       join(workspacesDir, 'index.json'),
@@ -166,8 +166,8 @@ describe('spawnCliAgent (claude stream-json)', () => {
       ]),
       'utf8',
     );
-    const previousFucHome = process.env.FUC_HOME;
-    process.env.FUC_HOME = fucHome;
+    const previousUgsHome = process.env.UGS_HOME;
+    process.env.UGS_HOME = ugsHome;
     try {
       const argvOut = join(dir, 'argv-claude-mcp.json');
       const bin = makeFakeCli('fake-claude-mcp', fakeClaudeBody(argvOut));
@@ -182,8 +182,8 @@ describe('spawnCliAgent (claude stream-json)', () => {
       expect(argv[argv.indexOf('--mcp-config') + 1]).toContain('settings.json');
       expect(argv).not.toContain('--strict-mcp-config');
     } finally {
-      if (previousFucHome == null) delete process.env.FUC_HOME;
-      else process.env.FUC_HOME = previousFucHome;
+      if (previousUgsHome == null) delete process.env.UGS_HOME;
+      else process.env.UGS_HOME = previousUgsHome;
     }
   });
 
@@ -364,17 +364,17 @@ process.stdin.on('end', () => {
     });
 
     const joined = progress.join('');
-    expect(joined).toContain('<<FUC_TOOL>>');
+    expect(joined).toContain('<<UGS_TOOL>>');
     expect(joined).toContain('"name":"file_change"');
     expect(joined).toContain('"path":"app/src/lib/sessionFiles.ts"');
   });
 
   it('injects project MCP servers into codex exec config overrides', async () => {
     const projectDir = join(dir, 'codex-mcp-project');
-    const fucHome = join(dir, 'fuc-home');
+    const ugsHome = join(dir, 'ugs-home');
     mkdirSync(projectDir, { recursive: true });
     writeFileSync(join(projectDir, '.keep'), '', 'utf8');
-    const workspacesDir = join(fucHome, 'workspaces');
+    const workspacesDir = join(ugsHome, 'workspaces');
     mkdirSync(workspacesDir, { recursive: true });
     writeFileSync(
       join(workspacesDir, 'index.json'),
@@ -407,8 +407,8 @@ process.stdin.on('end', () => {
       ]),
       'utf8',
     );
-    const previousFucHome = process.env.FUC_HOME;
-    process.env.FUC_HOME = fucHome;
+    const previousUgsHome = process.env.UGS_HOME;
+    process.env.UGS_HOME = ugsHome;
     try {
       const argvOut = join(dir, 'argv-codex-mcp.json');
       const bin = makeFakeCli('fake-codex-mcp', fakeCodexBody(argvOut));
@@ -427,8 +427,8 @@ process.stdin.on('end', () => {
         `mcp_servers.ue-mcp-for-all-versions.env.UE_PROJECT="${projectDir.replace(/\\/g, '\\\\')}"`,
       );
     } finally {
-      if (previousFucHome == null) delete process.env.FUC_HOME;
-      else process.env.FUC_HOME = previousFucHome;
+      if (previousUgsHome == null) delete process.env.UGS_HOME;
+      else process.env.UGS_HOME = previousUgsHome;
     }
   });
 });

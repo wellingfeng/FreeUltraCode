@@ -76,7 +76,7 @@ import {
 } from '@/core/startInputs';
 // [dynamic-only refactor] determinism lint 仅用于蓝图 AI 改图分支，已停用。
 // import { findDeterminismHazards } from '@/core/determinism';
-import { setActiveProviderId } from '@/lib/apiConfig';
+import { listProviders, setActiveProviderId } from '@/lib/apiConfig';
 import { appendComposerDraftState } from '@/lib/composerEntryPolicy';
 import {
   clearActiveGatewaySelection,
@@ -103,9 +103,11 @@ import {
   type ImageProviderId,
 } from '@/lib/imageGeneration';
 import {
+  loadMusicGenerationSettings,
   preferredReadyMusicProviderId,
 } from '@/lib/musicGeneration';
 import {
+  loadThreeDGenerationSettings,
   preferredReadyThreeDProviderId,
 } from '@/lib/threeDGeneration';
 import { stripComfyCommand, fetchComfyObjectInfo, comfyBaseUrl } from '@/lib/comfyui';
@@ -116,14 +118,20 @@ import {
   type WorldModelProviderId,
 } from '@/lib/worldModel';
 import {
+  loadVideoGenerationSettings,
   preferredReadyVideoProviderId,
 } from '@/lib/videoGeneration';
 import {
+  loadSpeechGenerationSettings,
   preferredReadySpeechProviderId,
 } from '@/lib/speechGeneration';
 import {
   preferredReadySpriteProviderId,
 } from '@/lib/spriteGeneration';
+import {
+  loadUiDesignChannelSettings,
+  uiDesignChannelReady,
+} from '@/lib/uiDesignChannels';
 import {
   loadMeshLibrarySettings,
   meshLibraryById,
@@ -131,6 +139,7 @@ import {
   type MeshSearchQueryResolution,
   type MeshSearchResult,
 } from '@/lib/meshLibrary';
+import { settingsProfileIdForWorkspacePath } from '@/lib/generationSettingsStore';
 import {
   buildGameExpertPrompt,
 } from '@/lib/gameExperts';
@@ -153,7 +162,6 @@ import {
   downloadModelAsset,
   ensureDefaultWorkspaceDir,
   isTauri,
-  runUltracode,
 } from '@/lib/tauri';
 import {
   linkManagedAssetsFromMessageText,
@@ -161,12 +169,6 @@ import {
   type AssetKind,
   type AssetOrigin,
 } from '@/lib/downloadRegistry';
-import {
-  parseUltracodePrompt,
-  summarizeUltracodeResult,
-  ultracodeAccepted,
-  ultracodeModeLabel,
-} from './ultracodePrompt';
 import {
   COMFY_PROMPT_SYSTEM,
   stripUiModeCommand,
@@ -246,14 +248,10 @@ import {
   runFailureMeta,
   runWithConcurrency,
   newSessionId,
-  decodeProgressEvents,
-  emptyProgress,
-  reduceProgress,
   type RunCallbacks,
   type RunContext as RuntimeRunContext,
   type RunFailure,
   type RunGateway,
-  type UltracodeRunProgress,
 } from '@/runtime';
 import {
   DEFAULT_LOCALE,
@@ -289,6 +287,13 @@ import {
   workspaceHistoryWithRecent,
   workspacePathKey,
 } from '@/lib/workspaceHistory';
+import {
+  getRemoteWorkspace,
+  isRemoteWorkspacePath,
+  parseRemoteProviderId,
+  remoteRunnerProviderMatchesWorkspace,
+  remoteWorkspaceIdFromPath,
+} from '@/lib/remoteWorkspace';
 import {
   autosave,
   exportWorkflowToFile,
@@ -345,6 +350,7 @@ import {
   chatTurnKey,
 } from './sessionKey';
 export { runKey, chatTurnKey, workflowSessionKeyId } from './sessionKey';
+import { startRemoteChatTurn } from './remoteChatTurn';
 // Channel registry: owns the run/AI-edit Maps + pure read accessors (no cycle).
 // The Maps are imported so the side-effecting mutators below can write them.
 // aiEditRegistered is re-exported for generationActions.
@@ -462,6 +468,15 @@ function workspacePathForId(
   return trimmedPath(
     workspaces.find((workspace) => workspace.id === workspaceId)?.path,
   );
+}
+
+function settingsProfileForState(
+  state: Pick<StoreState, 'activeWorkspaceId' | 'composer' | 'workspaces'>,
+) {
+  const workspacePath =
+    trimmedPath(state.composer.workspace) ??
+    workspacePathForId(state.workspaces, state.activeWorkspaceId);
+  return { profileId: settingsProfileIdForWorkspacePath(workspacePath) };
 }
 
 export function projectMcpGuidanceForState(
@@ -699,6 +714,114 @@ function persistGlobalGatewaySelection(selection: GatewaySelection): GatewaySele
   return normalized;
 }
 
+function runtimeAdapterFromRemoteAdapter(adapter: unknown): GatewaySelection['adapter'] {
+  if (adapter === 'codex') return 'codex';
+  if (adapter === 'gemini') return 'gemini';
+  return 'claude-code';
+}
+
+function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapter'] {
+  if (kind === 'codex') return 'codex';
+  if (kind === 'gemini') return 'gemini';
+  return 'claude-code';
+}
+
+const REMOTE_CLAUDE_TIER_ALIASES = new Set(['haiku', 'sonnet', 'opus']);
+
+function remoteWorkspaceModelForAdapter(
+  adapter: GatewaySelection['adapter'],
+  model: string | null | undefined,
+): string | undefined {
+  const trimmed = model?.trim();
+  if (!trimmed) return undefined;
+  if (
+    adapter !== 'claude-code' &&
+    REMOTE_CLAUDE_TIER_ALIASES.has(trimmed.toLowerCase())
+  ) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function remoteWorkspaceGatewaySelection(
+  workspacePath: string,
+  current: GatewaySelection,
+): GatewaySelection | null {
+  if (!isRemoteWorkspacePath(workspacePath)) return null;
+  const workspaceId = remoteWorkspaceIdFromPath(workspacePath);
+  const remote = parseRemoteProviderId(current.providerId);
+  const config = getRemoteWorkspace(workspaceId);
+  if (!config) return null;
+  const configAdapter = runtimeAdapterFromRemoteAdapter(config.adapter);
+  const configModel = remoteWorkspaceModelForAdapter(configAdapter, config.model);
+  if (remote?.workspaceId === workspaceId) {
+    const provider = listProviders().find((item) => item.id === current.providerId);
+    const adapter = provider
+      ? runtimeAdapterFromProviderKind(provider.kind)
+      : current.adapter || configAdapter;
+    const currentModel = remoteWorkspaceModelForAdapter(
+      adapter,
+      current.modelOverride?.trim() || current.modelClass?.trim(),
+    );
+    if (!configModel) {
+      if (currentModel) return current;
+      const providerModel =
+        remoteWorkspaceModelForAdapter(adapter, provider?.model) || 'default';
+      return normalizeGatewaySelection({
+        ...current,
+        adapter,
+        modelClass: providerModel,
+        modelOverride: undefined,
+        providerId: current.providerId,
+        channelId: current.channelId || 'default',
+      });
+    }
+    const currentOverride = current.modelOverride?.trim();
+    if (
+      currentModel?.toLowerCase() === configModel.toLowerCase() &&
+      currentOverride?.toLowerCase() === configModel.toLowerCase()
+    ) {
+      return current;
+    }
+    return normalizeGatewaySelection({
+      ...current,
+      adapter,
+      modelClass: configModel,
+      modelOverride: configModel,
+      providerId: current.providerId,
+      channelId: current.channelId || 'default',
+    });
+  }
+
+  const remoteProviders = listProviders().filter((provider) =>
+    remoteRunnerProviderMatchesWorkspace(provider, workspaceId),
+  );
+  const provider =
+    remoteProviders.find(
+      (item) => runtimeAdapterFromProviderKind(item.kind) === configAdapter,
+    ) ?? remoteProviders[0];
+  if (provider) {
+    const adapter = runtimeAdapterFromProviderKind(provider.kind);
+    const model =
+      configModel || remoteWorkspaceModelForAdapter(adapter, provider.model) || 'default';
+    return normalizeGatewaySelection({
+      adapter,
+      modelClass: model,
+      ...(configModel ? { modelOverride: configModel } : {}),
+      providerId: provider.id,
+      channelId: 'default',
+    });
+  }
+
+  const model = configModel || 'default';
+  return normalizeGatewaySelection({
+    adapter: configAdapter,
+    modelClass: model,
+    ...(configModel ? { modelOverride: configModel } : {}),
+    systemDefault: true,
+  });
+}
+
 function withNewSessionGatewayDefaults(workflow: IRGraph): IRGraph {
   const selection = getExplicitActiveGatewaySelection() ?? configuredCliGatewaySelection();
   return selection ? withSessionGatewayDefaults(workflow, selection) : workflow;
@@ -901,7 +1024,7 @@ export function composerPatchForSession(
   const stored = sessionKeyPersistable(sessionKey)
     ? composerBySession[key]
     : undefined;
-  const snapshot =
+  const baseSnapshot =
     stored ??
     ({
       composer: fallbackComposer,
@@ -910,7 +1033,14 @@ export function composerPatchForSession(
         fallbackComposer.model,
       ),
     } satisfies SessionComposerSettings);
-  if (!stored && sessionKeyPersistable(sessionKey)) {
+  const remoteSelection = remoteWorkspaceGatewaySelection(
+    baseSnapshot.composer.workspace || fallbackComposer.workspace,
+    baseSnapshot.gatewaySelection,
+  );
+  const snapshot = remoteSelection
+    ? { ...baseSnapshot, gatewaySelection: remoteSelection }
+    : baseSnapshot;
+  if ((!stored || remoteSelection) && sessionKeyPersistable(sessionKey)) {
     composerBySession = { ...composerBySession, [key]: snapshot };
   }
   return {
@@ -1395,7 +1525,7 @@ export function meshSearchResultMarkdown(
   }
   if (result.items.length === 0 && result.linkOuts.length === 0) {
     if (settings.enabledIds.length === 0) {
-      lines.push('\n没有启用任何在线模型库。请在项目设置 > 在线模型库中启用并配置账号。');
+      lines.push('\n没有启用任何在线模型库。请在设置 > 在线模型库中启用并配置账号。');
     } else {
       lines.push('\n未找到匹配的在线模型结果。可以换成更通用的关键词再试，例如 `cartoon bear`、`low poly bear` 或 `teddy bear`。');
     }
@@ -1505,7 +1635,7 @@ export function linkMessageManagedAssets(
   // downloaded, modified). Asset paths the user types are not AI-handled
   // assets, so skip non-assistant messages.
   if (message.role !== 'assistant') return;
-  if (!message.text.includes('.freeultracode')) return;
+  if (!message.text.includes('.ultragamestudio')) return;
   linkManagedAssetsFromMessageText({
     text: message.text,
     sessionId: sessionKey.sessionId,
@@ -2664,7 +2794,7 @@ async function createNewWorkflowSession(
   }
 }
 
-interface FreeUltraCodeSessionOptions {
+interface UltraGameStudioSessionOptions {
   workspaceId?: string | null;
   forceNewSession?: boolean;
 }
@@ -2672,7 +2802,7 @@ interface FreeUltraCodeSessionOptions {
 async function openWorkflowInSession(
   ir: IRGraph,
   path?: string,
-  options: FreeUltraCodeSessionOptions = {},
+  options: UltraGameStudioSessionOptions = {},
 ): Promise<void> {
   const state = useStore.getState();
   const workflow = restoreWorkflowRunSnapshot(
@@ -3653,7 +3783,7 @@ export const useStore = create<StoreState>((set, get) => ({
     void openWorkflowInSession(ir, path).catch(() => {});
   },
 
-  // Export the current workflow IR to a user-chosen .fuc.json file. The run
+  // Export the current workflow IR to a user-chosen .ugs.json file. The run
   // snapshot is stripped (see persist.ts) so the file is a clean, shareable
   // blueprint. Export does not touch currentFilePath — it's a "save a copy".
   exportWorkflow: (title) => {
@@ -3911,205 +4041,13 @@ export const useStore = create<StoreState>((set, get) => ({
   // In all cases the reply is a short Chinese explanation optionally followed by
   // a fenced ```json IRGraph; the JSON is hidden from the stream, parsed, and
   // applied to the blueprint. Pure questions (no fence) leave the graph as-is.
-  runUltracodePrompt: (task) => {
+  runStudioPrompt: (task) => {
     const trimmed = task.trim();
     if (!trimmed) return;
-    const parsed = parseUltracodePrompt(trimmed);
-    const request =
-      parsed.request ||
-      (parsed.options.resume ? '续跑 /ultracode 任务' : trimmed);
-    const modeLabel = ultracodeModeLabel(parsed.options);
-    const state = useStore.getState();
-    if (state.mode === 'running') return;
-    const sessionKey = activeWorkflowSessionKey(state);
-    if (hasSessionKey(state.chattingSessions, sessionKey)) return;
-    if (state.blockedSendTip) set({ blockedSendTip: null });
-    const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
-    const changesBaselineReady = ensureSessionChangeBaselineForKey(
-      state,
-      sessionKey,
-      workspaceRootPath,
+    get().appendChatNote(
+      '已关闭 /studio 动态多智能体编排。请直接描述编程、文档或分析需求，默认由当前编程模型单模型总控处理；素材生成、引擎识别、文件操作和验证仍由 UltraGameStudio 的专用能力承接。',
+      'system',
     );
-
-    const now = Date.now();
-    const userMsg: Message = {
-      id: shortId('m'),
-      role: 'user',
-      text: `/ultracode ${trimmed}`,
-      createdAt: now,
-    };
-    linkMessageManagedAssets(userMsg, sessionKey);
-    const assistantId = shortId('m');
-    const assistantMsg: Message = {
-      id: assistantId,
-      role: 'assistant',
-      text:
-        modeLabel === 'planner-only'
-          ? `⟳ /ultracode 正在生成动态 harness 计划…`
-          : `⟳ /ultracode 正在生成动态 harness 并执行…`,
-      routeLabel: '/ultracode',
-      createdAt: now + 1,
-    };
-    const promptUpdate = applyPromptTitle(state, request, now);
-    const chKey = chatTurnKey(runKey(sessionKey.workspaceId, sessionKey.sessionId), userMsg.id);
-    const ch: AiEditChannel = {
-      key: chKey,
-      sessionKey: runKey(sessionKey.workspaceId, sessionKey.sessionId),
-      workspaceId: sessionKey.workspaceId,
-      sessionId: sessionKey.sessionId,
-      workspaceRootPath,
-      workflow: promptUpdate.workflow,
-      messages: [...state.messages, userMsg, assistantMsg],
-      cliRunIds: new Set<string>(),
-      abortController: new AbortController(),
-      gatewaySelection: workflowDefaultGatewaySelection(
-        promptUpdate.workflow,
-        state.composer.model,
-      ),
-      workflowSession: false,
-      chat: true,
-      ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
-    };
-
-    const replaceAssistant = (
-      text: string,
-      persist = false,
-      runProgress?: UltracodeRunProgress,
-    ) => {
-      if (!aiEditRegistered(ch)) return;
-      ch.messages = ch.messages.map((msg) =>
-        msg.id === assistantId
-          ? {
-              ...msg,
-              text,
-              routeLabel: '/ultracode',
-              ...(runProgress ? { runProgress } : {}),
-            }
-          : msg,
-      );
-      aiEditCommitMessages(ch, persist);
-    };
-
-    addAiEditChannel(ch);
-    if (aiEditViewActive(ch)) {
-      set({
-        messages: ch.messages,
-        sessions: promptUpdate.sessions,
-        sessionTree: promptUpdate.sessionTree,
-        workflow: ch.workflow,
-      });
-    }
-    updateAiEditSessionSummary(ch);
-    syncAndPersistSessionRunStatus(sessionKey, 'running');
-    if (ch.workspaceId && ch.sessionId) {
-      void historyStore
-        .updateSession(ch.workspaceId, ch.sessionId, {
-          messages: ch.messages,
-          meta: { runStatus: 'running' },
-        })
-        .catch(() => {});
-    }
-
-    void (async () => {
-      const startedAt = Date.now();
-      const runId = parsed.options.runId || makeCliRunId();
-      ch.cliRunIds.add(runId);
-      let live = '';
-      // Live run-progress snapshot, folded from the CLI's <<FUC_PROGRESS>>
-      // sentinels (decoded out of the streamed stderr) so the GUI can render a
-      // run-progress card above the log text. Seeded with the wall-clock start.
-      let progress: UltracodeRunProgress = { ...emptyProgress(), startedAt };
-      let concurrencyForDisplay = parsed.options.concurrency ?? runConcurrency();
-      const ultracodeWorkspacePaths = composerWorkspacePaths(state.composer);
-      const workspaceSummary =
-        ultracodeWorkspacePaths.length > 0
-          ? `工作区: ${ultracodeWorkspacePaths[0]}${
-              ultracodeWorkspacePaths.length > 1
-                ? ` +${ultracodeWorkspacePaths.length - 1}`
-                : ''
-            }`
-          : '工作区: 默认';
-      const composeLiveText = () =>
-        [
-          `⟳ /ultracode 执行中…`,
-          `runId: ${runId}`,
-          workspaceSummary,
-          `模式: ${modeLabel}`,
-          `并发: ${concurrencyForDisplay}`,
-          '',
-          live.trim(),
-        ].join('\n');
-      try {
-        await changesBaselineReady;
-        const gatewaySelection = ch.gatewaySelection;
-        if (gatewaySelection && isFreeChannelSelection(gatewaySelection)) {
-          await ensureFreeProxy(freeProxyOptionsForSelection(gatewaySelection));
-        }
-        const concurrency = parsed.options.concurrency ?? runConcurrency();
-        concurrencyForDisplay = concurrency;
-        const result = await runUltracode(request, {
-          ...aiEditCliWorkspaceOptions(ch, state.composer),
-          adapter: gatewaySelection?.adapter,
-          model:
-            gatewaySelection?.modelOverride ||
-            gatewaySelection?.modelClass,
-          provider: gatewaySelection?.providerId,
-          concurrency,
-          maxRetries: parsed.options.maxRetries ?? runMaxRetries(),
-          maxAgentCalls: parsed.options.maxAgentCalls,
-          maxRounds: parsed.options.maxRounds,
-          timeoutSeconds: parsed.options.timeoutSeconds,
-          runId,
-          resume: parsed.options.resume,
-          plannerOnly: parsed.options.plannerOnly,
-          fromHarness: parsed.options.fromHarness,
-          trace: parsed.options.trace,
-          interactive: parsed.options.interactive,
-          onProgress: (chunk) => {
-            // Pull structured progress sentinels out of the chunk; the cleaned
-            // remainder (the human-readable log lines) stays in the stream. A
-            // sentinel-only stderr line leaves a dangling "[stderr] " prefix —
-            // drop those orphan tokens so the log doesn't sprout blank rows.
-            const { text: cleaned, events } = decodeProgressEvents(chunk);
-            const visible = cleaned.replace(
-              /\n[ \t]*\[(?:stderr|stdout)\][ \t]*(?=\n|$)/g,
-              '',
-            );
-            live = (live + visible).slice(-5000);
-            if (events.length > 0) progress = reduceProgress(progress, events);
-            replaceAssistant(composeLiveText(), false, progress);
-          },
-        });
-        if (!aiEditRegistered(ch)) return;
-        progress = {
-          ...progress,
-          phase: ultracodeAccepted(result) ? 'complete' : 'error',
-          endedAt: Date.now(),
-        };
-        replaceAssistant(
-          `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(Date.now() - startedAt)}\n${summarizeUltracodeResult(result)}`,
-          true,
-          progress,
-        );
-        syncAndPersistSessionRunStatus(
-          sessionKey,
-          ultracodeAccepted(result) ? 'success' : 'error',
-        );
-      } catch (err) {
-        if (!aiEditRegistered(ch)) return;
-        const msg = (err as Error)?.message ?? String(err);
-        progress = { ...progress, phase: 'error', endedAt: Date.now() };
-        replaceAssistant(
-          `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(Date.now() - startedAt)} · 失败\n✗ /ultracode 调用失败: ${msg}`,
-          true,
-          progress,
-        );
-        syncAndPersistSessionRunStatus(sessionKey, 'error');
-      } finally {
-        ch.cliRunIds.delete(runId);
-        removeAiEditChannel(ch);
-      }
-    })();
   },
 
   generateImagePrompt: (text, options = {}) => {
@@ -4169,11 +4107,14 @@ export const useStore = create<StoreState>((set, get) => ({
   generateUiPrompt: (text) => {
     const prompt = stripUiModeCommand(text);
     if (!prompt) return;
+    const settingsProfile = settingsProfileForState(get());
     // Route through the normal coding-model turn, but front-load a game-UI
     // design instruction tied to the project's default UI channel so the model
     // produces interface specs / deliverables instead of editing the workflow
     // blueprint. Reuses all channel/persistence logic.
-    void get().sendPrompt(`${uiDesignPromptSystem()}\n\n用户需求：\n${prompt}`);
+    void get().sendPrompt(
+      `${uiDesignPromptSystem(settingsProfile)}\n\n用户需求：\n${prompt}`,
+    );
   },
 
   generateBlueprintPrompt: (text) => {
@@ -4397,6 +4338,16 @@ export const useStore = create<StoreState>((set, get) => ({
     const preferCliForProjectMcp = inTauri && !!projectMcpGuidance;
     const useApi = !!directRoute && !preferCliForProjectMcp;
     const useCli = (!useApi && inTauri) || preferCliForProjectMcp;
+    const selectedRemoteWorkspaceConfig =
+      simpleMode && workspaceRootPath && isRemoteWorkspacePath(workspaceRootPath)
+        ? getRemoteWorkspace(remoteWorkspaceIdFromPath(workspaceRootPath))
+        : null;
+    const remoteProvider = parseRemoteProviderId(gatewaySelection.providerId);
+    const selectedRemoteProviderMatchesWorkspace =
+      !!remoteProvider &&
+      !!workspaceRootPath &&
+      isRemoteWorkspacePath(workspaceRootPath) &&
+      remoteProvider.workspaceId === remoteWorkspaceIdFromPath(workspaceRootPath);
 
     const pushAssistant = (txt: string, routeLabel?: string) => {
       const msg: Message = {
@@ -4441,7 +4392,11 @@ ${previousReply.slice(0, 4000)}
 不得创建或修改本地文件，不得等待用户批准。`;
 
     // No API key and no desktop CLI: local keyword fallback.
-    if (!useApi && !useCli) {
+    if (
+      !useApi &&
+      !useCli &&
+      !selectedRemoteWorkspaceConfig
+    ) {
       if (simpleMode) {
         // Simple mode is a direct model chat — there's no local fallback.
         pushAssistant(
@@ -4458,6 +4413,18 @@ ${previousReply.slice(0, 4000)}
       // 非简单模式 + 无后端：仅提示，不再做关键词改图。
       pushAssistant(
         `当前环境无法调用所选运行时。请在桌面版中使用本地 CLI，或切回 Claude Code 并配置 API key。`,
+      );
+      removeAiEditChannel(ch);
+      return true;
+    }
+
+    if (remoteProvider && !selectedRemoteProviderMatchesWorkspace) {
+      pushAssistant(
+        '当前远程 Runner 渠道只适用于它绑定的云端项目。请切回对应云端项目，或切换为本地/系统默认渠道。',
+      );
+      syncAndPersistSessionRunStatus(
+        { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+        'error',
       );
       removeAiEditChannel(ch);
       return true;
@@ -4893,10 +4860,27 @@ ${previousReply.slice(0, 4000)}
       ),
       gatewaySelection.adapter,
     );
+    const settingsProfile = settingsProfileForState(state);
+    const imageSettings = loadImageGenerationSettings(settingsProfile);
     const gameAssetChannels = {
-      image: preferredReadyImageProviderId() != null,
-      music: preferredReadyMusicProviderId() != null,
-      threeD: preferredReadyThreeDProviderId() != null,
+      image: preferredReadyImageProviderId(imageSettings) != null,
+      music:
+        preferredReadyMusicProviderId(loadMusicGenerationSettings(settingsProfile)) !=
+        null,
+      threeD:
+        preferredReadyThreeDProviderId(loadThreeDGenerationSettings(settingsProfile)) !=
+        null,
+      video:
+        preferredReadyVideoProviderId(loadVideoGenerationSettings(settingsProfile)) !=
+        null,
+      speech:
+        preferredReadySpeechProviderId(loadSpeechGenerationSettings(settingsProfile)) !=
+        null,
+      sprite: preferredReadySpriteProviderId(imageSettings) != null,
+      ui: (() => {
+        const settings = loadUiDesignChannelSettings(settingsProfile);
+        return uiDesignChannelReady(settings.preferredChannelId, settings);
+      })(),
     };
     // Capability awareness for EVERY path (blueprint + simple chat): tell the
     // model which built-in generation channels are configured + ready so it
@@ -4906,14 +4890,14 @@ ${previousReply.slice(0, 4000)}
       image: gameAssetChannels.image,
       music: gameAssetChannels.music,
       threeD: gameAssetChannels.threeD,
-      video: preferredReadyVideoProviderId() != null,
-      speech: preferredReadySpeechProviderId() != null,
-      sprite: preferredReadySpriteProviderId() != null,
+      video: gameAssetChannels.video,
+      speech: gameAssetChannels.speech,
+      sprite: gameAssetChannels.sprite,
     });
-    // Explicit-only routing (方案 A 之上的收紧)：游戏专家 / 制作人总控不再从
+    // Explicit-only routing (方案 A 之上的收紧)：游戏专家 / 制作人视角不再从
     // 聊天文本自动触发，只有用户通过 /game（或分层路径）显式调用时才注入。
     // - 指定了具体专家(分层路径命中) → 直接用专家融合，固定为这些专家。
-    // - 仅 /game 整体调用 → 完整/多阶段需求走制作人总控，其余走专家融合。
+    // - 仅 /game 整体调用 → 完整/多阶段需求走制作人视角计划，其余走专家融合。
     const hasPinnedExperts = pinnedGameExpertIds.length > 0;
     const gameExpertBlock = !forceGameExperts
       ? ''
@@ -5152,6 +5136,26 @@ ${previousReply.slice(0, 4000)}
     // into the chat bubble, and append the input to the lone start node so the
     // node mirrors the conversation. The graph never grows past one node.
     if (simpleMode) {
+      if (workspaceRootPath && selectedRemoteWorkspaceConfig) {
+        startRemoteChatTurn({
+          ch,
+          prompt: trimmed,
+          workspacePath: workspaceRootPath,
+          locale: state.locale,
+          projectEngineGuidance,
+          personalBlock,
+          gameExpertBlock,
+          aiEditCommitMessages,
+          commitAiChannelBlueprint,
+          appendStartUserInputs,
+          syncAndPersistSessionRunStatus,
+          formatClock,
+          formatDuration,
+          removeAiEditChannel,
+        });
+        return true;
+      }
+
       // Serialize turns for this chat session so a follow-up sent mid-stream
       // ("插话") queues behind the in-flight turn and then runs with --resume
       // (warm context) instead of colliding on the same native --session-id.
@@ -5231,7 +5235,7 @@ ${previousReply.slice(0, 4000)}
           // asking can't spin forever.
           let continuation = '';
           let finalAnswer = '';
-          // 「会话文件」列表只能从消息文本里的 <<FUC_TOOL>> 哨兵解析出本会话
+          // 「会话文件」列表只能从消息文本里的 <<UGS_TOOL>> 哨兵解析出本会话
           // AI 读/改过的文件。CLI 回合最终化时用的是不含哨兵的纯净答复
           // （result/acc），会把流式期间出现过的工具事件抹掉，导致文件先显示
           // 后消失、且下一轮扫不到历史活动。这里把每个回合流式收集到的哨兵
@@ -5370,7 +5374,7 @@ ${previousReply.slice(0, 4000)}
           const turnMessageId = activeId;
           // Re-attach the tool sentinels captured while streaming so the answer
           // bubble keeps its tool cards AND the session-files list keeps the
-          // files this turn touched (it parses <<FUC_TOOL>> sentinels from the
+          // files this turn touched (it parses <<UGS_TOOL>> sentinels from the
           // persisted message text). Without this, the clean CLI reply replaces
           // the streamed text and every read/edited file vanishes from the list.
           const finalProse = finalAnswer.trim() || '（模型没有返回内容）';
@@ -6199,7 +6203,7 @@ function channelSnapshot(ch: RunChannel, status: IRRunStatus): IRRunSnapshot {
  * Persist the channel's shadow to its OWNING session (not the active view).
  * When the run has no history context (browser/simulator) it falls back to the
  * active-session path only while that run is the visible session. Deliberately
- * skips `.fuc.json` file autosave for backgrounded runs so a background run
+ * skips `.ugs.json` file autosave for backgrounded runs so a background run
  * never overwrites the file bound to the session the user is currently editing.
  */
 async function persistChannelSnapshot(
@@ -6778,7 +6782,7 @@ function toolPatchIdentity(patch: unknown): string {
 
 function transcriptText(message: Message): string {
   let text =
-    message.role === 'assistant' && message.text.includes('<<FUC_TOOL>>')
+    message.role === 'assistant' && message.text.includes('<<UGS_TOOL>>')
       ? extractToolSentinels(message.text).text
       : message.text;
   text = text
@@ -7081,7 +7085,7 @@ function startWorkflowRun(resume: boolean): void {
   // Date.now()/Math.random()/new Date(), which would make hash-checked resume
   // serve stale cache and throw under real Claude Code. See core/determinism.ts.
   // [dynamic-only refactor] 决定性 lint(findDeterminismHazards)已停用（蓝图模块 exclude）。
-  // 该建议性告警仅在蓝图运行路径触发，纯聊天/ultracode 不经过此处。
+  // 该建议性告警仅在蓝图运行路径触发，纯聊天/studio 不经过此处。
   /*
   for (const finding of findDeterminismHazards(workflow)) {
     const node = workflow.nodes.find((n) => n.id === finding.nodeId);
@@ -7540,11 +7544,11 @@ function buildGuiRunContext(ch: RunChannel, workflow: IRGraph): RuntimeRunContex
   };
 }
 
-/** Default fan-out samples for a consensus node (localStorage fuc_consensus_default_samples). */
+/** Default fan-out samples for a consensus node (localStorage ugs_consensus_default_samples). */
 function defaultConsensusSamples(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('fuc_consensus_default_samples');
+      const raw = window.localStorage.getItem('ugs_consensus_default_samples');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(7, Math.max(2, n));
@@ -7563,16 +7567,16 @@ const DEFAULT_RUN_CONCURRENCY = 10;
  * How many runnable nodes may execute at once. Each node is a heavy `claude -p`
  * process, so this absolute cap is combined with the model-speed tier caps from
  * Settings > Consensus. Tune it per machine via localStorage
- * (`fuc_run_concurrency`, clamped 1–16) or force the old strictly-sequential
- * behaviour with `fuc_sequential=1`. Linear chains stay sequential regardless
+ * (`ugs_run_concurrency`, clamped 1–16) or force the old strictly-sequential
+ * behaviour with `ugs_sequential=1`. Linear chains stay sequential regardless
  * (a node still waits for its predecessors); the cap only bounds how many
  * *independent* nodes run together.
  */
 function runConcurrency(): number {
   try {
     if (typeof window !== 'undefined') {
-      if (window.localStorage.getItem('fuc_sequential') === '1') return 1;
-      const raw = window.localStorage.getItem('fuc_run_concurrency');
+      if (window.localStorage.getItem('ugs_sequential') === '1') return 1;
+      const raw = window.localStorage.getItem('ugs_run_concurrency');
       if (raw) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(16, Math.max(1, n));
@@ -7590,13 +7594,13 @@ const DEFAULT_RUN_MAX_RETRIES = 2;
 /**
  * How many times a failed node is automatically re-run before it is recorded as
  * failed. Only transient failures (see RETRYABLE_FAILURE_CODES) are retried.
- * Tune via localStorage (`fuc_run_max_retries`, clamped 0–10); set 0 to disable
+ * Tune via localStorage (`ugs_run_max_retries`, clamped 0–10); set 0 to disable
  * auto-retry entirely.
  */
 function runMaxRetries(): number {
   try {
     if (typeof window !== 'undefined') {
-      const raw = window.localStorage.getItem('fuc_run_max_retries');
+      const raw = window.localStorage.getItem('ugs_run_max_retries');
       if (raw !== null) {
         const n = Number.parseInt(raw, 10);
         if (Number.isFinite(n)) return Math.min(10, Math.max(0, n));

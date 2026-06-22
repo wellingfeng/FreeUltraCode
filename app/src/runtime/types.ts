@@ -74,6 +74,64 @@ export interface NodeRunResult {
   retryCount?: number;
 }
 
+export type RunEvidenceKind =
+  | 'command'
+  | 'file'
+  | 'log'
+  | 'model-output'
+  | 'screenshot'
+  | 'verdict'
+  | 'check'
+  | 'trace';
+
+export type RunEvidenceStatus =
+  | 'pass'
+  | 'fail'
+  | 'skipped'
+  | 'success'
+  | 'error'
+  | 'unknown';
+
+/**
+ * Reviewable evidence captured from a run. Hosts may attach command results,
+ * files, screenshots, log snippets, model outputs, and acceptance decisions so
+ * the UI can explain why a run was marked complete instead of only showing the
+ * final assistant paragraph.
+ */
+export interface RunEvidence {
+  id: string;
+  kind: RunEvidenceKind;
+  title: string;
+  status?: RunEvidenceStatus;
+  summary?: string;
+  path?: string;
+  command?: string;
+  nodeId?: string;
+  timestampMs?: number;
+  durationMs?: number;
+  exitCode?: number | null;
+  snippet?: string;
+  source?: string;
+  meta?: Record<string, unknown>;
+}
+
+export type RunNextStepSeverity = 'info' | 'warn' | 'error';
+
+/**
+ * A concrete recovery or verification action derived from a run failure. This
+ * keeps "what failed" connected to "what to do next" for both CLI and GUI hosts.
+ */
+export interface RunNextStep {
+  id: string;
+  title: string;
+  reason: string;
+  severity?: RunNextStepSeverity;
+  command?: string;
+  path?: string;
+  nodeId?: string;
+  source?: string;
+}
+
 /** Aggregate outcome of a full DAG run. */
 export interface RunResult {
   success: boolean;
@@ -82,6 +140,7 @@ export interface RunResult {
   outputs: Record<string, string>;
   failedNodeId?: string;
   error?: Record<string, unknown> | null;
+  evidence?: RunEvidence[];
   /**
    * Per-node content hashes for this run's graph (see runtime/node-hash.ts).
    * Persisted by the host alongside `outputs` so a later "continue" run can pass

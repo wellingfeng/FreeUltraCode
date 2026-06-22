@@ -218,10 +218,15 @@ async function activateWorkspacePath(path: string): Promise<void> {
 
   const workspace = await historyStore.resolveWorkspaceByPath(trimmed);
   if (!isLatestHistoryNavigation(navigationVersion)) return;
-  let sessions = visibleChatSessionSummaries(
-    await historyStore.listSessions(workspace.id),
-  );
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
+  let sessions =
+    state.sessionTree[workspace.id] ??
+    (state.activeWorkspaceId === workspace.id ? state.sessions : undefined);
+  if (!sessions) {
+    sessions = visibleChatSessionSummaries(
+      await historyStore.listSessions(workspace.id),
+    ).map((item) => sessionFromSummary(item));
+    if (!isLatestHistoryNavigation(navigationVersion)) return;
+  }
   let active = sessions[0];
   if (!active) {
     const record = await historyStore.createSession({
@@ -230,13 +235,11 @@ async function activateWorkspacePath(path: string): Promise<void> {
       messages: [],
     });
     if (!isLatestHistoryNavigation(navigationVersion)) return;
-    active = summaryFromRecord(record);
-    sessions = [summaryFromRecord(record), ...sessions];
+    active = sessionFromRecord(record);
+    sessions = [active, ...sessions];
   }
 
   const workspaces = await historyStore.listWorkspaces();
-  if (!isLatestHistoryNavigation(navigationVersion)) return;
-  const sessionTree = await loadSessionTree(workspaces);
   if (!isLatestHistoryNavigation(navigationVersion)) return;
   const activeRecord = active
     ? await historyStore.getSession(workspace.id, active.id)
@@ -285,8 +288,11 @@ async function activateWorkspacePath(path: string): Promise<void> {
       workspaces,
       activeWorkspaceId: workspace.id,
       selectedWorkspaceId: workspace.id,
-      sessions: sessions.map((item) => sessionFromSummary(item)),
-      sessionTree,
+      sessions,
+      sessionTree: {
+        ...s.sessionTree,
+        [workspace.id]: sessions,
+      },
       activeSessionId: active?.id ?? null,
       messages: activeRecord?.messages ?? [],
       workflow: composerPatch.workflow,

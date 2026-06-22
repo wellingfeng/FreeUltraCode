@@ -22,7 +22,7 @@ vi.mock('@/lib/tauri', async () => {
 
 import { useStore } from './useStore';
 
-const THREE_D_SETTINGS_KEY = 'freeultracode.threeDGeneration.v1';
+const THREE_D_SETTINGS_KEY = 'ultragamestudio.threeDGeneration.v1';
 
 type ThreeDSettingsTestOverride = Partial<Omit<ThreeDGenerationSettings, 'rigging'>> & {
   rigging?: Partial<ThreeDGenerationSettings['rigging']>;
@@ -61,7 +61,7 @@ function resetStore(): void {
     composerDrafts: {},
     composer: {
       ...useStore.getState().composer,
-      workspace: 'E:\\OpenWorkflows',
+      workspace: 'E:\\UltraGameStudio',
     },
     activeSessionId: null,
     activeWorkspaceId: null,
@@ -123,8 +123,8 @@ describe('3D generation chat flow', () => {
     );
     tauriMocks.downloadModelAsset.mockImplementation(async (url: string) => ({
       path: url.endsWith('.zip')
-        ? 'E:\\OpenWorkflows\\.freeultracode\\model-assets\\model.zip'
-        : 'E:\\OpenWorkflows\\.freeultracode\\model-assets\\model.glb',
+        ? 'E:\\UltraGameStudio\\.ultragamestudio\\model-assets\\model.zip'
+        : 'E:\\UltraGameStudio\\.ultragamestudio\\model-assets\\model.glb',
       mime: url.endsWith('.zip') ? 'application/zip' : 'model/gltf-binary',
       sizeBytes: 4,
     }));
@@ -145,20 +145,20 @@ describe('3D generation chat flow', () => {
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.meshy.ai/tasks/refined/model.glb',
       expect.objectContaining({
-        cwd: 'E:\\OpenWorkflows',
+        cwd: 'E:\\UltraGameStudio',
         fileName: '3d-model-1.glb',
       }),
     );
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.meshy.ai/tasks/refined/model.zip',
       expect.objectContaining({
-        cwd: 'E:\\OpenWorkflows',
+        cwd: 'E:\\UltraGameStudio',
         fileName: '3d-model-2.zip',
       }),
     );
     expect(assistant?.text).toContain('已下载到本地');
     expect(assistant?.text).toContain(
-      '[预览 3D 模型 1](file:///E:/OpenWorkflows/.freeultracode/model-assets/model.glb)',
+      '[预览 3D 模型 1](file:///E:/UltraGameStudio/.ultragamestudio/model-assets/model.glb)',
     );
     expect(assistant?.text).not.toContain(
       '[预览 3D 模型 1](https://assets.meshy.ai/tasks/refined/model.glb)',
@@ -197,7 +197,7 @@ describe('3D generation chat flow', () => {
         ),
       );
     tauriMocks.downloadModelAsset.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\model-assets\\character-rigged.glb',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\model-assets\\character-rigged.glb',
       mime: 'model/gltf-binary',
       sizeBytes: 4,
     });
@@ -227,13 +227,13 @@ describe('3D generation chat flow', () => {
     expect(tauriMocks.downloadModelAsset).toHaveBeenCalledWith(
       'https://assets.example.com/out/character-rigged.glb',
       expect.objectContaining({
-        cwd: 'E:\\OpenWorkflows',
+        cwd: 'E:\\UltraGameStudio',
         fileName: '3d-model-1.glb',
       }),
     );
     expect(assistant?.text).toContain('fal.ai Meshy Rigging 自动绑骨完成');
     expect(assistant?.text).toContain(
-      '[预览 3D 模型 1](file:///E:/OpenWorkflows/.freeultracode/model-assets/character-rigged.glb)',
+      '[预览 3D 模型 1](file:///E:/UltraGameStudio/.ultragamestudio/model-assets/character-rigged.glb)',
     );
     expect(assistant?.text).not.toContain('character.glb)');
   });
@@ -257,7 +257,7 @@ describe('3D generation chat flow', () => {
       ),
     );
     tauriMocks.downloadModelAsset.mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\model-assets\\young-doll.glb',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\model-assets\\young-doll.glb',
       mime: 'model/gltf-binary',
       sizeBytes: 4,
     });

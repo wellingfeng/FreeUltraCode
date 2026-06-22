@@ -213,7 +213,7 @@ describe('extractSessionFiles', () => {
       assistant('a3', 30, toolBlock('w', 'Write', { args: { file_path: 'src/new.ts' } })),
     ]);
     const changes: WorkspaceChanges = {
-      rootPath: 'E:/OpenWorkflows',
+      rootPath: 'E:/UltraGameStudio',
       generatedAtMs: 50,
       source: 'git',
       truncated: false,
@@ -242,7 +242,7 @@ describe('extractSessionFiles', () => {
 
   it('adds persisted snapshot changes as edited session files', () => {
     const changes: WorkspaceChanges = {
-      rootPath: 'E:/OpenWorkflows',
+      rootPath: 'E:/UltraGameStudio',
       generatedAtMs: 50,
       source: 'snapshot',
       truncated: false,

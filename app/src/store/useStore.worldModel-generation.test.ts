@@ -7,7 +7,7 @@ import {
 } from '@/lib/worldModel';
 import { useStore } from './useStore';
 
-const WORLD_MODEL_SETTINGS_KEY = 'freeultracode.worldModelGeneration.v1';
+const WORLD_MODEL_SETTINGS_KEY = 'ultragamestudio.worldModelGeneration.v1';
 
 function cloneGraph(graph: IRGraph): IRGraph {
   return JSON.parse(JSON.stringify(graph)) as IRGraph;

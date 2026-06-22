@@ -195,7 +195,7 @@ if ($LASTEXITCODE -ne 0) { throw "ollama pull $Model failed with exit code $LAST
 
 Write-Ok "Model ready: $Model"
 Write-Host ""
-Write-Host "Next in FreeUltraCode:"
+Write-Host "Next in UltraGameStudio:"
 Write-Host "  1. Runtime: Claude Code"
 Write-Host "  2. Channel: Free - Ollama (local)"
 Write-Host "  3. If you pulled a different model, set that model in Settings -> Free Channels -> Ollama."

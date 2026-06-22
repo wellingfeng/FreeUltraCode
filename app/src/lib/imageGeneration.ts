@@ -1,8 +1,10 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 import { generateCloudflareImage, tauriAvailable } from '@/lib/tauri';
+import { APP_VERSION } from '@/lib/updateCheck';
 
 export type BuiltInImageProviderId =
   | 'agnes-image'
@@ -139,7 +141,7 @@ export interface ImageGenerationRequest {
   signal?: AbortSignal;
 }
 
-const STORAGE_KEY = 'freeultracode.imageGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.imageGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/imageGeneration.v1.json';
 
 export const IMAGE_PROVIDERS: ImageProviderDefinition[] = [
@@ -904,10 +906,7 @@ export function normalizeImageGenerationSettings(
   const validKey = (key: unknown): key is ImageProviderId =>
     isKnownImageProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_IMAGE_GENERATION_SETTINGS.enabled,
+    enabled: true,
     showComposerModelSelect:
       typeof source.showComposerModelSelect === 'boolean'
         ? source.showComposerModelSelect
@@ -922,18 +921,23 @@ export function normalizeImageGenerationSettings(
   };
 }
 
-export function loadImageGenerationSettings(): ImageGenerationSettings {
+export function loadImageGenerationSettings(
+  options: SettingsProfileOptions = {},
+): ImageGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeImageGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_IMAGE_GENERATION_SETTINGS;
   }
 }
 
-export function saveImageGenerationSettings(settings: ImageGenerationSettings): boolean {
+export function saveImageGenerationSettings(
+  settings: ImageGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeImageGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     // Surface the failure instead of silently dropping the write — a swallowed
     // QuotaExceededError here is exactly what makes a freshly-added channel look
@@ -941,7 +945,7 @@ export function saveImageGenerationSettings(settings: ImageGenerationSettings): 
     console.error('[imageGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:image-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:image-generation-settings-changed'));
   return true;
 }
 
@@ -1038,7 +1042,6 @@ export async function generateImage(
   request: ImageGenerationRequest,
   settings = loadImageGenerationSettings(),
 ): Promise<ImageGenerationResult> {
-  if (!settings.enabled) throw new Error('IMAGE_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyImageProviderId(settings);
   if (!providerId) throw new Error('NO_READY_IMAGE_PROVIDER');
   if (!imageProviderReady(providerId, settings)) {
@@ -1807,7 +1810,7 @@ async function generateAiHorde(
     headers: {
       apikey: apiKey,
       'Content-Type': 'application/json',
-      'Client-Agent': 'OpenWorkflow:0.2.7:github.com/wellingfeng/OpenWorkflow',
+      'Client-Agent': `UltraGameStudio:${APP_VERSION}:github.com/wellingfeng/UltraGameStudio`,
     },
     body: JSON.stringify({
       prompt,

@@ -71,10 +71,10 @@ function useGatewayVersion(): number {
     const onStorage = (event: StorageEvent) => {
       if (event.key) bump();
     };
-    window.addEventListener('fuc:gateway-config-changed', bump);
+    window.addEventListener('ugs:gateway-config-changed', bump);
     window.addEventListener('storage', onStorage);
     return () => {
-      window.removeEventListener('fuc:gateway-config-changed', bump);
+      window.removeEventListener('ugs:gateway-config-changed', bump);
       window.removeEventListener('storage', onStorage);
     };
   }, []);

@@ -84,7 +84,7 @@ function withAgentTypeRole(prompt: string, agentType: string | undefined): strin
   if (!role) return prompt;
   return [
     `你在本步骤中扮演运行时角色：${role}。`,
-    '这是 FreeUltraCode 的角色约束，会影响你的职责、视角和验收重点；当前 CLI 路径不会把它映射为 Claude Code 原生 subagent。',
+    '这是 UltraGameStudio 的角色约束，会影响你的职责、视角和验收重点；当前 CLI 路径不会把它映射为 Claude Code 原生 subagent。',
     '',
     prompt,
   ].join('\n');
@@ -441,7 +441,7 @@ async function reduceFanOutResults(
  * `pipeline(items, …)` semantics — per-file/per-unit migration & audit), while
  * any other shape keeps the original single chained pass byte-for-byte.
  *
- * NOTE (scope): only the headless `/ultracode` path (raw IRGraph JSON, no
+ * NOTE (scope): only the headless `/studio` path (raw IRGraph JSON, no
  * emit/parse) reaches this. The emitter/parser deliberately are NOT taught to
  * round-trip a JSON-array `items` literal (the parser already treats a bare
  * array argument as legacy *stages*), so this stays a runtime interpretation.

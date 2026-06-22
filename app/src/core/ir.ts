@@ -1,5 +1,5 @@
 /**
- * Authoritative intermediate representation (IR) for FreeUltraCode.
+ * Authoritative intermediate representation (IR) for UltraGameStudio.
  *
  * The IRGraph is the single source of truth for the entire system. The canvas
  * (React Flow), the script emitter/parser, and AI-driven mutations all operate

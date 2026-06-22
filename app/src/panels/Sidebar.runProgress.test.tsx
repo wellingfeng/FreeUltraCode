@@ -184,8 +184,8 @@ import Sidebar from './Sidebar';
 
 const WORKSPACE: MockWorkspace = {
   id: 'ws_test',
-  path: 'E:\\FreeUltraCode',
-  name: 'FreeUltraCode',
+  path: 'E:\\UltraGameStudio',
+  name: 'UltraGameStudio',
   updatedAt: 1_700_000_000_000,
   sessionCount: 1,
   lastActiveSessionId: 's_workflow',
@@ -282,7 +282,7 @@ function statusDot(
 }
 
 function statusIndicator(dot: HTMLElement | null): HTMLElement | null {
-  return dot?.querySelector<HTMLElement>('.fuc-status-indicator') ?? null;
+  return dot?.querySelector<HTMLElement>('.ugs-status-indicator') ?? null;
 }
 
 function newSessionButton(container: HTMLElement): HTMLButtonElement {
@@ -1167,8 +1167,8 @@ describe('Sidebar running progress dot', () => {
       expect(zeroDot).not.toBeNull();
       const zeroSpinner = statusIndicator(zeroDot);
       expect(zeroSpinner).not.toBeNull();
-      expect(zeroSpinner?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(zeroSpinner?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(zeroSpinner?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(zeroSpinner?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
 
@@ -1186,8 +1186,8 @@ describe('Sidebar running progress dot', () => {
       expect(completeDot?.getAttribute('title')).toBe('正在运行，进度 100%');
       const completeSpinner = statusIndicator(completeDot);
       expect(completeSpinner).not.toBeNull();
-      expect(completeSpinner?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(completeSpinner?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(completeSpinner?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(completeSpinner?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
       expect(statusDot(view.container, 'success')).toBeNull();
@@ -1206,8 +1206,8 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('未运行');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-ai-edit)',
       );
     } finally {
@@ -1233,7 +1233,7 @@ describe('Sidebar running progress dot', () => {
         '[data-status="none"]',
       );
       expect(emptySlot).not.toBeNull();
-      expect(emptySlot?.classList.contains('fuc-status-slot')).toBe(true);
+      expect(emptySlot?.classList.contains('ugs-status-slot')).toBe(true);
       expect(statusIndicator(emptySlot as HTMLElement)).toBeNull();
     } finally {
       await view.cleanup();
@@ -1257,8 +1257,8 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('正在运行，进度未知');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-success)',
       );
       expect(statusDot(view.container, 'thinking')).toBeNull();
@@ -1288,8 +1288,8 @@ describe('Sidebar running progress dot', () => {
         expect(dot?.getAttribute('title')).toBe(label);
         const indicator = statusIndicator(dot);
         expect(indicator).not.toBeNull();
-        expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-        expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+        expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+        expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
           color,
         );
       } finally {
@@ -1319,8 +1319,8 @@ describe('Sidebar running progress dot', () => {
         expect(dot?.getAttribute('title')).toBe(label);
         const indicator = statusIndicator(dot);
         expect(indicator).not.toBeNull();
-        expect(indicator?.classList.contains('fuc-status-spinner')).toBe(false);
-        expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+        expect(indicator?.classList.contains('ugs-status-spinner')).toBe(false);
+        expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
           color,
         );
       } finally {
@@ -1400,8 +1400,8 @@ describe('Sidebar running progress dot', () => {
       expect(dot?.getAttribute('title')).toBe('AI 思考中');
       const indicator = statusIndicator(dot);
       expect(indicator).not.toBeNull();
-      expect(indicator?.classList.contains('fuc-status-spinner')).toBe(true);
-      expect(indicator?.style.getPropertyValue('--fuc-status-color')).toBe(
+      expect(indicator?.classList.contains('ugs-status-spinner')).toBe(true);
+      expect(indicator?.style.getPropertyValue('--ugs-status-color')).toBe(
         'var(--status-ai-edit)',
       );
     } finally {

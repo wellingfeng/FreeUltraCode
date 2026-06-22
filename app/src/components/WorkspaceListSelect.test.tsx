@@ -2,6 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WorkspaceListSelect from '@/components/WorkspaceListSelect';
+import type { RemoteWorkspaceConnectionState } from '@/lib/remoteWorkspaceStatus';
 import type { WorkspaceSummary } from '@/store/history/types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
@@ -24,6 +25,7 @@ async function renderList(props: {
   activeWorkspaceId: string | null;
   onSelect?: (path: string) => void;
   onBrowseLocal?: () => void;
+  remoteConnectionStates?: Record<string, RemoteWorkspaceConnectionState>;
 }): Promise<{ container: HTMLDivElement; cleanup: () => Promise<void> }> {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -37,6 +39,7 @@ async function renderList(props: {
         locale="zh-CN"
         onSelect={props.onSelect ?? vi.fn()}
         onBrowseLocal={props.onBrowseLocal ?? vi.fn()}
+        remoteConnectionStates={props.remoteConnectionStates}
       />,
     );
   });
@@ -149,6 +152,37 @@ describe('WorkspaceListSelect', () => {
     try {
       await openMenu(view.container);
       expect(view.container.textContent).toContain('暂无工作区');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows remote connection status on the active project and list row', async () => {
+    const view = await renderList({
+      workspaces: [
+        makeWorkspace({
+          id: 'rw_workspace',
+          name: '云端项目',
+          path: 'remote://rw_dead',
+        }),
+      ],
+      activeWorkspaceId: 'rw_workspace',
+      remoteConnectionStates: {
+        rw_workspace: {
+          status: 'failed',
+          detail: 'Runner 服务不可达。',
+          checkedAt: 1,
+        },
+      },
+    });
+
+    try {
+      expect(view.container.textContent).toContain('连接失败');
+      await openMenu(view.container);
+      const options = Array.from(
+        view.container.querySelectorAll('[role="option"]'),
+      );
+      expect(options[0]?.textContent).toContain('连接失败');
     } finally {
       await view.cleanup();
     }

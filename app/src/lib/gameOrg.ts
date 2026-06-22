@@ -1,30 +1,44 @@
-import defaultGameOrgDefinition from '@/config/gameOrgDefaults.json';
+import defaultGameOrgDefinition from "@/config/gameOrgDefaults.json";
 import {
   gameExpertSlashCommand,
   getGameExpertCatalog,
   normalizeGameExpertSettings,
   type GameExpertDefinition,
   type GameExpertSettings,
-} from './gameExperts';
+} from "./gameExperts";
 import {
   localizedGameExpertName,
   localizedGameGroupLabel,
-} from './gameExpertI18n';
+} from "./gameExpertI18n";
 import {
   localizedGameExpertRootCommand,
   localizeGameOrgNodeText,
   localizeGameOrgSkillText,
-} from './gameOrgI18n';
-import type { Locale } from './i18n';
+} from "./gameOrgI18n";
+import {
+  defaultCapabilityIdsForRole,
+  formatAssetRequestProtocolBlock,
+  formatCapabilitySummary,
+  gameAssetCapabilityById,
+  normalizeGameAssetCapabilityIds,
+  routeAssetRequest,
+  type AssetRequestRoute,
+  type GameAssetCapability,
+  type GameAssetCapabilityId,
+} from "./gameAssetCapabilities";
+import type { Locale } from "./i18n";
 
-export interface GameOrgSkillDefinition {
+export interface GameOrgFunctionalSkill {
   id: string;
   label: string;
   summary: string;
   prompt: string;
   protocol?: GameOrgSkillProtocol;
   collaboratorExpertIds?: string[];
+  allowedCapabilities?: GameAssetCapabilityId[];
 }
+
+export type GameOrgSkillDefinition = GameOrgFunctionalSkill;
 
 export interface GameOrgSkillProtocol {
   triggerConditions: string;
@@ -51,43 +65,44 @@ export interface GameOrgNodeDefinition {
   role?: string;
   profile?: GameOrgRoleProfile;
   expertIds?: string[];
+  allowedCapabilities?: GameAssetCapabilityId[];
   skills?: GameOrgSkillDefinition[];
   children?: GameOrgNodeDefinition[];
 }
 
 export const GAME_ORG_NODE_ICONS = [
-  'producer',
-  'design',
-  'gameplay',
-  'systems',
-  'economy',
-  'level',
-  'narrative',
-  'writing',
-  'world',
-  'tech',
-  'client',
-  'engine',
-  'backend',
-  'technical-art',
-  'tools',
-  'data',
-  'art',
-  'concept',
-  'character',
-  'environment',
-  'ui',
-  'vfx',
-  'audio',
-  'sound',
-  'qa',
-  'performance',
-  'accessibility',
-  'release',
-  'community',
-  'localization',
-  'analytics',
-  'team',
+  "producer",
+  "design",
+  "gameplay",
+  "systems",
+  "economy",
+  "level",
+  "narrative",
+  "writing",
+  "world",
+  "tech",
+  "client",
+  "engine",
+  "backend",
+  "technical-art",
+  "tools",
+  "data",
+  "art",
+  "concept",
+  "character",
+  "environment",
+  "ui",
+  "vfx",
+  "audio",
+  "sound",
+  "qa",
+  "performance",
+  "accessibility",
+  "release",
+  "community",
+  "localization",
+  "analytics",
+  "team",
 ] as const;
 
 export type GameOrgNodeIcon = (typeof GAME_ORG_NODE_ICONS)[number];
@@ -96,6 +111,9 @@ export interface ResolvedGameOrgSkill extends GameOrgSkillDefinition {
   protocol: GameOrgSkillProtocol;
   commandText: string;
   collaboratorLabels: string[];
+  allowedCapabilities: GameAssetCapabilityId[];
+  capabilityLabels: string[];
+  capabilities: GameAssetCapability[];
 }
 
 export interface ResolvedGameOrgNode {
@@ -110,6 +128,9 @@ export interface ResolvedGameOrgNode {
   experts: GameExpertDefinition[];
   groupLabels: string[];
   commandText: string | null;
+  allowedCapabilities: GameAssetCapabilityId[];
+  capabilityLabels: string[];
+  capabilities: GameAssetCapability[];
   skills: ResolvedGameOrgSkill[];
   children: ResolvedGameOrgNode[];
 }
@@ -121,6 +142,8 @@ export interface GameOrgSkillBinding {
   skillLabel: string;
   collaboratorExpertIds: string[];
   collaboratorLabels: string[];
+  allowedCapabilities: GameAssetCapabilityId[];
+  capabilityLabels: string[];
 }
 
 export interface GameOrgSkillBindingOverview {
@@ -137,6 +160,8 @@ export interface GameOrgSkillRecommendation {
   skillSummary: string;
   commandText: string;
   collaboratorLabels: string[];
+  allowedCapabilities: GameAssetCapabilityId[];
+  capabilityLabels: string[];
   score: number;
   matchedTerms: string[];
 }
@@ -155,6 +180,8 @@ export interface GameOrgTaskPlanStep {
   skillSummary: string;
   commandText: string;
   collaboratorLabels: string[];
+  allowedCapabilities: GameAssetCapabilityId[];
+  capabilityLabels: string[];
   matchedTerms: string[];
   reason: string;
   deliverable: string;
@@ -176,11 +203,11 @@ export interface PlanGameOrgTaskOptions {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return value != null && typeof value === 'object' && !Array.isArray(value);
+  return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function trimString(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -202,7 +229,31 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 function stringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
-  return uniqueStrings(value.filter((item): item is string => typeof item === 'string'));
+  return uniqueStrings(
+    value.filter((item): item is string => typeof item === "string"),
+  );
+}
+
+function mergeCapabilityIds(
+  first: readonly GameAssetCapabilityId[],
+  second: readonly GameAssetCapabilityId[],
+): GameAssetCapabilityId[] {
+  const seen = new Set<GameAssetCapabilityId>();
+  const out: GameAssetCapabilityId[] = [];
+  for (const id of [...first, ...second]) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+function capabilityLabels(
+  capabilityIds: readonly GameAssetCapabilityId[],
+  locale: Locale,
+): string[] {
+  const summary = formatCapabilitySummary(capabilityIds, locale);
+  return summary ? summary.split(locale === "zh-CN" ? "、" : ", ") : [];
 }
 
 function normalizeGameOrgSkillProtocol(
@@ -262,11 +313,14 @@ function mergeGameOrgSkillProtocol(
         : fallback.executionSteps,
     toolsAndResources: protocol.toolsAndResources || fallback.toolsAndResources,
     outputs: protocol.outputs || fallback.outputs,
-    acceptanceCriteria: protocol.acceptanceCriteria || fallback.acceptanceCriteria,
+    acceptanceCriteria:
+      protocol.acceptanceCriteria || fallback.acceptanceCriteria,
   };
 }
 
-function normalizeGameOrgRoleProfile(value: unknown): GameOrgRoleProfile | undefined {
+function normalizeGameOrgRoleProfile(
+  value: unknown,
+): GameOrgRoleProfile | undefined {
   if (!isRecord(value)) return undefined;
 
   const position = trimString(value.position);
@@ -317,11 +371,16 @@ function mergeGameOrgRoleProfile(
       profile.responsibilities.length > 0
         ? profile.responsibilities
         : fallback.responsibilities,
-    scenarios: profile.scenarios.length > 0 ? profile.scenarios : fallback.scenarios,
+    scenarios:
+      profile.scenarios.length > 0 ? profile.scenarios : fallback.scenarios,
     deliverables:
-      profile.deliverables.length > 0 ? profile.deliverables : fallback.deliverables,
+      profile.deliverables.length > 0
+        ? profile.deliverables
+        : fallback.deliverables,
     collaborators:
-      profile.collaborators.length > 0 ? profile.collaborators : fallback.collaborators,
+      profile.collaborators.length > 0
+        ? profile.collaborators
+        : fallback.collaborators,
   };
 }
 
@@ -336,121 +395,128 @@ export function createDefaultGameOrgRoleProfile(
 ): GameOrgRoleProfile {
   const collaborators = uniqueStrings(role.collaboratorLabels ?? []);
 
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return {
       position: role.summary || `${role.label} in the project organization.`,
       responsibilities: [
         role.role ||
-          `Own ${role.label} responsibilities and keep related work scoped, reviewed, and shippable.`,
+          `Provide the ${role.label} lens so the main model can keep related work scoped, reviewed, and shippable.`,
       ],
       scenarios: [
-        `Use this role when a task needs ${role.label} judgment, breakdown, review, or acceptance.`,
+        `Use this role lens when a task needs ${role.label} judgment, review, constraints, or acceptance criteria.`,
       ],
       deliverables: [
-        'Role-scoped plan, task breakdown, risk list, handoff notes, and acceptance criteria.',
+        "Role-scoped recommendations, risk list, handoff notes, and acceptance criteria.",
       ],
       collaborators:
         collaborators.length > 0
           ? collaborators
-          : ['Upstream/downstream roles and bound Skills.'],
+          : ["Related role lenses and bound Skills."],
     };
   }
 
   return {
     position: role.summary || `${role.label} 在项目组织中的定位。`,
     responsibilities: [
-      role.role || `负责 ${role.label} 范围内的判断、拆解、推进和验收。`,
+      role.role || `提供 ${role.label} 范围内的判断、建议、风险和验收约束。`,
     ],
-    scenarios: [`当任务需要 ${role.label} 判断、拆解、评审或验收时使用。`],
-    deliverables: ['职责范围内的方案、任务拆解、风险列表、交接说明和验收标准。'],
+    scenarios: [`当任务需要 ${role.label} 视角判断、评审或验收时使用。`],
+    deliverables: [
+      "职责范围内的建议、风险列表、交接说明和验收标准。",
+    ],
     collaborators:
-      collaborators.length > 0 ? collaborators : ['上下游岗位和绑定 Skill。'],
+      collaborators.length > 0 ? collaborators : ["相关岗位视角和绑定 Skill。"],
   };
 }
 
 export function createDefaultGameOrgSkillProtocol(
-  skill: Pick<GameOrgSkillDefinition, 'label' | 'summary' | 'prompt'>,
+  skill: Pick<GameOrgSkillDefinition, "label" | "summary" | "prompt">,
   locale: Locale,
 ): GameOrgSkillProtocol {
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return {
       triggerConditions:
         skill.summary || `A request needs the ${skill.label} capability.`,
       inputs:
-        'User request, current project context, relevant code/assets, and role constraints.',
+        "User request, current project context, relevant code/assets, and role-lens constraints.",
       executionSteps: [
-        'Clarify the objective, boundaries, dependencies, and missing context.',
-        'Break the work down within this role and identify collaborators.',
-        'Return an executable plan, risks, deliverables, and acceptance checks.',
+        "Clarify the objective, boundaries, dependencies, and missing context.",
+        "Provide role-scoped suggestions and identify related lenses the main model may consider.",
+        "Return actionable recommendations, risks, deliverables, and acceptance checks.",
       ],
       toolsAndResources:
-        'Current workspace, project files, configured tools, and linked collaborator skills.',
+        "Current workspace, project files, configured tools, and linked reference lenses.",
       outputs:
         skill.summary ||
-        `A deliverable, task breakdown, or implementation plan for ${skill.label}.`,
+        `A deliverable, recommendation set, or implementation checklist for ${skill.label}.`,
       acceptanceCriteria:
-        'The result is actionable, scoped to the role, includes risks, and has clear verification criteria.',
+        "The result is actionable, scoped to the role lens, includes risks, and has clear verification criteria.",
     };
   }
 
   return {
-    triggerConditions: skill.summary || `需要执行「${skill.label}」能力时。`,
-    inputs: '用户需求、当前项目上下文、相关代码/素材、岗位约束和协作对象。',
+    triggerConditions: skill.summary || `需要参考「${skill.label}」视角时。`,
+    inputs: "用户需求、当前项目上下文、相关代码/素材、岗位视角约束和关联视角。",
     executionSteps: [
-      '确认目标、边界、依赖和缺失信息。',
-      '按岗位职责拆解执行步骤，并标出需要协作的岗位。',
-      '输出可执行方案、风险、产出物和验收口径。',
+      "确认目标、边界、依赖和缺失信息。",
+      "按岗位视角给出建议步骤，并标出主模型可参考的关联视角。",
+      "输出可执行建议、风险、产出物和验收口径。",
     ],
-    toolsAndResources: '当前工作区、项目文件、已配置工具和绑定的协作 Skill。',
-    outputs: skill.summary || `「${skill.label}」对应的方案、任务拆解或交付产物。`,
+    toolsAndResources: "当前工作区、项目文件、已配置工具和绑定的参考 Skill。",
+    outputs:
+      skill.summary || `「${skill.label}」对应的方案、建议清单或交付产物。`,
     acceptanceCriteria:
-      '结果可执行，职责边界清楚，风险明确，并给出可验证的验收标准。',
+      "结果可执行，视角边界清楚，风险明确，并给出可验证的验收标准。",
   };
 }
 
 export function formatGameOrgSkillPrompt(
   prompt: string,
   protocol: GameOrgSkillProtocol,
+  capabilityIds: readonly GameAssetCapabilityId[],
   locale: Locale,
 ): string {
   const steps = protocol.executionSteps
     .map((step, index) => `${index + 1}. ${step}`)
-    .join('\n');
+    .join("\n");
+  const assetProtocol = formatAssetRequestProtocolBlock(capabilityIds, locale);
 
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return [
       prompt.trim(),
-      '',
-      'Skill standard protocol:',
+      "",
+      "Skill standard protocol:",
       `- Trigger conditions: ${protocol.triggerConditions}`,
       `- Inputs: ${protocol.inputs}`,
-      `- Execution steps:\n${steps}`,
+      `- Suggested steps:\n${steps}`,
       `- Tools/resources: ${protocol.toolsAndResources}`,
       `- Outputs: ${protocol.outputs}`,
       `- Acceptance criteria: ${protocol.acceptanceCriteria}`,
+      assetProtocol ? `\n${assetProtocol}` : "",
     ]
       .filter(Boolean)
-      .join('\n');
+      .join("\n");
   }
 
   return [
     prompt.trim(),
-    '',
-    'Skill 标准六项：',
+    "",
+    "Skill 标准六项：",
     `- 触发条件：${protocol.triggerConditions}`,
     `- 输入：${protocol.inputs}`,
-    `- 执行步骤：\n${steps}`,
+    `- 建议步骤：\n${steps}`,
     `- 工具/资源：${protocol.toolsAndResources}`,
     `- 输出：${protocol.outputs}`,
     `- 验收标准：${protocol.acceptanceCriteria}`,
+    assetProtocol ? `\n${assetProtocol}` : "",
   ]
     .filter(Boolean)
-    .join('\n');
+    .join("\n");
 }
 
 function isGameOrgNodeIcon(value: unknown): value is GameOrgNodeIcon {
   return (
-    typeof value === 'string' &&
+    typeof value === "string" &&
     (GAME_ORG_NODE_ICONS as readonly string[]).includes(value)
   );
 }
@@ -465,10 +531,13 @@ export function normalizeGameOrgSkillDefinition(
   const label = trimString(value.label) || id;
   const prompt =
     trimString(value.prompt) ||
-    `请以${label}相关职责处理以下需求，并给出可执行建议、风险和验收标准。`;
+    `请参考${label}相关视角处理以下需求，并给出可执行建议、风险和验收标准。`;
   const summary = trimString(value.summary) || prompt;
   const collaboratorExpertIds = stringList(value.collaboratorExpertIds);
   const protocol = normalizeGameOrgSkillProtocol(value.protocol);
+  const allowedCapabilities = normalizeGameAssetCapabilityIds(
+    value.allowedCapabilities ?? value.capabilities,
+  );
 
   return {
     id,
@@ -477,25 +546,34 @@ export function normalizeGameOrgSkillDefinition(
     prompt,
     ...(protocol ? { protocol } : {}),
     ...(collaboratorExpertIds.length > 0 ? { collaboratorExpertIds } : {}),
+    ...(allowedCapabilities.length > 0 ? { allowedCapabilities } : {}),
   };
 }
 
 export function normalizeGameOrgNodeDefinition(
   value: unknown,
-  fallbackId = 'game-team',
+  fallbackId = "game-team",
 ): GameOrgNodeDefinition | null {
   if (!isRecord(value)) return null;
 
   const id = trimString(value.id) || fallbackId;
   const label = trimString(value.label) || id;
   const expertIds = stringList(value.expertIds);
+  const allowedCapabilities = normalizeGameAssetCapabilityIds(
+    value.allowedCapabilities ?? value.capabilities,
+  );
   const profile = normalizeGameOrgRoleProfile(value.profile);
   const rawChildren = Array.isArray(value.children) ? value.children : [];
   const children = rawChildren
-    .map((child, index) => normalizeGameOrgNodeDefinition(child, `${id}-${index + 1}`))
+    .map((child, index) =>
+      normalizeGameOrgNodeDefinition(child, `${id}-${index + 1}`),
+    )
     .filter((child): child is GameOrgNodeDefinition => Boolean(child));
 
-  const hasSkillsProperty = Object.prototype.hasOwnProperty.call(value, 'skills');
+  const hasSkillsProperty = Object.prototype.hasOwnProperty.call(
+    value,
+    "skills",
+  );
   const rawSkills = Array.isArray(value.skills) ? value.skills : [];
   const skills = hasSkillsProperty
     ? rawSkills
@@ -509,10 +587,13 @@ export function normalizeGameOrgNodeDefinition(
     id,
     label,
     ...(isGameOrgNodeIcon(value.icon) ? { icon: value.icon } : {}),
-    ...(optionalString(value.summary) ? { summary: optionalString(value.summary) } : {}),
+    ...(optionalString(value.summary)
+      ? { summary: optionalString(value.summary) }
+      : {}),
     ...(optionalString(value.role) ? { role: optionalString(value.role) } : {}),
     ...(profile ? { profile } : {}),
     ...(expertIds.length > 0 ? { expertIds } : {}),
+    ...(allowedCapabilities.length > 0 ? { allowedCapabilities } : {}),
     ...(skills !== undefined ? { skills } : {}),
     ...(children.length > 0 ? { children } : {}),
   };
@@ -520,11 +601,11 @@ export function normalizeGameOrgNodeDefinition(
 
 function createDefaultGameOrgDefinition(): GameOrgNodeDefinition {
   return {
-    id: 'game-team',
-    label: '游戏团队',
-    icon: 'team',
-    summary: '当前项目的游戏专家团队。',
-    role: '按项目需求提供游戏开发协作。',
+    id: "game-team",
+    label: "游戏专家视角库",
+    icon: "team",
+    summary: "当前项目的游戏开发专家视角库。",
+    role: "按项目需求提供专家约束、风险提醒和验收标准。",
     skills: [],
     children: [],
   };
@@ -545,6 +626,9 @@ export function cloneGameOrgDefinition(
         }
       : undefined,
     expertIds: definition.expertIds ? [...definition.expertIds] : undefined,
+    allowedCapabilities: definition.allowedCapabilities
+      ? [...definition.allowedCapabilities]
+      : undefined,
     skills: definition.skills?.map((skill) => ({
       ...skill,
       protocol: skill.protocol
@@ -556,19 +640,22 @@ export function cloneGameOrgDefinition(
       collaboratorExpertIds: skill.collaboratorExpertIds
         ? [...skill.collaboratorExpertIds]
         : undefined,
+      allowedCapabilities: skill.allowedCapabilities
+        ? [...skill.allowedCapabilities]
+        : undefined,
     })),
     children: definition.children?.map(cloneGameOrgDefinition),
   };
 }
 
 export const DEFAULT_GAME_ORG_DEFINITION: GameOrgNodeDefinition =
-  normalizeGameOrgNodeDefinition(defaultGameOrgDefinition, 'producer') ??
+  normalizeGameOrgNodeDefinition(defaultGameOrgDefinition, "producer") ??
   createDefaultGameOrgDefinition();
 
-const GAME_ORG_DEFINITION_STORAGE_KEY = 'freeultracode.gameOrgDefinition.v1';
+const GAME_ORG_DEFINITION_STORAGE_KEY = "ultragamestudio.gameOrgDefinition.v1";
 
 function hasStorage(): boolean {
-  return typeof window !== 'undefined' && !!window.localStorage;
+  return typeof window !== "undefined" && !!window.localStorage;
 }
 
 export function loadGameOrgDefinition(): GameOrgNodeDefinition {
@@ -577,8 +664,10 @@ export function loadGameOrgDefinition(): GameOrgNodeDefinition {
     const raw = window.localStorage.getItem(GAME_ORG_DEFINITION_STORAGE_KEY);
     if (!raw) return cloneGameOrgDefinition(DEFAULT_GAME_ORG_DEFINITION);
     return (
-      normalizeGameOrgNodeDefinition(JSON.parse(raw), DEFAULT_GAME_ORG_DEFINITION.id) ??
-      cloneGameOrgDefinition(DEFAULT_GAME_ORG_DEFINITION)
+      normalizeGameOrgNodeDefinition(
+        JSON.parse(raw),
+        DEFAULT_GAME_ORG_DEFINITION.id,
+      ) ?? cloneGameOrgDefinition(DEFAULT_GAME_ORG_DEFINITION)
     );
   } catch {
     return cloneGameOrgDefinition(DEFAULT_GAME_ORG_DEFINITION);
@@ -589,8 +678,10 @@ export function saveGameOrgDefinition(definition: GameOrgNodeDefinition): void {
   if (!hasStorage()) return;
   try {
     const normalized =
-      normalizeGameOrgNodeDefinition(definition, DEFAULT_GAME_ORG_DEFINITION.id) ??
-      DEFAULT_GAME_ORG_DEFINITION;
+      normalizeGameOrgNodeDefinition(
+        definition,
+        DEFAULT_GAME_ORG_DEFINITION.id,
+      ) ?? DEFAULT_GAME_ORG_DEFINITION;
     window.localStorage.setItem(
       GAME_ORG_DEFINITION_STORAGE_KEY,
       JSON.stringify(normalized),
@@ -620,21 +711,24 @@ function expertLabel(
   return expert ? localizedGameExpertName(expert, locale) : fallback;
 }
 
-function fallbackSkill(node: ResolvedGameOrgNode, locale: Locale): GameOrgSkillDefinition {
-  if (locale !== 'zh-CN') {
+function fallbackSkill(
+  node: ResolvedGameOrgNode,
+  locale: Locale,
+): GameOrgSkillDefinition {
+  if (locale !== "zh-CN") {
     return {
       id: `${node.id}:consult`,
-      label: `Consult ${node.label}`,
+      label: `Use ${node.label} Lens`,
       summary: node.summary,
-      prompt: `Act as ${node.label} for the following request, and provide actionable recommendations, risks, and acceptance criteria within that role's scope.`,
+      prompt: `Use the ${node.label} lens for the following request, and provide actionable recommendations, risks, and acceptance criteria within that role's scope. Do not imply a separate agent is running.`,
       collaboratorExpertIds: node.expertIds,
     };
   }
   return {
     id: `${node.id}:consult`,
-    label: `调用${node.label}`,
+    label: `参考${node.label}视角`,
     summary: node.summary,
-    prompt: `请以${node.label}身份处理以下需求，并给出职责内的可执行建议、风险和验收标准。`,
+    prompt: `请参考${node.label}视角处理以下需求，并给出职责内的可执行建议、风险和验收标准。不要暗示已启动独立 agent。`,
     collaboratorExpertIds: node.expertIds,
   };
 }
@@ -643,17 +737,23 @@ function buildCommandText(
   expert: GameExpertDefinition | undefined,
   prompt: string,
 ): string {
-  return `${expert ? gameExpertSlashCommand(expert) : '/游戏专家'} ${prompt}`.trim();
+  return `${expert ? gameExpertSlashCommand(expert) : "/游戏专家"} ${prompt}`.trim();
 }
 
 function resolveSkill(
   skill: GameOrgSkillDefinition,
   nodeId: string,
+  roleCapabilityIds: readonly GameAssetCapabilityId[],
   primaryExpert: GameExpertDefinition | undefined,
   expertById: Map<string, GameExpertDefinition>,
   locale: Locale,
 ): ResolvedGameOrgSkill {
   const localized = localizeGameOrgSkillText(nodeId, skill.id, locale, skill);
+  const allowedCapabilities = mergeCapabilityIds(
+    roleCapabilityIds,
+    skill.allowedCapabilities ?? [],
+  );
+  const capabilities = allowedCapabilities.map(gameAssetCapabilityById);
   const protocol = mergeGameOrgSkillProtocol(
     skill.protocol,
     createDefaultGameOrgSkillProtocol(
@@ -675,9 +775,17 @@ function resolveSkill(
     ...skill,
     ...localized,
     protocol,
+    allowedCapabilities,
+    capabilityLabels: capabilityLabels(allowedCapabilities, locale),
+    capabilities,
     commandText: buildCommandText(
       primaryExpert,
-      formatGameOrgSkillPrompt(localized.prompt ?? skill.prompt, protocol, locale),
+      formatGameOrgSkillPrompt(
+        localized.prompt ?? skill.prompt,
+        protocol,
+        allowedCapabilities,
+        locale,
+      ),
     ),
     collaboratorLabels,
   };
@@ -717,15 +825,23 @@ function resolveNode(
   const summary =
     localizedDefinition.summary ??
     primaryExpert?.summary ??
-    (locale === 'zh-CN'
+    (locale === "zh-CN"
       ? `${label} 的项目职责。`
       : `${label} project responsibilities.`);
   const role =
     localizedDefinition.role ??
-    (locale === 'zh-CN' ? primaryExpert?.role : undefined) ??
+    (locale === "zh-CN" ? primaryExpert?.role : undefined) ??
     summary;
   const groupLabels = uniqueStrings(
     experts.map((expert) => localizedGameGroupLabel(expert.group, locale)),
+  );
+  const allowedCapabilities = defaultCapabilityIdsForRole(
+    definition.id,
+    expertIds,
+  );
+  const mergedAllowedCapabilities = mergeCapabilityIds(
+    allowedCapabilities,
+    definition.allowedCapabilities ?? [],
   );
   const collaboratorLabels = uniqueStrings([
     ...experts.map((expert) => localizedGameExpertName(expert, locale)),
@@ -747,7 +863,7 @@ function resolveNode(
   const node: ResolvedGameOrgNode = {
     id: definition.id,
     label,
-    icon: definition.icon ?? (children.length > 0 ? 'team' : 'gameplay'),
+    icon: definition.icon ?? (children.length > 0 ? "team" : "gameplay"),
     summary,
     role,
     profile,
@@ -758,14 +874,26 @@ function resolveNode(
     commandText: primaryExpert
       ? `${gameExpertSlashCommand(primaryExpert)} `
       : `${localizedGameExpertRootCommand(locale)} `,
+    allowedCapabilities: mergedAllowedCapabilities,
+    capabilityLabels: capabilityLabels(mergedAllowedCapabilities, locale),
+    capabilities: mergedAllowedCapabilities.map(gameAssetCapabilityById),
     skills: [],
     children,
   };
 
   const skills =
-    definition.skills !== undefined ? definition.skills : [fallbackSkill(node, locale)];
+    definition.skills !== undefined
+      ? definition.skills
+      : [fallbackSkill(node, locale)];
   node.skills = skills.map((skill) =>
-    resolveSkill(skill, definition.id, primaryExpert, expertById, locale),
+    resolveSkill(
+      skill,
+      definition.id,
+      mergedAllowedCapabilities,
+      primaryExpert,
+      expertById,
+      locale,
+    ),
   );
   return node;
 }
@@ -779,12 +907,16 @@ export function buildGameOrgTree(
   const catalog = getGameExpertCatalog(normalized);
   const expertById = new Map(catalog.map((expert) => [expert.id, expert]));
   const rootDefinition =
-    normalizeGameOrgNodeDefinition(definition, DEFAULT_GAME_ORG_DEFINITION.id) ??
-    DEFAULT_GAME_ORG_DEFINITION;
+    normalizeGameOrgNodeDefinition(
+      definition,
+      DEFAULT_GAME_ORG_DEFINITION.id,
+    ) ?? DEFAULT_GAME_ORG_DEFINITION;
   return resolveNode(rootDefinition, expertById, locale, []);
 }
 
-export function flattenGameOrgNodes(root: ResolvedGameOrgNode): ResolvedGameOrgNode[] {
+export function flattenGameOrgNodes(
+  root: ResolvedGameOrgNode,
+): ResolvedGameOrgNode[] {
   return [root, ...root.children.flatMap(flattenGameOrgNodes)];
 }
 
@@ -811,6 +943,8 @@ function gameOrgSkillBinding(
     skillLabel: skill.label,
     collaboratorExpertIds: [...(skill.collaboratorExpertIds ?? [])],
     collaboratorLabels: [...skill.collaboratorLabels],
+    allowedCapabilities: [...skill.allowedCapabilities],
+    capabilityLabels: [...skill.capabilityLabels],
   };
 }
 
@@ -840,8 +974,22 @@ export function collectGameOrgSkillBindings(
   return { own, incoming };
 }
 
+export function routeGameOrgAssetRequest(
+  root: ResolvedGameOrgNode,
+  nodeId: string,
+  text: string,
+): AssetRequestRoute | null {
+  const node = findGameOrgNode(root, nodeId);
+  if (!node) return null;
+  return routeAssetRequest({
+    text,
+    roleLabel: node.label,
+    capabilityIds: node.allowedCapabilities,
+  });
+}
+
 function normalizedSearchText(values: readonly string[]): string {
-  return values.join(' ').toLocaleLowerCase();
+  return values.join(" ").toLocaleLowerCase();
 }
 
 function uniqueTerms(values: readonly string[]): string[] {
@@ -861,28 +1009,69 @@ const GAME_ORG_QUERY_EXPANSIONS: Array<{
   terms: readonly string[];
 }> = [
   {
-    triggers: ['攻击', '战斗', '打击', '连招', '伤害', 'combat', 'attack'],
-    terms: ['玩法', '机制', '状态机', '输入', '反馈', '手感', '客户端', '动画'],
+    triggers: ["攻击", "战斗", "打击", "连招", "伤害", "combat", "attack"],
+    terms: ["玩法", "机制", "状态机", "输入", "反馈", "手感", "客户端", "动画"],
   },
   {
-    triggers: ['性能', '帧率', '卡顿', '内存', '加载', 'fps', 'performance'],
-    terms: ['性能预算', '性能排查', '剖析', '优化', 'cpu', 'gpu', '内存', '加载'],
+    triggers: ["性能", "帧率", "卡顿", "内存", "加载", "fps", "performance"],
+    terms: [
+      "性能预算",
+      "性能排查",
+      "剖析",
+      "优化",
+      "cpu",
+      "gpu",
+      "内存",
+      "加载",
+    ],
   },
   {
-    triggers: ['美术', '角色', '场景', 'shader', '特效', '材质', '2d', '3d'],
-    terms: ['美术', '角色', '场景', '特效', 'shader', '规格', '可读性'],
+    triggers: ["美术", "原画", "shader", "特效", "材质", "贴图"],
+    terms: ["美术", "场景", "特效", "shader", "规格", "可读性"],
   },
   {
-    triggers: ['测试', 'bug', '验收', '回归', 'qa'],
-    terms: ['qa', '测试', '验收', '回归', '复现', '质量'],
+    triggers: ["生成", "制作", "资产", "素材", "asset"],
+    terms: [
+      "asset request",
+      "资产请求",
+      "生图",
+      "sprite",
+      "mesh",
+      "ui",
+      "music",
+    ],
   },
   {
-    triggers: ['联网', '后端', '同步', '服务器', 'network', 'backend'],
-    terms: ['联网', '后端', '同步', '安全', '服务器', '接口'],
+    triggers: ["sprite", "spritesheet", "精灵", "精灵图", "序列帧", "动作帧"],
+    terms: ["sprite", "spritesheet", "精灵图", "角色", "动画", "美术"],
   },
   {
-    triggers: ['关卡', '地图', '路径', '引导', 'level'],
-    terms: ['关卡', '路径', '引导', '节奏', '空间', '难度'],
+    triggers: ["图片", "概念图", "原画", "图标", "贴图", "image", "concept"],
+    terms: ["生图", "概念图", "原画", "图标", "贴图", "美术"],
+  },
+  {
+    triggers: ["mesh", "模型", "建模", "glb", "gltf", "3d", "三维"],
+    terms: ["mesh", "建模", "3d", "技术美术", "场景", "角色"],
+  },
+  {
+    triggers: ["ui", "hud", "界面", "菜单", "控件"],
+    terms: ["ui", "界面", "hud", "ux", "图标"],
+  },
+  {
+    triggers: ["音乐", "bgm", "配乐", "音效", "语音", "配音", "audio"],
+    terms: ["music", "音频", "音乐", "音效", "语音", "配音"],
+  },
+  {
+    triggers: ["测试", "bug", "验收", "回归", "qa"],
+    terms: ["qa", "测试", "验收", "回归", "复现", "质量"],
+  },
+  {
+    triggers: ["联网", "后端", "同步", "服务器", "network", "backend"],
+    terms: ["联网", "后端", "同步", "安全", "服务器", "接口"],
+  },
+  {
+    triggers: ["关卡", "地图", "路径", "引导", "level"],
+    terms: ["关卡", "路径", "引导", "节奏", "空间", "难度"],
   },
 ];
 
@@ -904,7 +1093,8 @@ function extractRecommendationTerms(query: string): Map<string, number> {
   }
 
   for (const expansion of GAME_ORG_QUERY_EXPANSIONS) {
-    if (!expansion.triggers.some((trigger) => normalized.includes(trigger))) continue;
+    if (!expansion.triggers.some((trigger) => normalized.includes(trigger)))
+      continue;
     for (const term of expansion.terms) add(term, 0.62);
   }
 
@@ -920,6 +1110,7 @@ function scoreRecommendationTerm(
     skillLabel: string;
     skillBody: string;
     collaboratorBody: string;
+    capabilityBody: string;
   },
 ): number {
   let score = 0;
@@ -927,6 +1118,7 @@ function scoreRecommendationTerm(
   if (texts.skillBody.includes(term)) score += 74 * weight;
   if (texts.roleLabel.includes(term)) score += 72 * weight;
   if (texts.roleBody.includes(term)) score += 36 * weight;
+  if (texts.capabilityBody.includes(term)) score += 92 * weight;
   if (texts.collaboratorBody.includes(term)) score += 22 * weight;
   return score;
 }
@@ -943,7 +1135,11 @@ export function recommendGameOrgSkills(
   if (terms.size === 0) return [];
 
   const recommendations = flattenGameOrgNodes(root).flatMap((node) => {
-    const roleLabel = normalizedSearchText([node.label, node.id, node.path.join(' ')]);
+    const roleLabel = normalizedSearchText([
+      node.label,
+      node.id,
+      node.path.join(" "),
+    ]);
     const roleBody = normalizedSearchText([
       node.summary,
       node.role,
@@ -975,6 +1171,22 @@ export function recommendGameOrgSkills(
         skill.protocol.outputs,
         skill.protocol.acceptanceCriteria,
       ]);
+      const capabilityBody = normalizedSearchText([
+        ...skill.allowedCapabilities,
+        ...skill.capabilityLabels,
+        ...skill.capabilities.flatMap((capability) => [
+          capability.id,
+          capability.label,
+          capability.assetType,
+          capability.command,
+          capability.modeCommand ?? "",
+          capability.useWhen,
+          ...capability.intentKeywords,
+          ...capability.inputRequirements,
+          ...capability.outputArtifacts,
+          ...capability.acceptanceCriteria,
+        ]),
+      ]);
       const collaboratorBody = normalizedSearchText([
         ...(skill.collaboratorExpertIds ?? []),
         ...skill.collaboratorLabels,
@@ -989,16 +1201,23 @@ export function recommendGameOrgSkills(
           skillLabel,
           skillBody,
           collaboratorBody,
+          capabilityBody,
         });
         if (termScore <= 0) continue;
         score += termScore;
         matchedTerms.push(term);
       }
 
-      if (skillBody.includes(normalizedQuery) || skillLabel.includes(normalizedQuery)) {
+      if (
+        skillBody.includes(normalizedQuery) ||
+        skillLabel.includes(normalizedQuery)
+      ) {
         score += 180;
       }
-      if (roleBody.includes(normalizedQuery) || roleLabel.includes(normalizedQuery)) {
+      if (
+        roleBody.includes(normalizedQuery) ||
+        roleLabel.includes(normalizedQuery)
+      ) {
         score += 88;
       }
 
@@ -1011,6 +1230,8 @@ export function recommendGameOrgSkills(
         skillSummary: skill.summary,
         commandText: skill.commandText,
         collaboratorLabels: [...skill.collaboratorLabels],
+        allowedCapabilities: [...skill.allowedCapabilities],
+        capabilityLabels: [...skill.capabilityLabels],
         score,
         matchedTerms: uniqueTerms(matchedTerms),
       };
@@ -1028,13 +1249,13 @@ function taskPlanReason(
   locale: Locale,
 ): string {
   const terms = recommendation.matchedTerms.slice(0, 3);
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return terms.length > 0
-      ? `Matched ${terms.join(', ')} and falls under ${recommendation.roleLabel}.`
+      ? `Matched ${terms.join(", ")} and falls under ${recommendation.roleLabel}.`
       : `Falls under ${recommendation.roleLabel}.`;
   }
   return terms.length > 0
-    ? `命中「${terms.join('、')}」，属于「${recommendation.roleLabel}」职责范围。`
+    ? `命中「${terms.join("、")}」，属于「${recommendation.roleLabel}」职责范围。`
     : `属于「${recommendation.roleLabel}」职责范围。`;
 }
 
@@ -1042,7 +1263,7 @@ function taskPlanDeliverable(
   recommendation: GameOrgSkillRecommendation,
   locale: Locale,
 ): string {
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return (
       recommendation.skillSummary ||
       `${recommendation.skillLabel} deliverable and handoff notes.`
@@ -1059,32 +1280,33 @@ function formatGameOrgTaskPlanPrompt(
   steps: readonly GameOrgTaskPlanStep[],
   locale: Locale,
 ): string {
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     const lines = steps.map(
       (step) =>
         `${step.order}. ${step.roleLabel} / ${step.skillLabel}: ${step.deliverable}`,
     );
     return [
-      `Create a multi-role execution plan for: ${query}`,
-      '',
-      'Use these role Skills in order:',
+      `Create a multi-lens guide for: ${query}`,
+      "",
+      "Use these role Skills as reference lenses:",
       ...lines,
-      '',
-      'For each step, include owner, inputs, action items, dependencies, risks, deliverables, and acceptance criteria.',
-    ].join('\n');
+      "",
+      "For each lens, include focus, inputs, suggested actions, dependencies, risks, deliverables, and acceptance criteria. The main model decides whether and how to split or execute the work.",
+    ].join("\n");
   }
 
   const lines = steps.map(
-    (step) => `${step.order}. ${step.roleLabel} / ${step.skillLabel}：${step.deliverable}`,
+    (step) =>
+      `${step.order}. ${step.roleLabel} / ${step.skillLabel}：${step.deliverable}`,
   );
   return [
-    `请为以下任务生成多岗位执行方案：${query}`,
-    '',
-    '按顺序使用这些岗位 Skill：',
+    `请为以下任务生成多视角参考建议：${query}`,
+    "",
+    "参考这些岗位 Skill：",
     ...lines,
-    '',
-    '每一步都要包含负责人、输入、执行项、依赖、风险、产出物和验收标准。',
-  ].join('\n');
+    "",
+    "每个视角都要包含关注点、输入、建议动作、依赖、风险、产出物和验收标准。具体是否拆分任务、如何执行，由当前编程模型根据需求自行决定。",
+  ].join("\n");
 }
 
 function formatGameOrgTaskPlanDocument(
@@ -1092,41 +1314,41 @@ function formatGameOrgTaskPlanDocument(
   steps: readonly GameOrgTaskPlanStep[],
   locale: Locale,
 ): string {
-  if (steps.length === 0) return '';
+  if (steps.length === 0) return "";
 
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return [
-      `# Multi-role Task Breakdown: ${query}`,
-      '',
+      `# Multi-lens Guide: ${query}`,
+      "",
       ...steps.flatMap((step) => [
-        `## Step ${step.order}: ${step.roleLabel} / ${step.skillLabel}`,
-        '',
-        `- Role path: ${step.rolePath.join(' / ')}`,
+        `## Lens ${step.order}: ${step.roleLabel} / ${step.skillLabel}`,
+        "",
+        `- Role path: ${step.rolePath.join(" / ")}`,
         `- Reason: ${step.reason}`,
         `- Deliverable: ${step.deliverable}`,
         `- Acceptance criteria: ${step.acceptanceCriteria}`,
-        `- Collaborators: ${step.collaboratorLabels.join(', ') || 'None'}`,
-        `- Matched terms: ${step.matchedTerms.join(', ') || 'None'}`,
-        '',
+        `- Collaborators: ${step.collaboratorLabels.join(", ") || "None"}`,
+        `- Matched terms: ${step.matchedTerms.join(", ") || "None"}`,
+        "",
       ]),
-    ].join('\n');
+    ].join("\n");
   }
 
   return [
-    `# 多岗位任务拆解：${query}`,
-    '',
+    `# 多视角参考建议：${query}`,
+    "",
     ...steps.flatMap((step) => [
-      `## 步骤 ${step.order}：${step.roleLabel} / ${step.skillLabel}`,
-      '',
-      `- 岗位路径：${step.rolePath.join(' / ')}`,
+      `## 视角 ${step.order}：${step.roleLabel} / ${step.skillLabel}`,
+      "",
+      `- 岗位路径：${step.rolePath.join(" / ")}`,
       `- 推荐理由：${step.reason}`,
       `- 产出物：${step.deliverable}`,
       `- 验收标准：${step.acceptanceCriteria}`,
-      `- 协作对象：${step.collaboratorLabels.join('、') || '暂无'}`,
-      `- 命中词：${step.matchedTerms.join('、') || '暂无'}`,
-      '',
+      `- 关联视角：${step.collaboratorLabels.join("、") || "暂无"}`,
+      `- 命中词：${step.matchedTerms.join("、") || "暂无"}`,
+      "",
     ]),
-  ].join('\n');
+  ].join("\n");
 }
 
 function formatGameOrgTaskPlanChecklist(
@@ -1134,31 +1356,31 @@ function formatGameOrgTaskPlanChecklist(
   steps: readonly GameOrgTaskPlanStep[],
   locale: Locale,
 ): string {
-  if (steps.length === 0) return '';
+  if (steps.length === 0) return "";
 
-  if (locale !== 'zh-CN') {
+  if (locale !== "zh-CN") {
     return [
-      `# Execution Checklist: ${query}`,
-      '',
+      `# Lens Checklist: ${query}`,
+      "",
       ...steps.flatMap((step) => [
-        `- [ ] Step ${step.order}: ${step.roleLabel} / ${step.skillLabel}`,
+        `- [ ] Lens ${step.order}: ${step.roleLabel} / ${step.skillLabel}`,
         `  - Deliverable: ${step.deliverable}`,
         `  - Acceptance: ${step.acceptanceCriteria}`,
-        `  - Collaborators: ${step.collaboratorLabels.join(', ') || 'None'}`,
+        `  - Related lenses: ${step.collaboratorLabels.join(", ") || "None"}`,
       ]),
-    ].join('\n');
+    ].join("\n");
   }
 
   return [
-    `# 执行待办清单：${query}`,
-    '',
+    `# 视角检查清单：${query}`,
+    "",
     ...steps.flatMap((step) => [
-      `- [ ] 步骤 ${step.order}：${step.roleLabel} / ${step.skillLabel}`,
+      `- [ ] 视角 ${step.order}：${step.roleLabel} / ${step.skillLabel}`,
       `  - 产出物：${step.deliverable}`,
       `  - 验收：${step.acceptanceCriteria}`,
-      `  - 协作对象：${step.collaboratorLabels.join('、') || '暂无'}`,
+      `  - 关联视角：${step.collaboratorLabels.join("、") || "暂无"}`,
     ]),
-  ].join('\n');
+  ].join("\n");
 }
 
 export function planGameOrgTask(
@@ -1167,14 +1389,14 @@ export function planGameOrgTask(
   options: PlanGameOrgTaskOptions = {},
 ): GameOrgTaskPlan {
   const trimmedQuery = query.trim();
-  const locale = options.locale ?? 'zh-CN';
+  const locale = options.locale ?? "zh-CN";
   if (!trimmedQuery) {
     return {
-      query: '',
+      query: "",
       steps: [],
-      commandText: '',
-      documentText: '',
-      checklistText: '',
+      commandText: "",
+      documentText: "",
+      checklistText: "",
     };
   }
 
@@ -1190,7 +1412,10 @@ export function planGameOrgTask(
     if (selected.length >= targetLimit) break;
     const skillKey = `${recommendation.roleId}:${recommendation.skillId}`;
     if (usedSkills.has(skillKey)) continue;
-    if (usedRoles.has(recommendation.roleId) && selected.length < targetLimit - 1) {
+    if (
+      usedRoles.has(recommendation.roleId) &&
+      selected.length < targetLimit - 1
+    ) {
       continue;
     }
     selected.push(recommendation);
@@ -1217,22 +1442,30 @@ export function planGameOrgTask(
     skillSummary: recommendation.skillSummary,
     commandText: recommendation.commandText,
     collaboratorLabels: [...recommendation.collaboratorLabels],
+    allowedCapabilities: [...recommendation.allowedCapabilities],
+    capabilityLabels: [...recommendation.capabilityLabels],
     matchedTerms: [...recommendation.matchedTerms],
     reason: taskPlanReason(recommendation, locale),
     deliverable: taskPlanDeliverable(recommendation, locale),
     acceptanceCriteria:
-      locale === 'zh-CN'
-        ? '产出可执行、职责边界清楚、风险明确，并包含可验证的验收口径。'
-        : 'The output is actionable, scoped, risk-aware, and has verifiable acceptance criteria.',
+      locale === "zh-CN"
+        ? "产出可执行、职责边界清楚、风险明确，并包含可验证的验收口径。"
+        : "The output is actionable, scoped, risk-aware, and has verifiable acceptance criteria.",
     score: recommendation.score,
   }));
 
   const commandText =
-    steps.length > 0 ? formatGameOrgTaskPlanPrompt(trimmedQuery, steps, locale) : '';
+    steps.length > 0
+      ? formatGameOrgTaskPlanPrompt(trimmedQuery, steps, locale)
+      : "";
   const documentText =
-    steps.length > 0 ? formatGameOrgTaskPlanDocument(trimmedQuery, steps, locale) : '';
+    steps.length > 0
+      ? formatGameOrgTaskPlanDocument(trimmedQuery, steps, locale)
+      : "";
   const checklistText =
-    steps.length > 0 ? formatGameOrgTaskPlanChecklist(trimmedQuery, steps, locale) : '';
+    steps.length > 0
+      ? formatGameOrgTaskPlanChecklist(trimmedQuery, steps, locale)
+      : "";
 
   return {
     query: trimmedQuery,

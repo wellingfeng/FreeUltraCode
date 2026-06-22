@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UltraGameStudio 后端管理台</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #2a3242;
+    --text: #e6edf3; --muted: #9aa7b4; --accent: #58a6ff; --good: #3fb950;
+    --warn: #d29922; --bad: #f85149; --chip: #21262d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .spacer { flex: 1; }
+  input, button, select { font: inherit; }
+  input[type=text], input[type=password], input[type=url] {
+    background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 10px; outline: none; min-width: 220px;
+  }
+  input:focus { border-color: var(--accent); }
+  button { background: var(--accent); border: none; color: #04101f; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-weight: 600; }
+  button.ghost { background: var(--chip); color: var(--text); }
+  button:disabled { opacity: .5; cursor: default; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--good); } .dot.off { background: var(--bad); }
+  nav { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid var(--border); background: var(--panel); }
+  nav button { background: none; color: var(--muted); border-radius: 6px 6px 0 0; padding: 8px 14px; font-weight: 500; }
+  nav button.active { color: var(--text); background: var(--bg); border: 1px solid var(--border); border-bottom-color: var(--bg); margin-bottom: -1px; }
+  main { padding: 18px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel2); }
+  tr:last-child td { border-bottom: none; }
+  tr.clickable { cursor: pointer; } tr.clickable:hover td { background: var(--panel2); }
+  .status { padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-block; }
+  .s-queued { background: #1f2937; color: var(--muted); }
+  .s-running { background: #14304a; color: var(--accent); }
+  .s-succeeded, .s-success, .s-done { background: #133a23; color: var(--good); }
+  .s-failed, .s-error { background: #3a1717; color: var(--bad); }
+  .s-cancelled, .s-canceled { background: #3a2f12; color: var(--warn); }
+  .muted { color: var(--muted); } .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+  .err { color: var(--bad); padding: 10px 14px; background: #2a1414; border: 1px solid var(--bad); border-radius: 8px; margin-bottom: 14px; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 860px; width: 90vw; }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  .dlg-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .dlg-head h3 { margin: 0; font-size: 15px; } .dlg-body { padding: 16px 18px; max-height: 70vh; overflow: auto; }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; font-size: 12px; max-height: 320px; }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; } .row > div { flex: 1; min-width: 200px; }
+  label.f { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="health-dot"></span>
+  <h1>UltraGameStudio 后端管理台</h1>
+  <span class="muted mono" id="health-info"></span>
+  <span class="spacer"></span>
+  <input type="url" id="base-url" placeholder="后端地址，如 http://localhost:8787" />
+  <input type="password" id="token" placeholder="访问令牌 (Bearer Token)" />
+  <button id="connect">连接</button>
+  <button class="ghost" id="refresh">刷新</button>
+</header>
+<nav id="tabs"></nav>
+<main>
+  <div id="error" class="err" style="display:none"></div>
+  <div id="view"></div>
+</main>
+<dialog id="detail"><div class="dlg-head"><h3 id="detail-title">详情</h3><span class="spacer" style="flex:1"></span><button class="ghost" id="detail-close">关闭</button></div><div class="dlg-body" id="detail-body"></div></dialog>
+<script>
+"use strict";
+// ---- state ----
+const $ = (id) => document.getElementById(id);
+const LS = window.localStorage;
+let state = { base: "", token: "", tab: "jobs", data: {} };
+
+const TABS = [
+  { id: "jobs", label: "任务" },
+  { id: "usage", label: "用量" },
+  { id: "accounts", label: "模型账号" },
+  { id: "projects", label: "项目" },
+];
+
+function init() {
+  state.base = LS.getItem("ugs.admin.base") || location.origin;
+  state.token = LS.getItem("ugs.admin.token") || "";
+  $("base-url").value = state.base;
+  $("token").value = state.token;
+  renderTabs();
+  $("connect").onclick = connect;
+  $("refresh").onclick = () => loadTab(state.tab);
+  $("detail-close").onclick = () => $("detail").close();
+  if (state.token) connect();
+  else { health(); render(); }
+}
+
+async function connect() {
+  state.base = $("base-url").value.trim().replace(/\/$/, "");
+  state.token = $("token").value.trim();
+  LS.setItem("ugs.admin.base", state.base);
+  LS.setItem("ugs.admin.token", state.token);
+  await health();
+  await loadTab(state.tab);
+}
+
+// ---- networking ----
+async function api(path) {
+  const res = await fetch(state.base + path, {
+    headers: state.token ? { authorization: "Bearer " + state.token } : {},
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error("HTTP " + res.status + (txt ? " · " + txt.slice(0, 200) : ""));
+  }
+  return res.json();
+}
+
+function showError(msg) {
+  const el = $("error");
+  if (!msg) { el.style.display = "none"; return; }
+  el.style.display = "block";
+  el.textContent = "错误：" + msg;
+}
+
+async function health() {
+  try {
+    const res = await fetch(state.base + "/health");
+    const j = await res.json();
+    $("health-dot").className = "dot on";
+    $("health-info").textContent =
+      `${j.service || "runner"} v${j.version || "?"} · 适配器 ${(j.adapters || []).join("/") || "-"} · 并发 ${j.maxConcurrency} · 账号 ${j.accountCount}` +
+      (j.authRequired ? " · 需令牌" : " · 无需令牌");
+  } catch (e) {
+    $("health-dot").className = "dot off";
+    $("health-info").textContent = "无法连接";
+  }
+}
+
+async function loadTab(tab) {
+  state.tab = tab;
+  renderTabs();
+  showError("");
+  $("view").innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    if (tab === "jobs") state.data.jobs = (await api("/jobs")).jobs || [];
+    else if (tab === "usage") state.data.usage = await api("/usage");
+    else if (tab === "accounts") state.data.accounts = (await api("/accounts")).accounts || [];
+    else if (tab === "projects") state.data.projects = (await api("/projects")).projects || [];
+    render();
+  } catch (e) {
+    showError(e.message);
+    $("view").innerHTML = '<div class="empty">加载失败，请检查后端地址与令牌。</div>';
+  }
+}
+
+// ---- helpers ----
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function fmtTime(ms) {
+  if (!ms) return "-";
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+function fmtDur(ms) {
+  ms = Number(ms) || 0;
+  if (ms < 1000) return ms + "ms";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  return m + "m" + (s % 60) + "s";
+}
+function fmtNum(n) { return (Number(n) || 0).toLocaleString("zh-CN"); }
+function statusChip(s) {
+  return `<span class="status s-${esc(s || "queued")}">${esc(s || "未知")}</span>`;
+}
+
+function renderTabs() {
+  $("tabs").innerHTML = TABS.map(
+    (t) => `<button class="${t.id === state.tab ? "active" : ""}" data-tab="${t.id}">${t.label}</button>`
+  ).join("");
+  $("tabs").querySelectorAll("button").forEach((b) => (b.onclick = () => loadTab(b.dataset.tab)));
+}
+
+function render() {
+  if (state.tab === "jobs") renderJobs();
+  else if (state.tab === "usage") renderUsage();
+  else if (state.tab === "accounts") renderAccounts();
+  else if (state.tab === "projects") renderProjects();
+}
+
+// ---- jobs ----
+function renderJobs() {
+  const jobs = state.data.jobs || [];
+  const by = (s) => jobs.filter((j) => j.status === s).length;
+  const cards = `<div class="cards">
+    <div class="card"><div class="k">任务总数</div><div class="v">${jobs.length}</div></div>
+    <div class="card"><div class="k">运行中</div><div class="v" style="color:var(--accent)">${by("running")}</div></div>
+    <div class="card"><div class="k">已成功</div><div class="v" style="color:var(--good)">${by("succeeded")}</div></div>
+    <div class="card"><div class="k">失败</div><div class="v" style="color:var(--bad)">${by("failed")}</div></div>
+  </div>`;
+  if (!jobs.length) { $("view").innerHTML = cards + '<div class="empty">暂无任务。</div>'; return; }
+  const rows = jobs.map((j) => `
+    <tr class="clickable" data-job="${esc(j.id)}">
+      <td class="mono">${esc(String(j.id).slice(0, 12))}</td>
+      <td>${statusChip(j.status)}</td>
+      <td>${esc(j.adapter || "-")}${j.model ? ' <span class="muted">/ ' + esc(j.model) + "</span>" : ""}</td>
+      <td>${esc(j.projectId || "-")}</td>
+      <td class="muted">${fmtTime(j.createdAt)}</td>
+      <td>${fmtDur(j.runtimeMs)}</td>
+    </tr>`).join("");
+  $("view").innerHTML = cards + `<table><thead><tr>
+    <th>任务 ID</th><th>状态</th><th>适配器/模型</th><th>项目</th><th>创建时间</th><th>耗时</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+  $("view").querySelectorAll("tr[data-job]").forEach((tr) => (tr.onclick = () => openJob(tr.dataset.job)));
+}
+
+async function openJob(id) {
+  $("detail-title").textContent = "任务 " + id;
+  $("detail-body").innerHTML = '<div class="empty">加载中…</div>';
+  $("detail").showModal();
+  try {
+    const j = (await api("/jobs/" + id + "/artifacts")).artifacts || {};
+    const logs = (j.logs || []).map((l) => esc(typeof l === "string" ? l : JSON.stringify(l))).join("\n");
+    $("detail-body").innerHTML = `
+      <div class="row">
+        <div><label class="f">状态</label>${statusChip(j.status)}</div>
+        <div><label class="f">适配器/模型</label>${esc(j.adapter || "-")} / ${esc(j.model || "-")}</div>
+        <div><label class="f">账号</label>${esc(j.accountId || "-")}</div>
+        <div><label class="f">耗时</label>${fmtDur(j.runtimeMs)}</div>
+      </div>
+      <div class="row">
+        <div><label class="f">创建</label>${fmtTime(j.createdAt)}</div>
+        <div><label class="f">结束</label>${fmtTime(j.finishedAt)}</div>
+        <div><label class="f">已推送</label>${j.pushed ? "是" : "否"}</div>
+        <div><label class="f">分支</label>${esc(j.branch || "-")} → ${esc(j.pushBranch || "-")}</div>
+      </div>
+      ${j.error ? `<label class="f">错误</label><pre style="color:var(--bad)">${esc(j.error)}</pre>` : ""}
+      ${j.usage ? `<label class="f">Token 用量</label><pre>${esc(JSON.stringify(j.usage, null, 2))}</pre>` : ""}
+      ${j.patch ? `<label class="f">补丁 (patch)</label><pre>${esc(j.patch)}</pre>` : ""}
+      <label class="f">日志</label><pre>${logs || "(无日志)"}</pre>`;
+  } catch (e) {
+    $("detail-body").innerHTML = `<div class="err" style="display:block">加载失败：${esc(e.message)}</div>`;
+  }
+}
+
+// ---- usage ----
+function renderUsage() {
+  const u = state.data.usage || {};
+  const t = u.totals || {};
+  const cards = `<div class="cards">
+    <div class="card"><div class="k">调用次数</div><div class="v">${fmtNum(t.calls)}</div></div>
+    <div class="card"><div class="k">输入 Token</div><div class="v">${fmtNum(t.inputTokens)}</div></div>
+    <div class="card"><div class="k">输出 Token</div><div class="v">${fmtNum(t.outputTokens)}</div></div>
+    <div class="card"><div class="k">缓存输入 Token</div><div class="v">${fmtNum(t.cachedInputTokens)}</div></div>
+    <div class="card"><div class="k">合计 Token</div><div class="v" style="color:var(--accent)">${fmtNum(t.totalTokens)}</div></div>
+  </div>`;
+  const accs = u.accounts || [];
+  const accRows = accs.map((a) => {
+    const au = a.usage || {};
+    return `<tr>
+      <td class="mono">${esc(a.id)}</td><td>${esc(a.label || a.adapter || "-")}</td>
+      <td>${fmtNum(au.calls)}</td><td>${fmtNum(au.inputTokens)}</td>
+      <td>${fmtNum(au.outputTokens)}</td><td>${fmtNum(au.totalTokens)}</td>
+      <td class="muted">${fmtTime(au.lastUsedAt)}</td>
+    </tr>`;
+  }).join("");
+  const accTable = accs.length
+    ? `<h3>账号用量</h3><table><thead><tr><th>账号 ID</th><th>名称</th><th>调用</th><th>输入</th><th>输出</th><th>合计</th><th>最近使用</th></tr></thead><tbody>${accRows}</tbody></table>`
+    : "";
+  $("view").innerHTML = cards + accTable;
+}
+
+// ---- accounts ----
+function renderAccounts() {
+  const accs = state.data.accounts || [];
+  if (!accs.length) { $("view").innerHTML = '<div class="empty">暂无模型账号。</div>'; return; }
+  const rows = accs.map((a) => {
+    const au = a.usage || {};
+    return `<tr>
+      <td class="mono">${esc(a.id)}</td>
+      <td>${esc(a.label || "-")}</td>
+      <td>${esc(a.adapter || "-")}${a.model ? " / " + esc(a.model) : ""}</td>
+      <td>${a.enabled ? '<span style="color:var(--good)">启用</span>' : '<span class="muted">停用</span>'}</td>
+      <td>${a.hasApiKey ? "已配置" : '<span class="muted">无</span>'}</td>
+      <td>${a.hasBaseUrl ? "自定义" : "默认"}</td>
+      <td>${fmtNum(au.totalTokens)}</td>
+    </tr>`;
+  }).join("");
+  $("view").innerHTML = `<table><thead><tr>
+    <th>账号 ID</th><th>名称</th><th>适配器/模型</th><th>状态</th><th>API Key</th><th>Base URL</th><th>合计 Token</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---- projects ----
+function renderProjects() {
+  const ps = state.data.projects || [];
+  if (!ps.length) { $("view").innerHTML = '<div class="empty">暂无项目。</div>'; return; }
+  const rows = ps.map((p) => `<tr>
+    <td class="mono">${esc(p.id)}</td>
+    <td>${esc(p.label || "-")}</td>
+    <td class="mono">${esc(p.repoUrl || "-")}</td>
+    <td>${esc(p.branch || "默认")}${p.pushBranch ? " → " + esc(p.pushBranch) : ""}</td>
+    <td>${esc(p.adapter || "-")}${p.model ? " / " + esc(p.model) : ""}</td>
+    <td>${p.hasGitToken ? "已配置" : '<span class="muted">无</span>'}</td>
+    <td class="muted">${fmtTime(p.updatedAt)}</td>
+  </tr>`).join("");
+  $("view").innerHTML = `<table><thead><tr>
+    <th>项目 ID</th><th>名称</th><th>仓库</th><th>分支</th><th>适配器/模型</th><th>Git 令牌</th><th>更新时间</th>
+  </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+init();
+</script>
+</body>
+</html>

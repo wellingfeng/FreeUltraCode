@@ -1,6 +1,6 @@
 /**
  * CONTRACT: pure, framework-free helpers shared by the in-app AI editor
- * (`src/store/useStore.ts`) and the headless `fuc gen` command
+ * (`src/store/useStore.ts`) and the headless `ugs gen` command
  * (`cli/commands/gen.ts`).
  *
  * Historically these lived inside the Zustand store, which made them

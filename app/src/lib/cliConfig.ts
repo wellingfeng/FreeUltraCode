@@ -58,10 +58,10 @@ export interface CliInvocation {
 }
 
 const CLI_SCHEMA_VERSION = 1 as const;
-const LEGACY_CLI_PATH_STORAGE = 'fuc_cli_path';
-const LEGACY_CLI_COMMAND_STORAGE = 'fuc_cli_command';
-const LEGACY_SELECTED_CLI_STORAGE = 'fuc_selected_cli';
-const LEGACY_CLI_ADAPTER_STORAGE = 'fuc_cli_adapter';
+const LEGACY_CLI_PATH_STORAGE = 'ugs_cli_path';
+const LEGACY_CLI_COMMAND_STORAGE = 'ugs_cli_command';
+const LEGACY_SELECTED_CLI_STORAGE = 'ugs_selected_cli';
+const LEGACY_CLI_ADAPTER_STORAGE = 'ugs_cli_adapter';
 
 let rawScan: ModelCliScanResult | null = null;
 let runtimePromise: Promise<CliRuntimeSnapshot> | null = null;
@@ -585,19 +585,19 @@ function collectLegacyCliSources(
   addLegacyCliSourcesFromValue(
     sources,
     readLocalStorage(LEGACY_CLI_PATH_STORAGE),
-    'localStorage.fuc_cli_path',
+    'localStorage.ugs_cli_path',
     storageAdapter,
   );
   addLegacyCliSourcesFromValue(
     sources,
     readLocalStorage(LEGACY_CLI_COMMAND_STORAGE),
-    'localStorage.fuc_cli_command',
+    'localStorage.ugs_cli_command',
     storageAdapter,
   );
   addLegacyCliSourcesFromValue(
     sources,
     readLocalStorage(LEGACY_SELECTED_CLI_STORAGE),
-    'localStorage.fuc_selected_cli',
+    'localStorage.ugs_selected_cli',
     storageAdapter,
   );
 

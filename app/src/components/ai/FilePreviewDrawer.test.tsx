@@ -65,7 +65,7 @@ describe('FilePreviewDrawer', () => {
 
   it('can expand the preview to the app window and restore drawer width', async () => {
     vi.mocked(previewLocalFile).mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\src\\main.ts',
+      path: 'E:\\UltraGameStudio\\src\\main.ts',
       fileName: 'main.ts',
       kind: 'text',
       mime: 'text/typescript',
@@ -79,7 +79,7 @@ describe('FilePreviewDrawer', () => {
       root.render(
         createElement(FilePreviewDrawer, {
           refData: { path: 'src/main.ts', basename: 'main.ts' },
-          cwd: 'E:\\OpenWorkflows',
+          cwd: 'E:\\UltraGameStudio',
           onClose: vi.fn(),
         }),
       );
@@ -170,7 +170,7 @@ describe('FilePreviewDrawer', () => {
       value: revokeObjectUrl,
     });
     vi.mocked(previewLocalFile).mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\screen.png',
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\screen.png',
       fileName: 'screen.png',
       kind: 'image',
       mime: 'image/png',
@@ -213,7 +213,7 @@ describe('FilePreviewDrawer', () => {
 
   it('renders VCS diff marks for text previews', async () => {
     vi.mocked(previewLocalFile).mockResolvedValue({
-      path: 'E:\\OpenWorkflows\\src\\main.ts',
+      path: 'E:\\UltraGameStudio\\src\\main.ts',
       fileName: 'main.ts',
       kind: 'text',
       mime: 'text/typescript',
@@ -248,7 +248,7 @@ describe('FilePreviewDrawer', () => {
       root.render(
         createElement(FilePreviewDrawer, {
           refData: { path: 'src/main.ts', basename: 'main.ts' },
-          cwd: 'E:\\OpenWorkflows',
+          cwd: 'E:\\UltraGameStudio',
           onClose: vi.fn(),
         }),
       );
@@ -257,7 +257,7 @@ describe('FilePreviewDrawer', () => {
       await Promise.resolve();
     });
 
-    expect(workspaceFileDiff).toHaveBeenCalledWith('E:\\OpenWorkflows', 'src/main.ts');
+    expect(workspaceFileDiff).toHaveBeenCalledWith('E:\\UltraGameStudio', 'src/main.ts');
     expect(
       container.querySelector('[data-vcs-kind="replacedAdded"]'),
     ).not.toBeNull();

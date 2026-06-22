@@ -23,8 +23,8 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   libreTranslateApiKey: '',
 };
 
-const STORAGE_KEY = 'freeultracode.translationSettings.v1';
-const CHANGE_EVENT = 'fuc:translation-settings-changed';
+const STORAGE_KEY = 'ultragamestudio.translationSettings.v1';
+const CHANGE_EVENT = 'ugs:translation-settings-changed';
 
 function hasStorage(): boolean {
   return typeof window !== 'undefined' && !!window.localStorage;

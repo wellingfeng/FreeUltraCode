@@ -29,7 +29,6 @@ import {
   type SpeechGenerationSettings,
 } from '@/lib/speechGeneration';
 import {
-  loadSpriteGenerationSettings,
   type SpriteGenerationSettings,
 } from '@/lib/spriteGeneration';
 import {
@@ -157,9 +156,6 @@ function imageGuard(
   channel: SlashGuardChannel,
   settings = loadImageGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked(channel, '当前生图功能未启用，请先到设置 > 生图启用并配置渠道。');
-  }
   if (imageProviderReady(settings.preferredProviderId, settings)) {
     return readyResult(channel);
   }
@@ -174,9 +170,6 @@ function imageGuard(
 function musicGuard(
   settings = loadMusicGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked('music', '当前音乐生成功能未启用，请先到设置 > 音乐渠道启用并配置渠道。');
-  }
   if (musicProviderReady(settings.preferredProviderId, settings)) {
     return readyResult('music');
   }
@@ -190,9 +183,6 @@ function musicGuard(
 function threeDGuard(
   settings = loadThreeDGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked('threeD', '当前 3D 生成功能未启用，请先到设置 > 3D 渠道启用并配置渠道。');
-  }
   if (threeDProviderReady(settings.preferredProviderId, settings)) {
     return readyResult('threeD');
   }
@@ -207,9 +197,6 @@ function threeDGuard(
 function videoGuard(
   settings = loadVideoGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked('video', '当前视频生成功能未启用，请先到设置 > 视频渠道启用并配置渠道。');
-  }
   if (videoProviderReady(settings.preferredProviderId, settings)) {
     return readyResult('video');
   }
@@ -223,9 +210,6 @@ function videoGuard(
 function speechGuard(
   settings = loadSpeechGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked('speech', '当前语音生成功能未启用，请先到设置 > 语音渠道启用并配置渠道。');
-  }
   if (speechProviderReady(settings.preferredProviderId, settings)) {
     return readyResult('speech');
   }
@@ -237,18 +221,8 @@ function speechGuard(
 }
 
 function spriteGuard(
-  spriteSettings = loadSpriteGenerationSettings(),
   imageSettings = loadImageGenerationSettings(),
 ): SlashCommandGuardResult {
-  if (!spriteSettings.enabled) {
-    return blocked('sprite', '当前 Sprite 生成功能未启用，请先到项目设置 > Sprite 启用。');
-  }
-  if (!imageSettings.enabled) {
-    return blocked(
-      'sprite',
-      '当前 Sprite 指令会复用生图渠道。当前生图功能未启用，请先到设置 > 生图启用并配置渠道。',
-    );
-  }
   if (imageProviderReady(imageSettings.preferredProviderId, imageSettings)) {
     return readyResult('sprite');
   }
@@ -273,16 +247,13 @@ function comfyGuard(
 function uiGuard(
   settings = loadUiDesignChannelSettings(),
 ): SlashCommandGuardResult {
-  if (!settings.enabled) {
-    return blocked('ui', '当前 UI 设计渠道未启用，请先到项目设置 > UI 渠道启用并配置默认渠道。');
-  }
   if (uiDesignChannelReady(settings.preferredChannelId, settings)) {
     return readyResult('ui');
   }
   const channel = uiDesignChannelById(settings.preferredChannelId);
   return blocked(
     'ui',
-    `当前指令需要 UI 设计渠道（${channel.label} 未配置完成），请先到项目设置 > UI 渠道 配置默认渠道。`,
+    `当前指令需要 UI 设计渠道（${channel.label} 未配置完成），请先到设置 > UI 渠道 配置默认渠道。`,
   );
 }
 
@@ -293,7 +264,7 @@ function meshSearchGuard(
   const fallback = meshLibraryById('polyhaven', settings)?.label ?? 'Poly Haven';
   return blocked(
     'meshSearch',
-    `当前指令需要在线模型库，请先到项目设置 > 在线模型库 启用至少一个库，例如 ${fallback}。`,
+    `当前指令需要在线模型库，请先到设置 > 在线模型库 启用至少一个库，例如 ${fallback}。`,
   );
 }
 
@@ -313,7 +284,7 @@ export function guardSlashCommandChannel(
     case 'speech':
       return speechGuard(settings.speech);
     case 'sprite':
-      return spriteGuard(settings.sprite, settings.image);
+      return spriteGuard(settings.image);
     case 'comfyui':
       return comfyGuard(settings.image);
     case 'ui':

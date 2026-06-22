@@ -44,8 +44,8 @@ describe('world-model provider catalog', () => {
     expect(worldModelProviderReady('local-world-server')).toBe(true);
   });
 
-  it('returns no preferred ready provider when the feature is disabled', () => {
-    expect(preferredReadyWorldModelProviderId()).toBeNull();
+  it('returns a preferred ready provider by default', () => {
+    expect(preferredReadyWorldModelProviderId()).toBe('tencent-hunyuan-world');
   });
 
   it('resolves provider model with override precedence', () => {

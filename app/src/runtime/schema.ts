@@ -269,9 +269,17 @@ function firstBalancedSpan(text: string): string | null {
 }
 
 /** Result of validating a value against a schema shape. */
+export interface SchemaProblem {
+  path: string;
+  message: string;
+  expected?: string;
+  actual?: string;
+}
+
 export interface SchemaValidation {
   ok: boolean;
   problems: string[];
+  diagnostics: SchemaProblem[];
 }
 
 /**
@@ -287,18 +295,18 @@ export interface SchemaValidation {
  * `shape === undefined` → `{ ok: true, problems: [] }` (can't validate → allow).
  */
 export function validateAgainstSchema(value: unknown, shape: unknown): SchemaValidation {
-  if (shape === undefined) return { ok: true, problems: [] };
+  if (shape === undefined) return emptyValidation();
 
   if (looksLikeJsonSchema(shape)) {
-    const problems: string[] = [];
-    validateJsonSchema(value, shape as Record<string, unknown>, '根', problems);
-    return { ok: problems.length === 0, problems };
+    const diagnostics: SchemaProblem[] = [];
+    validateJsonSchema(value, shape as Record<string, unknown>, '根', diagnostics);
+    return toValidation(diagnostics);
   }
 
   // Example-object mode.
-  const problems: string[] = [];
-  validateExample(value, shape, '根', problems);
-  return { ok: problems.length === 0, problems };
+  const diagnostics: SchemaProblem[] = [];
+  validateExample(value, shape, '根', diagnostics);
+  return toValidation(diagnostics);
 }
 
 /** A shape is JSON-Schema-like when it has a string `type` or `properties`/`required`. */
@@ -313,11 +321,11 @@ function validateJsonSchema(
   value: unknown,
   schema: Record<string, unknown>,
   path: string,
-  problems: string[],
+  diagnostics: SchemaProblem[],
 ): void {
   const type = schema.type;
   if (typeof type === 'string' && !matchesJsonType(value, type)) {
-    problems.push(`${path}：期望类型 ${type}，实际为 ${baseType(value)}`);
+    addProblem(diagnostics, path, `期望类型 ${type}，实际为 ${baseType(value)}`, type, baseType(value));
     // If the top-level type is wrong, deeper checks are unreliable — stop here.
     return;
   }
@@ -326,21 +334,27 @@ function validateJsonSchema(
   if (Array.isArray(schema.enum)) {
     const allowed = schema.enum as unknown[];
     if (!allowed.some((a) => deepEqualPrimitive(a, value))) {
-      problems.push(`${path}：取值必须是 ${JSON.stringify(allowed)} 之一`);
+      addProblem(
+        diagnostics,
+        path,
+        `取值必须是 ${JSON.stringify(allowed)} 之一`,
+        JSON.stringify(allowed),
+        JSON.stringify(value),
+      );
     }
   }
 
   // Object properties + required.
   if (type === 'object' || isPlainObject(schema.properties) || Array.isArray(schema.required)) {
     if (!isPlainObject(value)) {
-      problems.push(`${path}：期望对象，实际为 ${baseType(value)}`);
+      addProblem(diagnostics, path, `期望对象，实际为 ${baseType(value)}`, 'object', baseType(value));
       return;
     }
     const obj = value as Record<string, unknown>;
     const required = Array.isArray(schema.required) ? (schema.required as unknown[]) : [];
     for (const key of required) {
       if (typeof key === 'string' && !(key in obj)) {
-        problems.push(`${path}：缺少必填字段 "${key}"`);
+        addProblem(diagnostics, `${path}.${key}`, `缺少必填字段 "${key}"`, 'required', 'missing');
       }
     }
     const props = isPlainObject(schema.properties)
@@ -348,7 +362,7 @@ function validateJsonSchema(
       : {};
     for (const [key, propSchema] of Object.entries(props)) {
       if (key in obj && isPlainObject(propSchema)) {
-        validateJsonSchema(obj[key], propSchema as Record<string, unknown>, `${path}.${key}`, problems);
+        validateJsonSchema(obj[key], propSchema as Record<string, unknown>, `${path}.${key}`, diagnostics);
       }
     }
   }
@@ -356,12 +370,12 @@ function validateJsonSchema(
   // Array items.
   if (type === 'array' || 'items' in schema) {
     if (!Array.isArray(value)) {
-      problems.push(`${path}：期望数组，实际为 ${baseType(value)}`);
+      addProblem(diagnostics, path, `期望数组，实际为 ${baseType(value)}`, 'array', baseType(value));
       return;
     }
     if (isPlainObject(schema.items)) {
       const itemSchema = schema.items as Record<string, unknown>;
-      value.forEach((el, i) => validateJsonSchema(el, itemSchema, `${path}[${i}]`, problems));
+      value.forEach((el, i) => validateJsonSchema(el, itemSchema, `${path}[${i}]`, diagnostics));
     }
   }
 }
@@ -398,32 +412,32 @@ function validateExample(
   value: unknown,
   example: unknown,
   path: string,
-  problems: string[],
+  diagnostics: SchemaProblem[],
 ): void {
   if (isPlainObject(example)) {
     if (!isPlainObject(value)) {
-      problems.push(`${path}：期望对象，实际为 ${baseType(value)}`);
+      addProblem(diagnostics, path, `期望对象，实际为 ${baseType(value)}`, 'object', baseType(value));
       return;
     }
     const obj = value as Record<string, unknown>;
     for (const [key, sample] of Object.entries(example)) {
       if (!(key in obj)) {
-        problems.push(`${path}：缺少字段 "${key}"`);
+        addProblem(diagnostics, `${path}.${key}`, `缺少字段 "${key}"`, baseType(sample), 'missing');
         continue;
       }
-      validateExample(obj[key], sample, `${path}.${key}`, problems);
+      validateExample(obj[key], sample, `${path}.${key}`, diagnostics);
     }
     return;
   }
 
   if (Array.isArray(example)) {
     if (!Array.isArray(value)) {
-      problems.push(`${path}：期望数组，实际为 ${baseType(value)}`);
+      addProblem(diagnostics, path, `期望数组，实际为 ${baseType(value)}`, 'array', baseType(value));
       return;
     }
     if (example.length > 0 && value.length > 0) {
       // Loosely check each provided element against the first sample element.
-      value.forEach((el, i) => validateExample(el, example[0], `${path}[${i}]`, problems));
+      value.forEach((el, i) => validateExample(el, example[0], `${path}[${i}]`, diagnostics));
     }
     return;
   }
@@ -432,7 +446,7 @@ function validateExample(
   const want = baseType(example);
   const got = baseType(value);
   if (want !== got) {
-    problems.push(`${path}：期望类型 ${want}，实际为 ${got}`);
+    addProblem(diagnostics, path, `期望类型 ${want}，实际为 ${got}`, want, got);
   }
 }
 
@@ -452,6 +466,28 @@ ${list}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function emptyValidation(): SchemaValidation {
+  return { ok: true, problems: [], diagnostics: [] };
+}
+
+function toValidation(diagnostics: SchemaProblem[]): SchemaValidation {
+  return {
+    ok: diagnostics.length === 0,
+    problems: diagnostics.map((d) => `${d.path}：${d.message}`),
+    diagnostics,
+  };
+}
+
+function addProblem(
+  diagnostics: SchemaProblem[],
+  path: string,
+  message: string,
+  expected?: string,
+  actual?: string,
+): void {
+  diagnostics.push({ path, message, ...(expected ? { expected } : {}), ...(actual ? { actual } : {}) });
 }
 
 /** Coarse runtime base type used in both validation modes + problem messages. */

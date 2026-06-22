@@ -13,6 +13,7 @@ import {
 import { isFreeChannelSelection } from '@/lib/freeChannels';
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
 import { translatePublicText } from '@/lib/publicTranslation';
+import { remoteProviderId, remoteWorkspacePath } from '@/lib/remoteWorkspace';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import type { Message } from '@/store/types';
 import { useStore } from '@/store/useStore';
@@ -118,7 +119,7 @@ function aiInput(container: HTMLElement): HTMLTextAreaElement {
 }
 
 function aiInputCard(container: HTMLElement): HTMLElement {
-  const card = container.querySelector('.fuc-ai-input-card');
+  const card = container.querySelector('.ugs-ai-input-card');
   if (!card) throw new Error('Missing AI input card');
   return card as HTMLElement;
 }
@@ -407,6 +408,108 @@ describe('PromptPanel running lock', () => {
       expect(view.container.textContent).toContain('Claude Code · 默认渠道');
       expect(view.container.textContent).toContain('Codex · 默认渠道');
       expect(view.container.textContent).toContain('Gemini · 默认渠道');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('hides remote runner channels for a local workspace', async () => {
+    const remoteProvider: Provider = {
+      id: remoteProviderId('rw_remote', 'sss'),
+      kind: 'anthropic',
+      name: '远程服务器测试 · SSSAiCode',
+      apiKey: 'remote-runner',
+      baseUrl: 'https://runner.test',
+      transport: 'cli',
+      model: 'claude-opus-4-8',
+    };
+    seedDefaultChannels();
+    const providers = [
+      ...JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]'),
+      remoteProvider,
+    ] as Provider[];
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(providers));
+    resetStoreForPromptLock('design');
+    useStore.setState({
+      activeWorkspaceId: 'ws_local',
+      workspaces: [
+        {
+          id: 'ws_local',
+          path: 'E:\\UltraGameStudio',
+          name: 'UltraGameStudio',
+          updatedAt: 1,
+          sessionCount: 0,
+        },
+      ],
+      composer: {
+        ...defaultComposer,
+        workspace: 'E:\\UltraGameStudio',
+      },
+    });
+    const view = await renderChatDock();
+
+    try {
+      await act(async () => {
+        channelButton(view.container).click();
+      });
+
+      expect(view.container.textContent).toContain('SSSAiCode');
+      expect(view.container.textContent).not.toContain('远程服务器测试');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows only matching remote runner channels for a cloud workspace', async () => {
+    const matchingRemoteProvider: Provider = {
+      id: remoteProviderId('rw_remote', 'sss'),
+      kind: 'anthropic',
+      name: '远程服务器测试 · SSSAiCode',
+      apiKey: 'remote-runner',
+      baseUrl: 'https://runner.test',
+      transport: 'cli',
+      model: 'claude-opus-4-8',
+    };
+    const otherRemoteProvider: Provider = {
+      id: remoteProviderId('rw_other', 'deepseek'),
+      kind: 'anthropic',
+      name: '其他云端 · DeepSeek',
+      apiKey: 'remote-runner',
+      baseUrl: 'https://runner.test',
+      transport: 'cli',
+      model: 'deepseek-chat',
+    };
+    window.localStorage.setItem(
+      PROVIDERS_STORAGE,
+      JSON.stringify([matchingRemoteProvider, otherRemoteProvider]),
+    );
+    resetStoreForPromptLock('design');
+    const remotePath = remoteWorkspacePath('rw_remote');
+    useStore.setState({
+      activeWorkspaceId: 'ws_remote',
+      workspaces: [
+        {
+          id: 'ws_remote',
+          path: remotePath,
+          name: '远程服务器测试',
+          updatedAt: 1,
+          sessionCount: 0,
+        },
+      ],
+      composer: {
+        ...defaultComposer,
+        workspace: remotePath,
+      },
+    });
+    const view = await renderChatDock();
+
+    try {
+      await act(async () => {
+        channelButton(view.container).click();
+      });
+
+      expect(view.container.textContent).toContain('远程服务器测试 · SSSAiCode');
+      expect(view.container.textContent).not.toContain('其他云端 · DeepSeek');
     } finally {
       await view.cleanup();
     }

@@ -3,7 +3,7 @@
  * load/normalisation, and shared global-flag plumbing for the CLI commands.
  *
  * Pure Node + chalk. No react / zustand / tauri. The `loadGraph` helper is the
- * single funnel that turns any input (.fuc.json / .js / .yaml) into an IRGraph
+ * single funnel that turns any input (.ugs.json / .js / .yaml) into an IRGraph
  * for the read-only commands (info / validate / emit / diff / convert / run).
  */
 import chalk from 'chalk';
@@ -60,7 +60,7 @@ export function table(header: string[], rows: string[][]): string {
 }
 
 /**
- * Normalise any supported input text into an IRGraph. `.fuc.json` is parsed as
+ * Normalise any supported input text into an IRGraph. `.ugs.json` is parsed as
  * JSON and shape-checked; `.js` is run through `parseClaudeScript`; `.yaml` is
  * deserialised then (if it is a script) parsed. Throws {@link CliError} with the
  * spec'd exit codes on failure.
@@ -82,7 +82,7 @@ export function loadGraph(
   return raw;
 }
 
-/** Minimal structural shape check for a parsed .fuc.json (exit code 3). */
+/** Minimal structural shape check for a parsed .ugs.json (exit code 3). */
 export function assertGraphShape(g: unknown): asserts g is IRGraph {
   assertGraphShapeLite(g);
 }

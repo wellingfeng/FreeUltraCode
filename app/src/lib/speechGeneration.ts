@@ -1,5 +1,6 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
@@ -129,7 +130,7 @@ export interface SpeechGenerationRequest {
   signal?: AbortSignal;
 }
 
-const STORAGE_KEY = 'freeultracode.speechGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.speechGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/speechGeneration.v1.json';
 export const SPEECH_PROVIDERS: SpeechProviderDefinition[] = [
   {
@@ -913,10 +914,7 @@ export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerat
   const validKey = (key: unknown): key is SpeechProviderId =>
     isKnownSpeechProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_SPEECH_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     customProviders,
     providerKeys: cleanRecord(source.providerKeys, validKey),
@@ -928,23 +926,28 @@ export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerat
   };
 }
 
-export function loadSpeechGenerationSettings(): SpeechGenerationSettings {
+export function loadSpeechGenerationSettings(
+  options: SettingsProfileOptions = {},
+): SpeechGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeSpeechGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_SPEECH_GENERATION_SETTINGS;
   }
 }
 
-export function saveSpeechGenerationSettings(settings: SpeechGenerationSettings): boolean {
+export function saveSpeechGenerationSettings(
+  settings: SpeechGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeSpeechGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[speechGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:speech-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:speech-generation-settings-changed'));
   return true;
 }
 
@@ -1051,7 +1054,6 @@ export async function generateSpeech(
   request: SpeechGenerationRequest,
   settings = loadSpeechGenerationSettings(),
 ): Promise<SpeechGenerationResult> {
-  if (!settings.enabled) throw new Error('SPEECH_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadySpeechProviderId(settings);
   if (!providerId) throw new Error('NO_READY_SPEECH_PROVIDER');
   if (!speechProviderReady(providerId, settings)) {

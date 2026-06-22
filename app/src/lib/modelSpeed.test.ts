@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 describe('model speed policy', () => {
-  it('enables multi-candidate generation for known fast tiers', () => {
+  it('allows opt-in multi-candidate generation for known fast tiers', () => {
     const selection: GatewaySelection = {
       adapter: 'claude-code',
       modelClass: 'haiku',
@@ -27,7 +27,7 @@ describe('model speed policy', () => {
       count: 5,
     });
     expect(effectiveRunConcurrency(4, selection)).toBe(4);
-    expect(effectiveRunConcurrency(16, selection)).toBe(10);
+    expect(effectiveRunConcurrency(16, selection)).toBe(4);
   });
 
   it('disables multi-candidate generation and keeps limited runtime parallelism for slow tiers', () => {
@@ -42,7 +42,7 @@ describe('model speed policy', () => {
       count: 1,
       concurrency: 1,
     });
-    expect(effectiveRunConcurrency(16, selection)).toBe(4);
+    expect(effectiveRunConcurrency(16, selection)).toBe(2);
     expect(effectiveRunConcurrency(1, selection)).toBe(1);
 
     const timeout = timeoutPolicyForSelection(selection, 'x'.repeat(12_000));
@@ -59,7 +59,7 @@ describe('model speed policy', () => {
     };
 
     expect(modelSpeedProfile(selection).tier).toBe('standard');
-    expect(effectiveRunConcurrency(16, selection)).toBe(5);
+    expect(effectiveRunConcurrency(16, selection)).toBe(3);
     recordModelCall(selection, {
       elapsedMs: 35_000,
       firstProgressMs: 4_000,
@@ -67,14 +67,27 @@ describe('model speed policy', () => {
     });
 
     expect(modelSpeedProfile(selection).tier).toBe('fast');
-    expect(effectiveRunConcurrency(16, selection)).toBe(10);
+    expect(effectiveRunConcurrency(16, selection)).toBe(4);
     expect(effectiveGenerationConsensusPlan(3, selection).enabled).toBe(true);
   });
 
+  it('keeps generation consensus off when candidate count is 1', () => {
+    const selection: GatewaySelection = {
+      adapter: 'claude-code',
+      modelClass: 'haiku',
+    };
+
+    expect(effectiveGenerationConsensusPlan(1, selection)).toMatchObject({
+      enabled: false,
+      count: 1,
+      concurrency: 1,
+    });
+  });
+
   it('uses configured per-tier concurrency caps', () => {
-    window.localStorage.setItem('fuc_run_concurrency_slow', '3');
-    window.localStorage.setItem('fuc_run_concurrency_standard', '6');
-    window.localStorage.setItem('fuc_run_concurrency_fast', '12');
+    window.localStorage.setItem('ugs_run_concurrency_slow', '3');
+    window.localStorage.setItem('ugs_run_concurrency_standard', '6');
+    window.localStorage.setItem('ugs_run_concurrency_fast', '12');
 
     expect(
       effectiveRunConcurrency(16, {

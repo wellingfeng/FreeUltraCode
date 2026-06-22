@@ -8,6 +8,12 @@ import {
   PROJECT_FILE_DRAG_MIME,
   setProjectFileDragData,
 } from '@/lib/projectFileDrag';
+import {
+  remoteWorkspacePath,
+  saveRemoteRunnerConnection,
+  saveRemoteWorkspace,
+} from '@/lib/remoteWorkspace';
+import { resetSecureStorageForTests } from '@/lib/secureStorage';
 import type { WorkspaceTreeEntry } from '@/lib/tauri';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
@@ -35,6 +41,10 @@ const tauriWebviewMock = vi.hoisted(() => {
   return { listeners, onDragDropEvent };
 });
 
+const tauriMocks = vi.hoisted(() => ({
+  readLocalFileForUpload: vi.fn(),
+}));
+
 vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({
     onDragDropEvent: tauriWebviewMock.onDragDropEvent,
@@ -54,7 +64,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
           ? []
           : [
               {
-                path: 'E:\\OpenWorkflows\\app\\src\\ProjectFileTree.tsx',
+                path: 'E:\\UltraGameStudio\\app\\src\\ProjectFileTree.tsx',
                 relativePath: 'app/src/ProjectFileTree.tsx',
                 name: 'ProjectFileTree.tsx',
                 kind: 'file',
@@ -87,6 +97,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
       entries: [],
     }),
     onSlashCatalogUpdated: async () => () => {},
+    readLocalFileForUpload: tauriMocks.readLocalFileForUpload,
   };
 });
 
@@ -129,8 +140,8 @@ type ProjectEntryDragProps = {
 function resetStore(options: { withWorkspace?: boolean } = {}): void {
   const workspace = {
     id: 'ws_project_file_drag',
-    path: 'E:\\OpenWorkflows',
-    name: 'OpenWorkflows',
+    path: 'E:\\UltraGameStudio',
+    name: 'UltraGameStudio',
     updatedAt: 1,
     sessionCount: 1,
     lastActiveSessionId: 's_project_file_drag',
@@ -144,7 +155,7 @@ function resetStore(options: { withWorkspace?: boolean } = {}): void {
     chattingSessions: [],
     locale: 'zh-CN',
     promptGroups: samplePromptGroups,
-    composer: { ...defaultComposer, workspace: 'E:\\OpenWorkflows' },
+    composer: { ...defaultComposer, workspace: 'E:\\UltraGameStudio' },
     composerDraft: '',
     composerDrafts: {},
     composerFocusVersion: 0,
@@ -220,7 +231,7 @@ function textarea(container: HTMLElement): HTMLTextAreaElement {
 }
 
 function composerCard(container: HTMLElement): HTMLDivElement {
-  const card = container.querySelector<HTMLDivElement>('.fuc-ai-input-card');
+  const card = container.querySelector<HTMLDivElement>('.ugs-ai-input-card');
   if (!card) throw new Error('Missing AI input card');
   return card;
 }
@@ -261,8 +272,44 @@ function plainDataTransfer(): DataTransfer {
   } as unknown as DataTransfer;
 }
 
+function fileItemDataTransfer(file: File): DataTransfer {
+  return {
+    dropEffect: 'none',
+    effectAllowed: 'copy',
+    files: [],
+    items: [
+      {
+        kind: 'file',
+        type: file.type,
+        getAsFile: () => file,
+      },
+    ],
+    types: ['Files'],
+    getData: vi.fn(() => ''),
+    setData: vi.fn(),
+    clearData: vi.fn(),
+    setDragImage: vi.fn(),
+  } as unknown as DataTransfer;
+}
+
+async function waitForExpect(assertion: () => void): Promise<void> {
+  let lastError: unknown;
+  for (let i = 0; i < 20; i += 1) {
+    try {
+      assertion();
+      return;
+    } catch (err) {
+      lastError = err;
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 10));
+      });
+    }
+  }
+  throw lastError;
+}
+
 const dragEntry: WorkspaceTreeEntry = {
-  path: 'E:\\OpenWorkflows\\app\\src\\ProjectFileTree.tsx',
+  path: 'E:\\UltraGameStudio\\app\\src\\ProjectFileTree.tsx',
   relativePath: 'app/src/ProjectFileTree.tsx',
   name: 'ProjectFileTree.tsx',
   kind: 'file',
@@ -271,9 +318,12 @@ const dragEntry: WorkspaceTreeEntry = {
 
 afterEach(() => {
   clearProjectFileDragData();
+  tauriMocks.readLocalFileForUpload.mockReset();
   tauriWebviewMock.listeners.length = 0;
   tauriWebviewMock.onDragDropEvent.mockClear();
+  vi.unstubAllGlobals();
   window.localStorage.clear();
+  resetSecureStorageForTests();
   document.body.innerHTML = '';
 });
 
@@ -327,6 +377,173 @@ describe('AIDock project file drag', () => {
     }
   });
 
+  it('uploads native OS drops before inserting paths for remote workspaces', async () => {
+    resetStore();
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test' },
+      { token: 'runner-token' },
+    );
+    const remotePath = remoteWorkspacePath('rw_drag');
+    saveRemoteWorkspace({
+      id: 'rw_drag',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      adapter: 'codex',
+      projectId: 'proj_drag',
+      repoUrl: 'https://github.com/me/game.git',
+    });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: remotePath },
+    });
+    tauriMocks.readLocalFileForUpload.mockResolvedValue({
+      bytesBase64: 'AQID',
+      fileName: 'local.png',
+      mime: 'image/png',
+      sizeBytes: 3,
+    });
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          file: {
+            path: 'remote-project://proj_drag/.ultragamestudio/uploads/local.png',
+            relativePath: '.ultragamestudio/uploads/local.png',
+            fileName: 'local.png',
+            mime: 'image/png',
+            sizeBytes: 3,
+          },
+        }),
+        {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const view = await renderDock();
+
+    try {
+      const card = composerCard(view.container);
+      const input = textarea(view.container);
+      const fullPath = 'E:\\Users\\me\\Pictures\\local.png';
+
+      Object.defineProperty(card, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => ({
+          left: 0,
+          top: 0,
+          right: 800,
+          bottom: 300,
+          width: 800,
+          height: 300,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }),
+      });
+
+      for (let i = 0; i < 3 && tauriWebviewMock.listeners.length === 0; i += 1) {
+        await act(async () => {
+          await new Promise((resolve) => window.setTimeout(resolve, 0));
+        });
+      }
+
+      await act(async () => {
+        tauriWebviewMock.listeners[0]({
+          payload: {
+            type: 'drop',
+            position: { x: 40, y: 40 },
+            paths: [fullPath],
+          },
+        });
+      });
+
+      await vi.waitFor(() =>
+        expect(input.value).toBe('.ultragamestudio/uploads/local.png'),
+      );
+      expect(tauriMocks.readLocalFileForUpload).toHaveBeenCalledWith(fullPath);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://runner.test/projects/proj_drag/files',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('uploads browser file drops from DataTransfer items for remote workspaces', async () => {
+    resetStore();
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test' },
+      { token: 'runner-token' },
+    );
+    const remotePath = remoteWorkspacePath('rw_items_drag');
+    saveRemoteWorkspace({
+      id: 'rw_items_drag',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      adapter: 'codex',
+      projectId: 'proj_items_drag',
+      repoUrl: 'https://github.com/me/game.git',
+    });
+    useStore.setState({
+      composer: { ...defaultComposer, workspace: remotePath },
+    });
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          file: {
+            path: 'remote-project://proj_items_drag/.ultragamestudio/uploads/item.png',
+            relativePath: '.ultragamestudio/uploads/item.png',
+            fileName: 'item.png',
+            mime: 'image/png',
+            sizeBytes: 3,
+          },
+        }),
+        {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const view = await renderDock();
+
+    try {
+      const card = composerCard(view.container);
+      const input = textarea(view.container);
+      const props = reactProps<ComposerDropProps>(card);
+      const file = new File([new Uint8Array([1, 2, 3])], 'item.png', {
+        type: 'image/png',
+      });
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+      });
+
+      await act(async () => {
+        props.onDrop?.({
+          dataTransfer: fileItemDataTransfer(file),
+          currentTarget: card,
+          target: card,
+          relatedTarget: null,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+
+      await waitForExpect(() => {
+        expect(input.value).toBe('.ultragamestudio/uploads/item.png');
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://runner.test/projects/proj_items_drag/files',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('accepts project file and folder drops on the whole AI input card', async () => {
     resetStore();
     const view = await renderDock();
@@ -336,8 +553,8 @@ describe('AIDock project file drag', () => {
       const input = textarea(view.container);
       const props = reactProps<ComposerDropProps>(card);
       const dataTransfer = projectDataTransfer([
-        'E:\\OpenWorkflows\\app\\src\\App.tsx',
-        'E:\\OpenWorkflows\\app\\src\\panels',
+        'E:\\UltraGameStudio\\app\\src\\App.tsx',
+        'E:\\UltraGameStudio\\app\\src\\panels',
       ]);
       const dragPreventDefault = vi.fn();
       const dropPreventDefault = vi.fn();
@@ -371,7 +588,7 @@ describe('AIDock project file drag', () => {
       expect(dropPreventDefault).toHaveBeenCalled();
       expect(dropStopPropagation).toHaveBeenCalled();
       expect(input.value).toBe(
-        'E:\\OpenWorkflows\\app\\src\\App.tsx\nE:\\OpenWorkflows\\app\\src\\panels',
+        'E:\\UltraGameStudio\\app\\src\\App.tsx\nE:\\UltraGameStudio\\app\\src\\panels',
       );
     } finally {
       await view.cleanup();
@@ -472,12 +689,108 @@ describe('AIDock project file drag', () => {
     }
   });
 
+  it('connects remote ProjectFileTree drags to the AI input as relative paths', async () => {
+    resetStore();
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test' },
+      { token: 'runner-token' },
+    );
+    const remotePath = remoteWorkspacePath('rw_tree_drag');
+    saveRemoteWorkspace({
+      id: 'rw_tree_drag',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      adapter: 'codex',
+      projectId: 'proj_tree_drag',
+      repoUrl: 'https://github.com/me/game.git',
+    });
+    useStore.setState({
+      workspaces: [
+        {
+          id: 'ws_tree_drag',
+          path: remotePath,
+          name: '远程项目',
+          updatedAt: 1,
+          sessionCount: 1,
+          lastActiveSessionId: 's_project_file_drag',
+        },
+      ],
+      activeWorkspaceId: 'ws_tree_drag',
+      composer: { ...defaultComposer, workspace: remotePath },
+    });
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === 'https://runner.test/projects/proj_tree_drag/files') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            listing: {
+              rootPath: 'remote-project://proj_tree_drag',
+              relativePath: '',
+              entries: [
+                {
+                  name: 'RemoteFile.ts',
+                  path: 'remote-project://proj_tree_drag/src/RemoteFile.ts',
+                  relativePath: 'src/RemoteFile.ts',
+                  kind: 'file',
+                  hidden: false,
+                },
+              ],
+              truncated: false,
+              totalEntries: 1,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: false, error: 'unexpected' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const view = await renderProjectDragHarness();
+
+    try {
+      await waitForExpect(() => {
+        expect(view.container.textContent).toContain('RemoteFile.ts');
+      });
+      const source = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button[title]'),
+      ).find((button) => button.title === `${remotePath}/src/RemoteFile.ts`);
+      if (!source) throw new Error('Missing remote project tree source entry');
+
+      expect(source.draggable).toBe(true);
+      const sourceProps = reactProps<ProjectEntryDragProps>(source);
+      sourceProps.onDragStart?.({ dataTransfer: plainDataTransfer() });
+
+      const card = composerCard(view.container);
+      const input = textarea(view.container);
+      const props = reactProps<ComposerDropProps>(card);
+
+      await act(async () => {
+        props.onDrop?.({
+          dataTransfer: plainDataTransfer(),
+          currentTarget: card,
+          target: card,
+          relatedTarget: null,
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
+        });
+      });
+
+      expect(input.value).toBe('src/RemoteFile.ts');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('shows persisted session change counts in the session files tab', async () => {
-    window.localStorage.setItem('freeultracode.projectRightPanelTab.v1', 'session');
+    window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
     window.localStorage.setItem(
-      'freeultracode.sessionChanges.v5:v5:ws_project_file_drag:s_project_file_drag:E:/OpenWorkflows',
+      'ultragamestudio.sessionChanges.v5:v5:ws_project_file_drag:s_project_file_drag:E:/UltraGameStudio',
       JSON.stringify({
-        rootPath: 'E:/OpenWorkflows',
+        rootPath: 'E:/UltraGameStudio',
         generatedAtMs: 50,
         source: 'snapshot',
         truncated: false,
@@ -603,7 +916,7 @@ describe('AIDock project file drag', () => {
       });
 
       expect(overInputTransfer.dropEffect).toBe('copy');
-      expect(card.className).toContain('fuc-ai-input--drop');
+      expect(card.className).toContain('ugs-ai-input--drop');
 
       const outsideTransfer = plainDataTransfer();
       await act(async () => {
@@ -615,7 +928,7 @@ describe('AIDock project file drag', () => {
       });
 
       expect(outsideTransfer.dropEffect).toBe('none');
-      expect(card.className).not.toContain('fuc-ai-input--drop');
+      expect(card.className).not.toContain('ugs-ai-input--drop');
     } finally {
       await view.cleanup();
     }

@@ -373,7 +373,7 @@ function ComfyEditorOverlay({
   // when the surface isn't present (e.g. the compact dock layout).
   const [surface, setSurface] = useState<HTMLElement | null>(null);
   useEffect(() => {
-    setSurface(document.getElementById('fuc-stream-surface'));
+    setSurface(document.getElementById('ugs-stream-surface'));
   }, []);
 
   const updateField = useCallback(

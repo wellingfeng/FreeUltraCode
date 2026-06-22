@@ -141,7 +141,7 @@ describe('asset registry', () => {
   });
 
   it('does not resurrect cleared disk assets on the next disk scan', () => {
-    const diskPath = 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\gen.png';
+    const diskPath = 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\gen.png';
     const id = registerAsset({
       kind: 'image',
       source: 'generated',
@@ -172,7 +172,7 @@ describe('asset registry', () => {
   });
 
   it('lets a freshly generated asset reappear at a previously cleared path', () => {
-    const diskPath = 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\gen.png';
+    const diskPath = 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\gen.png';
     const first = registerAsset({
       kind: 'image',
       source: 'generated',
@@ -215,7 +215,7 @@ describe('asset registry', () => {
   it('persists terminal entries to localStorage', () => {
     const id = registerAsset({ kind: 'image', source: 'generated', title: 'a.png' });
     markAssetDone(id, { localPath: '/ws/a.png' });
-    const raw = window.localStorage.getItem('freeultracode.assets.v1');
+    const raw = window.localStorage.getItem('ultragamestudio.assets.v1');
     expect(raw).toBeTruthy();
     const parsed = JSON.parse(raw as string) as Array<{ title: string }>;
     expect(parsed).toHaveLength(1);
@@ -239,7 +239,7 @@ describe('asset registry', () => {
     expect(getAssets()[0].previewUrl).toBe(bigPreview);
 
     // Persisted copy drops it but retains the localPath to rebuild from.
-    const raw = window.localStorage.getItem('freeultracode.assets.v1');
+    const raw = window.localStorage.getItem('ultragamestudio.assets.v1');
     const parsed = JSON.parse(raw as string) as Array<{
       previewUrl?: string;
       localPath?: string;
@@ -257,21 +257,21 @@ describe('asset registry', () => {
       previewUrl: smallPreview,
     });
     markAssetDone(id, { localPath: '/ws/small.png' });
-    const raw = window.localStorage.getItem('freeultracode.assets.v1');
+    const raw = window.localStorage.getItem('ultragamestudio.assets.v1');
     const parsed = JSON.parse(raw as string) as Array<{ previewUrl?: string }>;
     expect(parsed[0].previewUrl).toBe(smallPreview);
   });
 
   it('does not persist pending entries', () => {
     registerAsset({ kind: 'image', source: 'generated', title: 'a.png' });
-    const raw = window.localStorage.getItem('freeultracode.assets.v1');
+    const raw = window.localStorage.getItem('ultragamestudio.assets.v1');
     const parsed = raw ? (JSON.parse(raw) as unknown[]) : [];
     expect(parsed).toHaveLength(0);
   });
 
   it('migrates legacy downloads.v1 history into assets.v1', () => {
     window.localStorage.setItem(
-      'freeultracode.downloads.v1',
+      'ultragamestudio.downloads.v1',
       JSON.stringify([
         {
           id: 'dl-1',
@@ -291,13 +291,13 @@ describe('asset registry', () => {
     expect(list[0].source).toBe('downloaded');
     expect(list[0].localPath).toBe('/ws/old.glb');
     // Legacy key is consumed after migration.
-    expect(window.localStorage.getItem('freeultracode.downloads.v1')).toBeNull();
-    expect(window.localStorage.getItem('freeultracode.assets.v1')).toBeTruthy();
+    expect(window.localStorage.getItem('ultragamestudio.downloads.v1')).toBeNull();
+    expect(window.localStorage.getItem('ultragamestudio.assets.v1')).toBeTruthy();
   });
 
   it('hydrates persisted entries newest first by terminal time', () => {
     window.localStorage.setItem(
-      'freeultracode.assets.v1',
+      'ultragamestudio.assets.v1',
       JSON.stringify([
         {
           id: 'old',
@@ -331,7 +331,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'old.png',
-        localPath: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\old.png',
+        localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\old.png',
         sizeBytes: 10,
         createdAtMs: 100,
         modifiedAtMs: 200,
@@ -340,7 +340,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'new.png',
-        localPath: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\new.png',
+        localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\new.png',
         sizeBytes: 20,
         createdAtMs: 100,
         modifiedAtMs: 300,
@@ -359,7 +359,7 @@ describe('asset registry', () => {
       source: 'generated',
       title: 'shot.png',
       status: 'success',
-      localPath: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       sizeBytes: 1,
     });
     markAssetDone(id);
@@ -369,7 +369,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'shot.png',
-        localPath: 'E:/OpenWorkflows/.freeultracode/clipboard-images/shot.png',
+        localPath: 'E:/UltraGameStudio/.ultragamestudio/clipboard-images/shot.png',
         sizeBytes: 2,
         createdAtMs: 100,
         modifiedAtMs: 300,
@@ -382,17 +382,47 @@ describe('asset registry', () => {
     expect(list[0].sizeBytes).toBe(1);
   });
 
+  it('treats managed clipboard paths as local even when a remote source url exists', () => {
+    const id = registerAsset({
+      kind: 'image',
+      source: 'generated',
+      origin: 'remote',
+      title: 'shot.png',
+      status: 'success',
+      localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+      remoteUrl: 'https://cdn.example.test/shot.png',
+    });
+
+    expect(getAssets().find((entry) => entry.id === id)?.origin).toBe('local');
+  });
+
+  it('switches pending remote assets to local after they are saved to disk', () => {
+    const id = registerAsset({
+      kind: 'image',
+      source: 'generated',
+      origin: 'remote',
+      title: 'shot.png',
+      remoteUrl: 'https://cdn.example.test/shot.png',
+    });
+
+    markAssetDone(id, {
+      localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+    });
+
+    expect(getAssets().find((entry) => entry.id === id)?.origin).toBe('local');
+  });
+
   it('extracts managed asset paths from message text', () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\pasted-1.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1.png';
     expect(managedAssetPathsFromText(`看这个 ${path}`)).toEqual([path]);
   });
 
   it('stops managed asset paths at the file extension before prose punctuation', () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\pasted-1.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1.png';
     const other =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\pasted-2.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-2.png';
     expect(
       managedAssetPathsFromText(
         `看这个 ${path}，好像重复了；还有${other}, sprite模式应该能跳转`,
@@ -406,7 +436,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'shot.png',
-        localPath: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+        localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
         sizeBytes: 2,
         createdAtMs: 100,
         modifiedAtMs: 300,
@@ -414,7 +444,7 @@ describe('asset registry', () => {
     ]);
 
     linkLocalAssetToMessage({
-      localPath: 'file:///E:/OpenWorkflows/.freeultracode/clipboard-images/shot.png',
+      localPath: 'file:///E:/UltraGameStudio/.ultragamestudio/clipboard-images/shot.png',
       sessionId: 's_1',
       workspaceId: 'w_1',
       messageId: 'm_1',
@@ -429,7 +459,7 @@ describe('asset registry', () => {
 
   it('links a punctuated managed path to the existing disk asset instead of duplicating it', () => {
     const path =
-      'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png';
+      'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png';
     mergeCachedAssetsFromDisk([
       {
         kind: 'image',
@@ -458,7 +488,7 @@ describe('asset registry', () => {
 
   it('registers managed asset paths from a message when disk scan has not run', () => {
     linkManagedAssetsFromMessageText({
-      text: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\shot.png',
+      text: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
       sessionId: 's_2',
       workspaceId: 'w_2',
       messageId: 'm_2',
@@ -477,7 +507,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'known.png',
-        localPath: 'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\known.png',
+        localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\known.png',
         sizeBytes: 2,
         createdAtMs: 100,
         modifiedAtMs: 300,
@@ -486,8 +516,8 @@ describe('asset registry', () => {
 
     linkKnownManagedAssetsFromMessageText({
       text: [
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\known.png',
-        'E:\\OpenWorkflows\\.freeultracode\\clipboard-images\\missing.png',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\known.png',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\missing.png',
       ].join('\n'),
       sessionId: 's_3',
       workspaceId: 'w_3',
@@ -507,7 +537,7 @@ describe('asset registry', () => {
         kind: 'image',
         source: 'generated',
         title: 'generated.png',
-        localPath: 'E:\\OpenWorkflows\\.freeultracode\\assets\\image\\generated.png',
+        localPath: 'E:\\UltraGameStudio\\.ultragamestudio\\assets\\image\\generated.png',
         sizeBytes: 2,
         createdAtMs: 1_000,
         modifiedAtMs: 1_020,

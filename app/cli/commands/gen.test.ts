@@ -1,5 +1,5 @@
 /**
- * e2e + unit coverage for `fuc gen`.
+ * e2e + unit coverage for `ugs gen`.
  *
  * gen drives the local claude CLI (never an API key). We point it at a *fake*
  * claude — a platform shim that re-execs Node on a fixture which reads the
@@ -9,7 +9,7 @@
  *
  *   - generate:  gen "<需求>" -o flow.js  → writes a legal .js script
  *   - modify:    gen flow.js "<意图>"      → overwrites the script in place
- *   - run smoke: the generated .js passes `fuc run --dry-run` (exit 0)
+ *   - run smoke: the generated .js passes `ugs run --dry-run` (exit 0)
  */
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,20 +37,20 @@ beforeEach(() => {
   errBuf = '';
   outSpy = vi.spyOn(process.stdout, 'write').mockImplementation(sink((s) => (outBuf += s)));
   errSpy = vi.spyOn(process.stderr, 'write').mockImplementation(sink((s) => (errBuf += s)));
-  dir = mkdtempSync(join(tmpdir(), 'fuc-gen-'));
+  dir = mkdtempSync(join(tmpdir(), 'ugs-gen-'));
 });
 
 afterEach(() => {
   outSpy.mockRestore();
   errSpy.mockRestore();
-  delete process.env.FUC_CLAUDE_PATH;
+  delete process.env.UGS_CLAUDE_PATH;
   rmSync(dir, { recursive: true, force: true });
 });
 
 /**
  * Build a fake claude that emits a stream-json assistant block whose text holds
  * a fenced ```json IRGraph (the graph passed in `graphJson`). Returns the shim
- * path; we set FUC_CLAUDE_PATH to it so whichCli/spawnCliAgent pick it up.
+ * path; we set UGS_CLAUDE_PATH to it so whichCli/spawnCliAgent pick it up.
  */
 function makeFakeClaude(graphJson: string): string {
   const reply =
@@ -100,9 +100,9 @@ function reviewGraph(): string {
   });
 }
 
-describe('fuc gen', () => {
+describe('ugs gen', () => {
   it('generates a legal .js script from a natural-language request (exit 0)', async () => {
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     const out = join(dir, 'flow.js');
     const code = await runGen('做个代码审查流程', undefined, { output: out, quiet: true });
     expect(code).toBe(0);
@@ -114,15 +114,15 @@ describe('fuc gen', () => {
   });
 
   it('accepts output as the second positional arg', async () => {
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     const out = join(dir, 'flow2.js');
     const code = await runGen('做个代码审查流程', out, { quiet: true });
     expect(code).toBe(0);
     expect(existsSync(out)).toBe(true);
   });
 
-  it('generated script passes `fuc run --dry-run` (exit 0)', async () => {
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+  it('generated script passes `ugs run --dry-run` (exit 0)', async () => {
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     const out = join(dir, 'flow.js');
     await runGen('做个代码审查流程', undefined, { output: out, quiet: true });
     const code = await runRun(out, { dryRun: true, quiet: true });
@@ -131,7 +131,7 @@ describe('fuc gen', () => {
 
   it('modifies an existing script in place when arg1 is a file', async () => {
     // First generate a base script.
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     const out = join(dir, 'flow.js');
     await runGen('做个代码审查流程', undefined, { output: out, quiet: true });
     const before = readFileSync(out, 'utf8');
@@ -152,7 +152,7 @@ describe('fuc gen', () => {
         { id: 'e3', from: { node: 'n_verify', port: 'exec_out' }, to: { node: 'n_end', port: 'exec_in' }, kind: 'exec' },
       ],
     });
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(withVerify);
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(withVerify);
     const code = await runGen(out, '加一个验证节点', { quiet: true });
     expect(code).toBe(0);
     const after = readFileSync(out, 'utf8');
@@ -162,7 +162,7 @@ describe('fuc gen', () => {
   });
 
   it('errors with exit 4 when no claude CLI is available', async () => {
-    process.env.FUC_CLAUDE_PATH = join(dir, 'does-not-exist-claude');
+    process.env.UGS_CLAUDE_PATH = join(dir, 'does-not-exist-claude');
     const out = join(dir, 'flow.js');
     await expect(runGen('做个流程', undefined, { output: out, quiet: true })).rejects.toMatchObject({
       exitCode: 4,
@@ -170,14 +170,14 @@ describe('fuc gen', () => {
   });
 
   it('errors when generate mode is missing an output path', async () => {
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     await expect(runGen('做个流程', undefined, { quiet: true })).rejects.toMatchObject({
       exitCode: 1,
     });
   });
 
   it('errors when modify mode is missing an intent', async () => {
-    process.env.FUC_CLAUDE_PATH = makeFakeClaude(reviewGraph());
+    process.env.UGS_CLAUDE_PATH = makeFakeClaude(reviewGraph());
     const out = join(dir, 'flow.js');
     await runGen('做个代码审查流程', undefined, { output: out, quiet: true });
     await expect(runGen(out, undefined, { quiet: true })).rejects.toMatchObject({

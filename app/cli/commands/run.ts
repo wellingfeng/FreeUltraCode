@@ -1,13 +1,13 @@
 /**
- * `fuc run <file>` — execute a workflow headlessly (spec §3.5).
+ * `ugs run <file>` — execute a workflow headlessly (spec §3.5).
  *
- * Reads .fuc.json or .js (.js is parsed to IR), then drives `runBlueprint` from
+ * Reads .ugs.json or .js (.js is parsed to IR), then drives `runBlueprint` from
  * cli/runtime-host. A stderr logger consumes the structured RunEvent stream and
  * prints the `[time] ▶/●/✓` lines; the final result (or `--json`) goes to stdout.
  * `--dry-run` validates + emits without spawning. `--resume` seeds from
- * `.fuc-run/<name>/last-run.json`. SIGINT once = graceful, twice = force.
+ * `.ugs-run/<name>/last-run.json`. SIGINT once = graceful, twice = force.
  *
- * IRGraph is read-only; run state is persisted under `.fuc-run/<name>/`.
+ * IRGraph is read-only; run state is persisted under `.ugs-run/<name>/`.
  */
 import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -43,7 +43,7 @@ export async function runRun(file: string, opts: RunCommandOptions): Promise<num
   // Internal pre-validation: structural errors are a config/validation failure.
   const { exitCode: vExit } = checkGraph(graph, false);
   if (vExit === 1) {
-    process.stderr.write(c.err('Validation failed; run aborted. See `fuc validate`.\n'));
+    process.stderr.write(c.err('Validation failed; run aborted. See `ugs validate`.\n'));
     return 3;
   }
 
@@ -64,7 +64,7 @@ export async function runRun(file: string, opts: RunCommandOptions): Promise<num
   for (const [k, v] of Object.entries(vars)) process.env[k] = v;
 
   const workflowName = graph.meta.name || 'workflow';
-  const runDir = join(cwd, '.fuc-run', sanitize(workflowName));
+  const runDir = join(cwd, '.ugs-run', sanitize(workflowName));
 
   // --resume: seed from the last-run snapshot.
   let seedOutputs: Record<string, string> | undefined;
@@ -72,7 +72,7 @@ export async function runRun(file: string, opts: RunCommandOptions): Promise<num
   let resumeFromNodeId: string | null | undefined;
   if (opts.resume) {
     // `.owf-run` is the pre-rebrand snapshot dir; fall back to it so runs
-    // started by an older (OpenWorkflow) build can still be resumed.
+    // started by an older (UltraGameStudio) build can still be resumed.
     const snap =
       readSnapshot(runDir) ??
       readSnapshot(join(cwd, '.owf-run', sanitize(workflowName)));

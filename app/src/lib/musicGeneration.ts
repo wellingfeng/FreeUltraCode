@@ -1,5 +1,6 @@
 import {
   readSettingsRaw,
+  type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
 
@@ -128,7 +129,7 @@ export interface MusicGenerationRequest {
   signal?: AbortSignal;
 }
 
-const STORAGE_KEY = 'freeultracode.musicGeneration.v1';
+const STORAGE_KEY = 'ultragamestudio.musicGeneration.v1';
 const SETTINGS_REL_PATH = 'settings/musicGeneration.v1.json';
 const DEFAULT_DURATION_SECONDS = 30;
 const MIN_DURATION_SECONDS = 0.5;
@@ -910,10 +911,7 @@ export function normalizeMusicGenerationSettings(
   const validKey = (key: unknown): key is MusicProviderId =>
     isKnownMusicProviderId(key, providers);
   return {
-    enabled:
-      typeof source.enabled === 'boolean'
-        ? source.enabled
-        : DEFAULT_MUSIC_GENERATION_SETTINGS.enabled,
+    enabled: true,
     preferredProviderId,
     customProviders,
     providerKeys: cleanRecord(source.providerKeys, validKey),
@@ -923,23 +921,28 @@ export function normalizeMusicGenerationSettings(
   };
 }
 
-export function loadMusicGenerationSettings(): MusicGenerationSettings {
+export function loadMusicGenerationSettings(
+  options: SettingsProfileOptions = {},
+): MusicGenerationSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     return normalizeMusicGenerationSettings(raw ? JSON.parse(raw) : null);
   } catch {
     return DEFAULT_MUSIC_GENERATION_SETTINGS;
   }
 }
 
-export function saveMusicGenerationSettings(settings: MusicGenerationSettings): boolean {
+export function saveMusicGenerationSettings(
+  settings: MusicGenerationSettings,
+  options: SettingsProfileOptions = {},
+): boolean {
   const payload = JSON.stringify(normalizeMusicGenerationSettings(settings));
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[musicGeneration] failed to persist settings');
     return false;
   }
-  window.dispatchEvent(new Event('fuc:music-generation-settings-changed'));
+  window.dispatchEvent(new Event('ugs:music-generation-settings-changed'));
   return true;
 }
 
@@ -1071,7 +1074,6 @@ export async function generateMusic(
   request: MusicGenerationRequest,
   settings = loadMusicGenerationSettings(),
 ): Promise<MusicGenerationResult> {
-  if (!settings.enabled) throw new Error('MUSIC_GENERATION_DISABLED');
   const providerId = request.providerId ?? preferredReadyMusicProviderId(settings);
   if (!providerId) throw new Error('NO_READY_MUSIC_PROVIDER');
   if (!musicProviderReady(providerId, settings)) {

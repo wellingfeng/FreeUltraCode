@@ -18,7 +18,7 @@ export function stripRouteLine(text: string): string {
 }
 
 /**
- * Strip inline tool sentinels (`<<FUC_TOOL>>...`) from a message's text so
+ * Strip inline tool sentinels (`<<UGS_TOOL>>...`) from a message's text so
  * search indexes and plain fallbacks never show raw protocol JSON.
  */
 export function cleanMessageText(text: string): string {

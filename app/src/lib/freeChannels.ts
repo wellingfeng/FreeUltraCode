@@ -25,8 +25,8 @@ import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore
  *
  * Storage keys:
  *   OS keychain (Tauri)        -> { [id]: apiKey }
- *   fuc_free_channel_models_v1 -> { [id]: modelOverride }
- *   fuc_free_proxy_port_v1     -> number (default 8766)
+ *   ugs_free_channel_models_v1 -> { [id]: modelOverride }
+ *   ugs_free_proxy_port_v1     -> number (default 8766)
  *   OS keychain (Tauri)        -> per-process local proxy auth token
  *
  * Exports the UI phase relies on:
@@ -67,7 +67,7 @@ export interface FreeChannel {
 }
 
 export interface FreeChannelsExport {
-  type: 'openworkflow.freeChannels';
+  type: 'ultragamestudio.freeChannels';
   version: 1;
   keys: Record<string, string>;
   models: Record<string, string>;
@@ -84,10 +84,10 @@ export const FREE_CHANNEL_PROVIDER_PREFIX = 'freecc:';
 const DEFAULT_FREE_PROXY_PORT = 8766;
 const MAX_FREE_PROXY_PORT = 8799;
 
-const KEYS_STORAGE = 'fuc_free_channel_keys_v1';
-const MODELS_STORAGE = 'fuc_free_channel_models_v1';
-const PORT_STORAGE = 'fuc_free_proxy_port_v1';
-const TOKEN_STORAGE = 'fuc_free_proxy_token_v1';
+const KEYS_STORAGE = 'ugs_free_channel_keys_v1';
+const MODELS_STORAGE = 'ugs_free_channel_models_v1';
+const PORT_STORAGE = 'ugs_free_proxy_port_v1';
+const TOKEN_STORAGE = 'ugs_free_proxy_token_v1';
 // Non-secret blobs persisted to disk under Tauri (secrets stay in the OS
 // keychain). Maps a localStorage key to its disk rel-path; absent keys fall
 // back to localStorage only.
@@ -98,13 +98,13 @@ const DISK_REL_PATH: Record<string, string> = {
 const LEGACY_RECORD_STORAGE: Record<string, string[]> = {
   [KEYS_STORAGE]: [
     'owf_free_channel_keys_v1',
-    'openworkflow.free_channel_keys_v1',
-    'openworkflow.freeChannels.keys',
+    'ultragamestudio.free_channel_keys_v1',
+    'ultragamestudio.freeChannels.keys',
   ],
   [MODELS_STORAGE]: [
     'owf_free_channel_models_v1',
-    'openworkflow.free_channel_models_v1',
-    'openworkflow.freeChannels.models',
+    'ultragamestudio.free_channel_models_v1',
+    'ultragamestudio.freeChannels.models',
   ],
 };
 
@@ -578,12 +578,12 @@ function writeRecord(key: string, value: Record<string, string>): boolean {
       for (const legacyKey of LEGACY_RECORD_STORAGE[key] ?? []) {
         window.localStorage.removeItem(legacyKey);
       }
-      if (changed) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+      if (changed) window.dispatchEvent(new Event('ugs:gateway-config-changed'));
       return changed;
     }
     if (readBlob(key) === next) return false;
     if (!writeBlob(key, next)) return false;
-    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    window.dispatchEvent(new Event('ugs:gateway-config-changed'));
     return true;
   } catch {
     /* ignore */
@@ -650,7 +650,7 @@ function exportKnownRecord(key: string): Record<string, string> {
 
 export function exportFreeChannelsConfig(): FreeChannelsExport {
   return {
-    type: 'openworkflow.freeChannels',
+    type: 'ultragamestudio.freeChannels',
     version: 1,
     keys: exportKnownRecord(KEYS_STORAGE),
     models: exportKnownRecord(MODELS_STORAGE),
@@ -877,7 +877,7 @@ function setCachedFreeProxyPort(port: number): void {
     // re-read; mirror writeRecord's dispatch so they refresh. Only fire when
     // the value actually changed to avoid redundant refreshes.
     if (prev !== next) {
-      window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+      window.dispatchEvent(new Event('ugs:gateway-config-changed'));
     }
   } catch {
     /* ignore */
@@ -903,14 +903,14 @@ function setCachedFreeProxyToken(token: string): void {
     if (secureStorageAvailable()) {
       const changed = writeSecureSecret(FREE_PROXY_TOKEN_SECRET, trimmed);
       window.localStorage.removeItem(TOKEN_STORAGE);
-      if (changed) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+      if (changed) window.dispatchEvent(new Event('ugs:gateway-config-changed'));
       return;
     }
     const prev = window.localStorage.getItem(TOKEN_STORAGE);
     if (trimmed) window.localStorage.setItem(TOKEN_STORAGE, trimmed);
     else window.localStorage.removeItem(TOKEN_STORAGE);
     if (prev !== trimmed) {
-      window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+      window.dispatchEvent(new Event('ugs:gateway-config-changed'));
     }
   } catch {
     /* ignore */

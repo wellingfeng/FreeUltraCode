@@ -21,12 +21,12 @@ import {
   writeSecureRecord,
 } from '@/lib/secureStorage';
 
-export const GATEWAY_CONFIG_STORAGE = 'fuc_model_gateway_v1';
+export const GATEWAY_CONFIG_STORAGE = 'ugs_model_gateway_v1';
 export const ACTIVE_GATEWAY_SELECTION_STORAGE =
-  'fuc_active_gateway_selection_v1';
+  'ugs_active_gateway_selection_v1';
 
-const LEGACY_PROVIDERS_STORAGE = 'fuc_providers';
-const LEGACY_ACTIVE_PROVIDER_STORAGE = 'fuc_active_provider_id';
+const LEGACY_PROVIDERS_STORAGE = 'ugs_providers';
+const LEGACY_ACTIVE_PROVIDER_STORAGE = 'ugs_active_provider_id';
 
 interface LegacyProvider {
   id: string;
@@ -161,11 +161,11 @@ function rawSet(key: string, value: string): void {
     diskCache.set(key, value);
     localStorageSet(key, value); // best-effort mirror
     diskWriteSoon(relPath, value);
-    if (hasWindow()) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    if (hasWindow()) window.dispatchEvent(new Event('ugs:gateway-config-changed'));
     return;
   }
   if (localStorageSet(key, value) && hasWindow()) {
-    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    window.dispatchEvent(new Event('ugs:gateway-config-changed'));
   }
 }
 
@@ -179,13 +179,13 @@ function rawRemove(key: string): void {
       /* ignore */
     }
     diskDeleteSoon(relPath);
-    if (hasWindow()) window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    if (hasWindow()) window.dispatchEvent(new Event('ugs:gateway-config-changed'));
     return;
   }
   try {
     if (!hasWindow()) return;
     window.localStorage.removeItem(key);
-    window.dispatchEvent(new Event('fuc:gateway-config-changed'));
+    window.dispatchEvent(new Event('ugs:gateway-config-changed'));
   } catch {
     /* ignore */
   }

@@ -5,7 +5,7 @@
  * purely from the AI agent's own activity — WITHOUT touching any version
  * control system (no git / p4 / svn). The only data source is the structured
  * tool-call events the CLI runtime already weaves into assistant messages as
- * `<<FUC_TOOL>>…<<FUC_TOOL_END>>` sentinels (see components/ai/lib/toolEvent).
+ * `<<UGS_TOOL>>…<<UGS_TOOL_END>>` sentinels (see components/ai/lib/toolEvent).
  *
  * For every file-oriented tool call (Read / Edit / Write / patch / …) we pull a
  * file path out of the event's structured `args` (preferred) or its one-line

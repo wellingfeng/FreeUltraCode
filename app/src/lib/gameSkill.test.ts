@@ -99,9 +99,9 @@ describe('GAME_SKILLS registry', () => {
     }
   });
 
-  it('covers the 35 app-introduced commands and excludes generic shortcuts', () => {
+  it('covers the 34 app-introduced commands and excludes generic shortcuts', () => {
     const names = GAME_SKILLS.map((s) => s.name);
-    expect(names).toHaveLength(35);
+    expect(names).toHaveLength(34);
     // Sample of each category is present.
     expect(names).toContain('/game');
     expect(names).toContain('/image-mode-start');

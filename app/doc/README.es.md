@@ -1,35 +1,35 @@
-# FreeUltraCode
+# UltraGameStudio
 
 <div align="center">
   <a href="../../README.md">English</a> | <a href="README.zh-CN.md">中文</a> | <a href="README.fr.md">Français</a> | <a href="README.de.md">Deutsch</a> | Español | <a href="README.pt-BR.md">Português</a> | <a href="README.ru.md">Русский</a> | <a href="README.ja.md">日本語</a> | <a href="README.ko.md">한국어</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.ar.md">العربية</a>
 </div>
 
-En un motor de juego, el código es solo una pequeña parte del trabajo. El resto son assets y pipeline: materiales, blueprints, terreno, cielo, UI, animación esquelética, empaquetado, rendimiento. FreeUltraCode es un agente de programación al estilo de Claude Code / Codex / Gemini reconstruido en torno a esa realidad: entiende los conceptos de los motores de juego, genera toda la gama de assets de juego (imágenes, modelos 3D, animación de sprites 2D, atlas, audio, rigging, vídeo) y enruta el trabajo rutinario por canales gratuitos o de bajo coste para reservar la cuota premium para lo importante.
+En un motor de juego, el código es solo una pequeña parte del trabajo. El resto son assets y pipeline: materiales, blueprints, terreno, cielo, UI, animación esquelética, empaquetado, rendimiento. UltraGameStudio es un agente de programación al estilo de Claude Code / Codex / Gemini reconstruido en torno a esa realidad: entiende los conceptos de los motores de juego, genera toda la gama de assets de juego (imágenes, modelos 3D, animación de sprites 2D, atlas, audio, rigging, vídeo) y enruta el trabajo rutinario por canales gratuitos o de bajo coste para reservar la cuota premium para lo importante.
 
 <p align="center">
   <strong>Interfaz UMG de Unreal Engine en un clic</strong><br>
-  <img src="images/game/JMsXEKE.png" alt="FreeUltraCode genera una interfaz UMG de Unreal Engine en un clic" width="960">
+  <img src="images/game/JMsXEKE.png" alt="UltraGameStudio genera una interfaz UMG de Unreal Engine en un clic" width="960">
 </p>
 
 <p align="center">
   <strong>Generación de modelo 3D en un clic</strong><br>
-  <img src="images/game/noYfqPt.png" alt="FreeUltraCode genera un modelo 3D en un clic" width="960">
+  <img src="images/game/noYfqPt.png" alt="UltraGameStudio genera un modelo 3D en un clic" width="960">
   <br><br>
-  <img src="images/20260615-214236.jpg" alt="Vista previa del modelo 3D generado por FreeUltraCode" width="960">
+  <img src="images/20260615-214236.jpg" alt="Vista previa del modelo 3D generado por UltraGameStudio" width="960">
 </p>
 
 <p align="center">
   <strong>Imágenes, sprites, meshes, audio, rigging y vídeo — gestionados por un solo agente de programación</strong><br>
-  <img src="images/game/gmclmLS.png" alt="Generación unificada de assets de juego de FreeUltraCode" width="960">
+  <img src="images/game/gmclmLS.png" alt="Generación unificada de assets de juego de UltraGameStudio" width="960">
   <br><br>
-  <img src="images/game/jXgMffC.png" alt="Flujo de assets de juego de FreeUltraCode" width="960">
+  <img src="images/game/jXgMffC.png" alt="Flujo de assets de juego de UltraGameStudio" width="960">
 </p>
 
-## Por qué FreeUltraCode
+## Por qué UltraGameStudio
 
 Hoy la IA es lo bastante buena como para escribir la mayor parte del código por sí sola. El rol del programador se desplaza hacia describir la intención, verificar la salida y orquestar agentes. Pero un juego no es solo código. Un motor de juego está lleno de materiales, blueprints, terreno, cielo, UI, animación esquelética, empaquetado y ajuste de rendimiento — y la mayoría de los agentes de programación genéricos no entienden nada de eso.
 
-FreeUltraCode toma un agente al estilo de Claude Code / Codex / Gemini y lo personaliza a fondo para el desarrollo de juegos:
+UltraGameStudio toma un agente al estilo de Claude Code / Codex / Gemini y lo personaliza a fondo para el desarrollo de juegos:
 
 - **Habla el lenguaje de los motores de juego.** El agente viene preparado con conceptos de desarrollo de juegos para razonar sobre materiales, blueprints, terreno, iluminación, UI (UMG y otras), animación esquelética, build/empaquetado y optimización de rendimiento.
 - **Genera todos los tipos de asset que un juego necesita.** Imágenes, modelos 3D, animación de sprites 2D, atlas de sprites, audio, rigging esquelético y vídeo se producen desde la misma superficie y se gestionan con un único flujo de agente.
@@ -64,7 +64,7 @@ El agente primero pule tu prompt, lo envía al proveedor configurado y muestra e
 
 ### Equipo de expertos en desarrollo de juegos
 
-FreeUltraCode incluye más de 40 especialistas en desarrollo de juegos que el agente convoca automáticamente según la tarea:
+UltraGameStudio incluye más de 40 especialistas en desarrollo de juegos que el agente convoca automáticamente según la tarea:
 
 - **Especialistas de motor** para Unity, Unreal, Godot (GDScript / C# / GDExtension / shaders) y Web.
 - **Programación**: director técnico, programadores lead/motor/gameplay/IA/red/herramientas/UI.
@@ -85,7 +85,7 @@ Configura el motor activo, el modo council y los expertos habilitados en **Setti
 
 <p align="center">
   <strong>Enrutamiento de canales gratuitos</strong><br>
-  <img src="images/hero-free-channels.es.png" alt="Captura del enrutamiento de canales gratuitos de FreeUltraCode" width="960">
+  <img src="images/hero-free-channels.es.png" alt="Captura del enrutamiento de canales gratuitos de UltraGameStudio" width="960">
 </p>
 
 Modelos predeterminados orientados a programación:
@@ -99,14 +99,14 @@ Modelos predeterminados orientados a programación:
 | Kilo Gateway | `poolside/laguna-xs.2:free` |
 | LLM7 | `codestral-latest` |
 
-### Workflow dinámico (/ultracode)
+### Workflow dinámico (/studio)
 
-Para tareas de programación complejas con múltiples pasos, `/ultracode <tarea>` genera al instante un harness de ejecución a medida y lo ejecuta de inmediato. Sin necesidad de lienzo visual.
+Para tareas de programación complejas con múltiples pasos, `/studio <tarea>` genera al instante un harness de ejecución a medida y lo ejecuta de inmediato. Sin necesidad de lienzo visual.
 
 - Describe la tarea en lenguaje natural — el planificador construye un harness con subagentes paralelos, verificación adversarial y puertas de aceptación.
 - Seis estrategias internas se eligen automáticamente: clasificar-y-actuar, abanico-y-síntesis, verificación-adversarial, generar-y-filtrar, torneo, bucle-hasta-completar.
-- Cada ejecución queda completamente registrada en `.fuc-run/<run-id>/` con libro de tareas, eventos, veredicto y resultado final.
-- Ejecuta desde la app de escritorio o por CLI: `fuc ultracode "<tarea>" --json --interactive --cwd <workspace>`.
+- Cada ejecución queda completamente registrada en `.ugs-run/<run-id>/` con libro de tareas, eventos, veredicto y resultado final.
+- Ejecuta desde la app de escritorio o por CLI: `ugs studio "<tarea>" --json --interactive --cwd <workspace>`.
 - Cero configuración — reutiliza las credenciales locales de `claude` CLI.
 
 #### Free Auto — Cambio automático multicanal
@@ -120,10 +120,10 @@ El canal **Auto** (`freecc:auto` en el menú Channel) enruta automáticamente ca
 
 #### Cadena multi-proveedor: DeepSeek → CodeX
 
-Con `/ultracode`, el harness puede encadenar múltiples proveedores entre los pasos del plan. Patrón típico: DeepSeek produce borradores de bajo coste, CodeX los refina hasta la calidad final.
+Con `/studio`, el harness puede encadenar múltiples proveedores entre los pasos del plan. Patrón típico: DeepSeek produce borradores de bajo coste, CodeX los refina hasta la calidad final.
 
 - El **plan de harness dinámico** permite sobrescribir `model` por paso — asigna DeepSeek a pasos de lluvia de ideas/clasificación y CodeX/Gemini a implementación/verificación.
-- **Compatibilidad cc-switch**: FreeUltraCode lee la configuración CLI `cc-switch`; cualquier proveedor ya configurado para Claude Code está disponible de inmediato.
+- **Compatibilidad cc-switch**: UltraGameStudio lee la configuración CLI `cc-switch`; cualquier proveedor ya configurado para Claude Code está disponible de inmediato.
 - La estrategia **abanico-y-síntesis** paraleliza workers DeepSeek en subtareas independientes, luego una puerta de consenso (CodeX) sintetiza y verifica los resultados.
 
 #### Selección de canal sensible a la velocidad
@@ -135,7 +135,7 @@ El canal Auto del proxy gratuito prioriza canales según señales de disponibili
 - **Presupuesto de tiempo de conexión**: cada intento de canal está sujeto al timeout del upstream; el router Auto no se bloquea en un solo upstream lento.
 - **Orden natural por reactividad**: los canales exitosos se prueban primero; los canales con error se desplazan al final de la lista.
 
-Estas funciones garantizan ejecuciones resilientes de harness `/ultracode`, incluso cuando proveedores individuales están lentos, limitados o temporalmente no disponibles.
+Estas funciones garantizan ejecuciones resilientes de harness `/studio`, incluso cuando proveedores individuales están lentos, limitados o temporalmente no disponibles.
 
 ## Inicio rápido
 
@@ -181,7 +181,7 @@ npm run package
   <img src="images/注册免费渠道/3-新建token.png" alt="Crear una API key del proveedor" width="960">
 </p>
 
-4. Pega la key en FreeUltraCode y haz clic en **Save and Use**. Tras guardar, desaparece la marca de advertencia.
+4. Pega la key en UltraGameStudio y haz clic en **Save and Use**. Tras guardar, desaparece la marca de advertencia.
 
 <p align="center">
   <img src="images/注册免费渠道/4-配置好了.png" alt="Canal gratuito configurado sin advertencia" width="960">
@@ -207,10 +207,10 @@ Los modos de asset convierten el compositor en una superficie de generación de 
 ```
 
 3. Mientras esté activo, los mensajes normales generan assets en vez de ejecutar ediciones de código. El selector **Channel** cambia a proveedores de assets.
-4. Describe el asset. FreeUltraCode primero mejora el prompt con el modelo de programación y luego lo envía al proveedor configurado.
+4. Describe el asset. UltraGameStudio primero mejora el prompt con el modelo de programación y luego lo envía al proveedor configurado.
 
 <p align="center">
-  <img src="images/生图/session-2026-06-07-2351.png" alt="El modo de asset genera elementos dentro de la misma sesión de FreeUltraCode" width="720">
+  <img src="images/生图/session-2026-06-07-2351.png" alt="El modo de asset genera elementos dentro de la misma sesión de UltraGameStudio" width="720">
 </p>
 
 5. Envía `/image-mode-end` para volver al canal y modelo de programación. Para un solo asset sin modo persistente, usa `/image`, `/img`, `/draw`, `/生图`, `/sprite`, `/music` o `/video` seguido del prompt.
@@ -278,7 +278,7 @@ npm run package
 
 - Discord: <https://discord.gg/2C9ptSEFG>
 - QQ Group: `149523963`
-- Issues: <https://github.com/wellingfeng/FreeUltraCode/issues>
+- Issues: <https://github.com/wellingfeng/UltraGameStudio/issues>
 
 ## Licencia
 

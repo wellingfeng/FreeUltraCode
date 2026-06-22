@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import { useResizableWidth } from './useResizableWidth';
 
-const STORAGE_KEY = 'freeultracode.testPaneWidth.v1';
+const STORAGE_KEY = 'ultragamestudio.testPaneWidth.v1';
 
 function Probe({
   min = 100,

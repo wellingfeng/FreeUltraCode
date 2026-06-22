@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.deploy
+.env.*
+!.env.example
+*.bak
+deploy/codex/auth.json
+deploy/codex/config.toml
+data/
+workspaces/
+tmp/
+*.log

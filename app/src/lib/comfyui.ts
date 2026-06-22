@@ -18,7 +18,11 @@ import {
   loadImageGenerationSettings,
   type ImageGenerationSettings,
 } from './imageGeneration';
-import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
+import {
+  readSettingsRaw,
+  type SettingsProfileOptions,
+  writeSettingsRaw,
+} from '@/lib/generationSettingsStore';
 
 export interface ComfyNodeInputs {
   [key: string]: ComfyInputValue;
@@ -92,7 +96,7 @@ export interface ComfyNodeError {
   }>;
 }
 
-const STORAGE_KEY = 'freeultracode.comfyui.v1';
+const STORAGE_KEY = 'ultragamestudio.comfyui.v1';
 const SETTINGS_REL_PATH = 'settings/comfyui.v1.json';
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8188';
 
@@ -104,9 +108,11 @@ export const DEFAULT_COMFYUI_SETTINGS: ComfyUiSettings = {
   baseUrl: DEFAULT_BASE_URL,
 };
 
-export function loadComfyUiSettings(): ComfyUiSettings {
+export function loadComfyUiSettings(
+  options: SettingsProfileOptions = {},
+): ComfyUiSettings {
   try {
-    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY);
+    const raw = readSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, options);
     if (!raw) return DEFAULT_COMFYUI_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<ComfyUiSettings>;
     const baseUrl =
@@ -119,17 +125,20 @@ export function loadComfyUiSettings(): ComfyUiSettings {
   }
 }
 
-export function saveComfyUiSettings(settings: ComfyUiSettings): void {
+export function saveComfyUiSettings(
+  settings: ComfyUiSettings,
+  options: SettingsProfileOptions = {},
+): void {
   const payload = JSON.stringify({
     baseUrl: settings.baseUrl.trim().replace(/\/+$/, ''),
   });
-  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload);
+  const ok = writeSettingsRaw(SETTINGS_REL_PATH, STORAGE_KEY, payload, options);
   if (!ok) {
     console.error('[comfyui] failed to persist settings');
     return;
   }
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('fuc:comfyui-settings-changed'));
+    window.dispatchEvent(new Event('ugs:comfyui-settings-changed'));
   }
 }
 

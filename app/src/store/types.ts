@@ -7,7 +7,7 @@ import type {
   InteractionAnswer,
   InteractionRequest,
 } from '@/core/interaction';
-import type { UltracodeRunProgress } from '@/runtime/ultracodeProgress';
+import type { StudioRunProgress } from '@/runtime/studioProgress';
 import type {
   Locale,
   PromptGroupLocaleValue,
@@ -76,12 +76,12 @@ export interface Message {
   /** App-owned interactive actions rendered through the same AI return widget. */
   appAction?: MessageAppAction;
   /**
-   * Present on the assistant message of a live `/ultracode` run: a structured
+   * Present on the assistant message of a live `/studio` run: a structured
    * snapshot of run progress (agent count, elapsed, per-node status) decoded
-   * from the CLI's `<<FUC_PROGRESS>>` sentinels. Drives the run-progress card
-   * rendered above the message's log text. See runtime/ultracodeProgress.ts.
+   * from the CLI's `<<UGS_PROGRESS>>` sentinels. Drives the run-progress card
+   * rendered above the message's log text. See runtime/studioProgress.ts.
    */
-  runProgress?: UltracodeRunProgress;
+  runProgress?: StudioRunProgress;
   /**
    * Per-turn token usage for an assistant message: the snapshot delta across the
    * turn that produced it (a turn may issue several model sub-calls). Persisted

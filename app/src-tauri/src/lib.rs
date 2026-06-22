@@ -28,12 +28,13 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_MENU_SHOW_ID: &str = "tray-show-main";
 const TRAY_MENU_GITHUB_ID: &str = "tray-open-github";
 const TRAY_MENU_QUIT_ID: &str = "tray-quit";
-const GITHUB_REPOSITORY_URL: &str = "https://github.com/wellingfeng/FreeUltraCode";
+const GITHUB_REPOSITORY_URL: &str = "https://github.com/wellingfeng/UltraGameStudio";
 const SINGLE_INSTANCE_WARNING_EVENT: &str = "single-instance-warning";
 const SINGLE_INSTANCE_WARNING_MESSAGE: &str = "只能同时运行一个进程";
 const SESSION_NOTIFICATION_CLICKED_EVENT: &str = "session-notification-clicked";
 const SLASH_CATALOG_UPDATED_EVENT: &str = "slash-catalog-updated";
 const WORKSPACE_VCS_SCAN_PROGRESS_EVENT: &str = "workspace-vcs-scan-progress";
+const LEGACY_BRAND_MIGRATION_PROGRESS_EVENT: &str = "legacy-brand-migration-progress";
 const MAX_SLASH_ENTRIES: usize = 800;
 const MAX_COMMAND_SCAN_DEPTH: usize = 4;
 const MAX_SKILL_SCAN_DEPTH: usize = 8;
@@ -109,6 +110,34 @@ fn notify_session_complete(
     )
 }
 
+#[tauri::command]
+async fn migrate_legacy_brand_storage(
+    app: AppHandle,
+) -> Result<storage_paths::LegacyBrandMigrationProgress, String> {
+    let emit_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        storage_paths::migrate_legacy_brand_storage_on_startup_with_progress(|progress| {
+            let _ = emit_app.emit(LEGACY_BRAND_MIGRATION_PROGRESS_EVENT, progress);
+        })
+    })
+    .await
+    .map_err(|e| format!("迁移旧版配置失败: {e}"))?;
+
+    match result {
+        Ok(progress) => Ok(progress),
+        Err(err) => {
+            eprintln!("Legacy storage migration failed: {err}");
+            let progress = storage_paths::LegacyBrandMigrationProgress {
+                phase: "error".to_string(),
+                message: Some(err),
+                ..Default::default()
+            };
+            let _ = app.emit(LEGACY_BRAND_MIGRATION_PROGRESS_EVENT, progress.clone());
+            Ok(progress)
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn windows_notification_app_id(app: &AppHandle) -> String {
     let identifier = app.config().identifier.clone();
@@ -136,21 +165,16 @@ fn show_session_completion_notification(
     payload: SessionNotificationClickPayload,
     kind: SessionNotificationKind,
 ) -> Result<bool, String> {
-    use tauri_winrt_notification::{Duration, Scenario, Sound, Toast};
+    use tauri_winrt_notification::{Duration, Toast};
 
     let app_id = windows_notification_app_id(&app);
-    let mut toast = Toast::new(&app_id).title(&title).text2(&body).duration(
+    let toast = Toast::new(&app_id).title(&title).text2(&body).duration(
         if kind == SessionNotificationKind::WaitingInput {
             Duration::Long
         } else {
             Duration::Short
         },
     );
-    if kind == SessionNotificationKind::WaitingInput {
-        toast = toast
-            .scenario(Scenario::Reminder)
-            .sound(Some(Sound::Reminder));
-    }
     toast
         .on_activated(move |_| {
             emit_session_notification_click(&app, payload.clone());
@@ -414,7 +438,7 @@ struct RemoteModelListResult {
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct UltracodeRunResult {
+struct StudioRunResult {
     exit_code: i32,
     stdout: String,
     stderr: String,
@@ -441,6 +465,15 @@ struct LocalFilePreview {
     truncated: bool,
     text: Option<String>,
     base64: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalFileUploadPayload {
+    bytes_base64: String,
+    file_name: String,
+    mime: Option<String>,
+    size_bytes: u64,
 }
 
 #[derive(serde::Serialize)]
@@ -650,27 +683,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn app_slash_command_entry(
-    name: &str,
-    zh_label: &str,
-    en_label: &str,
-    zh_detail: &str,
-    en_detail: &str,
-    zh_insert: &str,
-    en_insert: &str,
-) -> SlashCatalogEntry {
-    SlashCatalogEntry {
-        id: format!("command:app:{name}"),
-        kind: "command".to_string(),
-        name: name.to_string(),
-        label: localized_text(zh_label, en_label),
-        detail: localized_text(zh_detail, en_detail),
-        insert_text: localized_text(zh_insert, en_insert),
-        source: Some("app".to_string()),
-        source_adapter: Some("app".to_string()),
-    }
-}
-
 fn cli_slash_command_entry(
     source: &str,
     source_zh: &str,
@@ -714,71 +726,7 @@ fn extend_cli_slash_commands(
 }
 
 fn slash_command_entries() -> Vec<SlashCatalogEntry> {
-    let mut entries = vec![
-        app_slash_command_entry(
-            "/deep-research",
-            "深度调研",
-            "Deep Research",
-            "用 /ultracode 跑多源核验研究",
-            "Run source-grounded research through /ultracode",
-            "执行 deep-research：使用随 FreeUltraCode 一起发布的内置 workflow 协议 workflows/deep-research/WORKFLOW.md 和 protocol/model-agnostic-deep-research.md。必须先界定研究问题、来源边界、时间范围和风险等级；优先官方/一手来源；维护 source ledger 和 claim audit；区分已核验事实、供应商声明、社区观点、设计推断、未核验假设和 gaps。默认输出中文决策简报：优先级、Top opportunities/options、MVP/原型路径、暂不做事项、风险和验证信号；证据表作为附录。高风险或用户明确要求时再输出完整 dossier。不要声称访问任何供应商私有实现。",
-            "Run deep research using the built-in FreeUltraCode workflow protocol workflows/deep-research/WORKFLOW.md and protocol/model-agnostic-deep-research.md. Define the question, source boundary, time window, and risk level; prioritize official/primary sources; maintain a source ledger and claim audit; separate verified facts, vendor-stated claims, community reports, design inferences, unverified hypotheses, and gaps. Default to a decision brief with priority, top opportunities/options, MVP/prototype path, what not to do yet, risks, and validation signals; keep evidence tables as an appendix. Expand to a full dossier only for high-risk work or when explicitly requested. Do not claim access to private vendor internals.",
-        ),
-        app_slash_command_entry(
-            "/help",
-            "帮助",
-            "Help",
-            "列出当前可用 command / skill",
-            "List available commands and skills",
-            "列出当前可用的 slash command 和 Skill，按用途分组，并给出每个条目的触发词和适用场景。",
-            "List the available slash commands and skills, grouped by use case, with each trigger and when to use it.",
-        ),
-        app_slash_command_entry(
-            "/plan",
-            "计划",
-            "Plan",
-            "先拆步骤，再执行",
-            "Break down steps before acting",
-            "先给出简短执行计划，再按计划完成任务；只保留必要步骤和风险点。",
-            "Start with a short execution plan, then complete the task; keep only necessary steps and risks.",
-        ),
-        app_slash_command_entry(
-            "/diagnose",
-            "诊断",
-            "Diagnose",
-            "复现 -> 根因 -> 修复 -> 验证",
-            "Reproduce -> root cause -> fix -> verify",
-            "诊断这个问题：先复现或定位触发条件，再找根因，最后给出修复和验证结果。",
-            "Diagnose this: reproduce or identify the trigger, find the root cause, then provide the fix and verification.",
-        ),
-        app_slash_command_entry(
-            "/review",
-            "审查",
-            "Review",
-            "按代码审查视角找风险",
-            "Review for bugs and risks",
-            "按代码审查视角检查：优先列出 bug、回归风险和缺失测试，给出文件/位置和修复建议。",
-            "Review this as code: list bugs, regression risks, and missing tests first, with file/location references and fixes.",
-        ),
-        app_slash_command_entry(
-            "/explain",
-            "解释",
-            "Explain",
-            "解释执行路径和关键依赖",
-            "Explain flow and dependencies",
-            "解释这段内容的执行路径、关键依赖和容易误解的点，结论先行。",
-            "Explain the execution flow, key dependencies, and easy-to-misread parts. Start with the conclusion.",
-        ),
-        app_slash_command_entry(
-            "/test",
-            "测试",
-            "Test",
-            "补充或运行相关测试",
-            "Add or run relevant tests",
-            "为当前任务补充或运行最相关的测试；若失败，说明失败点、可能根因和下一步。",
-            "Add or run the most relevant tests for this task; if they fail, report the failure, likely cause, and next step.",
-        ),
-    ];
+    let mut entries = Vec::new();
 
     extend_cli_slash_commands(
         &mut entries,
@@ -1254,14 +1202,6 @@ fn push_skill_root(out: &mut Vec<PathBuf>, seen: &mut HashSet<PathBuf>, path: Pa
     out.push(canonical);
 }
 
-fn bundled_deep_research_workflow_root(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .resource_dir()
-        .ok()
-        .map(|dir| dir.join("workflows").join("deep-research"))
-        .filter(|dir| dir.is_dir())
-}
-
 fn skill_root_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -1684,7 +1624,44 @@ fn slash_entry_key(entry: &SlashCatalogEntry) -> String {
 }
 
 fn is_app_reserved_slash_name(name: &str) -> bool {
-    matches!(name.trim().to_ascii_lowercase().as_str(), "/deep-research")
+    matches!(
+        name.trim().to_ascii_lowercase().as_str(),
+        "/game"
+            | "/studio"
+            | "/image-to-game"
+            | "/deep-research"
+            | "/image-mode-start"
+            | "/image-mode-end"
+            | "/comfyui-mode-start"
+            | "/comfyui-mode-end"
+            | "/sprite"
+            | "/sprite-mode-start"
+            | "/sprite-mode-end"
+            | "/video-to-frames"
+            | "/mesh-mode-start"
+            | "/mesh-mode-end"
+            | "/mesh-search"
+            | "/music"
+            | "/music-mode-start"
+            | "/music-mode-end"
+            | "/video"
+            | "/video-mode-start"
+            | "/video-mode-end"
+            | "/tts"
+            | "/speech-mode-start"
+            | "/speech-mode-end"
+            | "/worldmodel"
+            | "/worldmodel-mode-start"
+            | "/worldmodel-mode-end"
+            | "/ui-mode-start"
+            | "/ui-mode-end"
+            | "/blueprint-mode-start"
+            | "/blueprint-mode-end"
+            | "/metahuman-mode-start"
+            | "/metahuman-mode-end"
+            | "/screenshot"
+            | "/screenshot-gif"
+    )
 }
 
 fn skill_entry_from_file(path: &Path, source: &str) -> Option<SlashCatalogEntry> {
@@ -2130,7 +2107,7 @@ fn validate_skill_zip_install_url(url: &str) -> Result<(), String> {
 fn download_skill_text(url: &str) -> Result<String, String> {
     validate_skill_install_url(url)?;
     let response = ureq::get(url)
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .call()
         .map_err(|e| format!("下载失败: {e}"))?;
     if let Some(length) = response
@@ -2160,8 +2137,11 @@ fn download_skill_text(url: &str) -> Result<String, String> {
 fn download_skill_zip(url: &str) -> Result<Vec<u8>, String> {
     validate_skill_zip_install_url(url)?;
     let response = ureq::get(url)
-        .set("User-Agent", "FreeUltraCode")
-        .set("Accept", "application/zip,application/octet-stream,*/*;q=0.8")
+        .set("User-Agent", "UltraGameStudio")
+        .set(
+            "Accept",
+            "application/zip,application/octet-stream,*/*;q=0.8",
+        )
         .call()
         .map_err(|e| format!("下载失败: {e}"))?;
     if let Some(length) = response
@@ -2188,7 +2168,10 @@ fn download_skill_zip(url: &str) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn skill_zip_root_and_frontmatter(bytes: &[u8], fallback_name: &str) -> Result<(PathBuf, String), String> {
+fn skill_zip_root_and_frontmatter(
+    bytes: &[u8],
+    fallback_name: &str,
+) -> Result<(PathBuf, String), String> {
     let reader = std::io::Cursor::new(bytes);
     let mut archive =
         zip::ZipArchive::new(reader).map_err(|e| format!("打开 Skill 压缩包失败: {e}"))?;
@@ -2353,8 +2336,7 @@ fn install_skill_from_zip_url_blocking(
         if !canonical_existing.starts_with(&root) {
             return Err("安装路径超出允许目录。".to_string());
         }
-        std::fs::remove_dir_all(&target_dir)
-            .map_err(|e| format!("清理旧 Skill 目录失败: {e}"))?;
+        std::fs::remove_dir_all(&target_dir).map_err(|e| format!("清理旧 Skill 目录失败: {e}"))?;
     }
     std::fs::create_dir_all(&target_dir).map_err(|e| format!("创建安装目录失败: {e}"))?;
     let canonical_target =
@@ -2370,10 +2352,10 @@ fn install_skill_from_zip_url_blocking(
         "downloadUrl": url,
         "sourceUrl": source_url.clone(),
         "installedAtMs": now_ms(),
-        "installedBy": "FreeUltraCode plugin store"
+        "installedBy": "UltraGameStudio plugin store"
     });
     let _ = std::fs::write(
-        target_dir.join(".freeultracode-source.json"),
+        target_dir.join(".ultragamestudio-source.json"),
         serde_json::to_string_pretty(&source_meta).unwrap_or_else(|_| "{}".to_string()),
     );
 
@@ -2449,10 +2431,10 @@ fn install_skill_from_text_blocking(
         "downloadUrl": download_url,
         "sourceUrl": source_url.clone(),
         "installedAtMs": now_ms(),
-        "installedBy": "FreeUltraCode plugin store"
+        "installedBy": "UltraGameStudio plugin store"
     });
     let _ = std::fs::write(
-        target_dir.join(".freeultracode-source.json"),
+        target_dir.join(".ultragamestudio-source.json"),
         serde_json::to_string_pretty(&source_meta).unwrap_or_else(|_| "{}".to_string()),
     );
 
@@ -2658,7 +2640,7 @@ fn read_free_channel_key_file(path: PathBuf) -> HashMap<String, String> {
 
 fn free_channel_key_file_candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    if let Ok(path) = std::env::var("FREEULTRACODE_FREE_CHANNELS_CONFIG") {
+    if let Ok(path) = std::env::var("ULTRAGAMESTUDIO_FREE_CHANNELS_CONFIG") {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             out.push(PathBuf::from(trimmed));
@@ -2784,7 +2766,7 @@ fn managed_temp_path(cwd: Option<&str>, bucket: &str, prefix: &str, ext: &str) -
 
 /// Write the generated script to a uniquely-named temp file and return its path.
 fn write_temp_script(script: &str) -> Result<std::path::PathBuf, String> {
-    let path = managed_temp_path(None, "scripts", "freeultracode", "sh");
+    let path = managed_temp_path(None, "scripts", "ultragamestudio", "sh");
     let mut file = std::fs::File::create(&path).map_err(|e| format!("无法创建临时脚本: {e}"))?;
     file.write_all(script.as_bytes())
         .map_err(|e| format!("写入临时脚本失败: {e}"))?;
@@ -2934,7 +2916,7 @@ fn build_launch_command(binary: &str, args: &[String], shell: &Option<ShellSpec>
                         let mut cmd = new_spawn_command(path);
                         cmd.arg("-lc")
                             .arg(r#"exec "$@""#)
-                            .arg("fuc-shell")
+                            .arg("ugs-shell")
                             .arg(binary);
                         for a in args {
                             cmd.arg(a);
@@ -3066,6 +3048,7 @@ const PREVIEW_DOCUMENT_LIMIT: u64 = 64 * 1024 * 1024;
 const PREVIEW_BASENAME_SEARCH_LIMIT: usize = 20_000;
 const CLIPBOARD_IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 const SESSION_CAPTURE_LIMIT: usize = 128 * 1024 * 1024;
+const LOCAL_FILE_UPLOAD_LIMIT: u64 = 128 * 1024 * 1024;
 const CAPTURE_IMAGE_FETCH_LIMIT: usize = 32 * 1024 * 1024;
 const CAPTURE_IMAGE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const MODEL_ASSET_FETCH_LIMIT: usize = 128 * 1024 * 1024;
@@ -3219,7 +3202,7 @@ const WORKSPACE_TREE_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".hg",
     ".svn",
-    ".freeultracode",
+    ".ultragamestudio",
     ".worktree",
     ".omc",
     "node_modules",
@@ -3740,8 +3723,7 @@ fn detect_project_engine(root: &Path) -> ProjectEngineDetection {
 // so they degrade to an informative result the UI surfaces as a hint.
 
 const UE_REMOTE_CONTROL_HTTP_PORT: u16 = 30010;
-const UE_PYTHON_LIBRARY_OBJECT: &str =
-    "/Script/PythonScriptPlugin.Default__PythonScriptLibrary";
+const UE_PYTHON_LIBRARY_OBJECT: &str = "/Script/PythonScriptPlugin.Default__PythonScriptLibrary";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3781,7 +3763,9 @@ fn unreal_asset_package_path(root: &Path, file: &Path) -> Option<String> {
             _ => None,
         })
         .collect();
-    let content_idx = comps.iter().position(|c| c.eq_ignore_ascii_case("Content"))?;
+    let content_idx = comps
+        .iter()
+        .position(|c| c.eq_ignore_ascii_case("Content"))?;
     // Mount point: project content → /Game, plugin content → /<PluginName>.
     let mount = if content_idx >= 2 && comps[content_idx - 2].eq_ignore_ascii_case("Plugins") {
         format!("/{}", comps[content_idx - 1])
@@ -3901,7 +3885,12 @@ async fn engine_reveal_asset(root_path: String, file_path: String) -> EngineReve
     tauri::async_runtime::spawn_blocking(move || engine_reveal_asset_blocking(root_path, file_path))
         .await
         .unwrap_or_else(|err| {
-            EngineRevealResult::new("unknown", false, "error", format!("引擎定位任务失败：{err}"))
+            EngineRevealResult::new(
+                "unknown",
+                false,
+                "error",
+                format!("引擎定位任务失败：{err}"),
+            )
         })
 }
 
@@ -4180,7 +4169,7 @@ fn project_mcp_probe_stdio(
             }
         }
     }
-    cmd.env("MCP_CLIENT_NAME", "FreeUltraCode");
+    cmd.env("MCP_CLIENT_NAME", "UltraGameStudio");
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -4243,7 +4232,7 @@ fn project_mcp_probe_stdio(
             "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {
-                "name": "FreeUltraCode",
+                "name": "UltraGameStudio",
                 "version": env!("CARGO_PKG_VERSION")
             }
         }
@@ -4694,8 +4683,8 @@ fn project_lsp_install_blocking(
         .filter(|value| !value.is_empty())
         .map(project_scan_root)
         .transpose()?;
-    let stdout_path = temp_output_path("freeultracode-lsp-install-stdout", "txt");
-    let stderr_path = temp_output_path("freeultracode-lsp-install-stderr", "txt");
+    let stdout_path = temp_output_path("ultragamestudio-lsp-install-stdout", "txt");
+    let stderr_path = temp_output_path("ultragamestudio-lsp-install-stderr", "txt");
     let _stdout_guard = TempFileGuard::new(stdout_path.clone());
     let _stderr_guard = TempFileGuard::new(stderr_path.clone());
     let stdout_file = std::fs::File::create(&stdout_path)
@@ -5211,7 +5200,7 @@ fn blueprint_mode_status_blocking(
 fn blueprint_mode_download_archive() -> Result<Vec<u8>, String> {
     let response = ureq::get(BLUEPRINT_MODE_ARCHIVE_URL)
         .timeout(BLUEPRINT_MODE_DOWNLOAD_TIMEOUT)
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .set(
             "Accept",
             "application/zip,application/octet-stream,*/*;q=0.8",
@@ -5830,7 +5819,7 @@ async fn cocos_mcp_setup_project(
 
 /// Stable server id used in project settings so one-click + "apply recommended" converge.
 const UE_MCP_SERVER_ID: &str = "ue-mcp-for-all-versions";
-const UE_MCP_DISABLED_ARCHIVE_KEY: &str = "freeultracodeDisabledMcpServers";
+const UE_MCP_DISABLED_ARCHIVE_KEY: &str = "ultragamestudioDisabledMcpServers";
 /// GitHub "latest release" API — resolved at install time so we always pull the
 /// newest published `ue-mcp-for-all-versions` build instead of a pinned tag.
 const UE_MCP_LATEST_RELEASE_API: &str =
@@ -5994,7 +5983,7 @@ fn ue_mcp_resolve_latest_release() -> UeMcpRelease {
 fn ue_mcp_query_latest_release() -> Result<UeMcpRelease, String> {
     let body: serde_json::Value = ureq::get(UE_MCP_LATEST_RELEASE_API)
         .timeout(UE_MCP_API_TIMEOUT)
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .set("Accept", "application/vnd.github+json")
         .call()
         .map_err(|err| match err {
@@ -6071,7 +6060,7 @@ fn ue_mcp_query_latest_release() -> Result<UeMcpRelease, String> {
 fn ue_mcp_download_binary(release: &UeMcpRelease, target: &Path) -> Result<String, String> {
     let response = ureq::get(&release.download_url)
         .timeout(UE_MCP_DOWNLOAD_TIMEOUT)
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .set("Accept", "application/octet-stream,*/*;q=0.8")
         .call()
         .map_err(|err| match err {
@@ -6337,9 +6326,9 @@ fn ini_missing_any_line(existing: &str, wanted: &[&str]) -> bool {
 }
 
 const UE_MCP_REMOTE_CONTROL_STARTUP_MARKER: &str =
-    "; >>> FreeUltraCode: Unreal MCP RemoteControl auto-start";
+    "; >>> UltraGameStudio: Unreal MCP RemoteControl auto-start";
 const UE_MCP_REMOTE_CONTROL_PERMISSION_MARKER: &str =
-    "; >>> FreeUltraCode: Unreal MCP full-access defaults";
+    "; >>> UltraGameStudio: Unreal MCP full-access defaults";
 const UE_MCP_REMOTE_CONTROL_PERMISSION_LINES: &[&str] = &[
     "[/Script/RemoteControl.RemoteControlSettings]",
     "[/Script/RemoteControlCommon.RemoteControlSettings]",
@@ -6389,7 +6378,7 @@ fn ue_mcp_remote_control_permission_block() -> String {
     block.push_str("[/Script/PythonScriptPlugin.PythonScriptPluginSettings]\n");
     block.push_str("bRemoteExecution=True\n");
     block.push_str("bAllowRemotePythonExecution=True\n");
-    block.push_str("; <<< FreeUltraCode: Unreal MCP full-access defaults\n");
+    block.push_str("; <<< UltraGameStudio: Unreal MCP full-access defaults\n");
     block
 }
 
@@ -6429,7 +6418,7 @@ fn ue_mcp_write_remote_control_config_file(
                 "+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n",
             );
         }
-        block.push_str("; <<< FreeUltraCode: Unreal MCP RemoteControl auto-start\n");
+        block.push_str("; <<< UltraGameStudio: Unreal MCP RemoteControl auto-start\n");
         blocks.push(block);
     }
 
@@ -7492,7 +7481,7 @@ fn run_workspace_status_command_with_timeout(
     timeout: std::time::Duration,
 ) -> Result<WorkspaceStatusCommandOutput, String> {
     let temp_id = format!(
-        "fuc-status-{}-{}-{}",
+        "ugs-status-{}-{}-{}",
         std::process::id(),
         now_ms(),
         workspace_status_temp_seq()
@@ -9577,7 +9566,7 @@ const ISOLATED_COPY_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".hg",
     ".svn",
-    ".freeultracode",
+    ".ultragamestudio",
     ".worktree",
     ".omc",
     "node_modules",
@@ -10208,6 +10197,45 @@ async fn preview_local_file(path: String, cwd: Option<String>) -> Result<LocalFi
         .map_err(|e| format!("文件预览任务失败: {e}"))?
 }
 
+fn upload_mime_for_path(path: &Path) -> Option<String> {
+    image_mime_for_path(path)
+        .or_else(|| document_mime_for_path(path))
+        .map(|mime| mime.to_string())
+        .or_else(|| Some(text_mime_for_path(path).to_string()))
+}
+
+fn read_local_file_for_upload_blocking(path: String) -> Result<LocalFileUploadPayload, String> {
+    let path = normalize_preview_separators(&path);
+    let resolved = preview_path(&path, None)?;
+    let resolved = std::fs::canonicalize(&resolved).map_err(|e| format!("读取文件失败：{e}"))?;
+    let metadata = std::fs::metadata(&resolved).map_err(|e| format!("读取文件信息失败：{e}"))?;
+    if !metadata.is_file() {
+        return Err("目标不是文件。".to_string());
+    }
+    if metadata.len() > LOCAL_FILE_UPLOAD_LIMIT {
+        return Err("文件超过上传大小限制。".to_string());
+    }
+    let bytes = std::fs::read(&resolved).map_err(|e| format!("读取文件失败：{e}"))?;
+    use base64::Engine;
+    Ok(LocalFileUploadPayload {
+        bytes_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        file_name: resolved
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file")
+            .to_string(),
+        mime: upload_mime_for_path(&resolved),
+        size_bytes: metadata.len(),
+    })
+}
+
+#[tauri::command]
+async fn read_local_file_for_upload(path: String) -> Result<LocalFileUploadPayload, String> {
+    tauri::async_runtime::spawn_blocking(move || read_local_file_for_upload_blocking(path))
+        .await
+        .map_err(|e| format!("文件读取任务失败: {e}"))?
+}
+
 fn clipboard_image_extension(mime: &str, file_name: Option<&str>) -> Result<&'static str, String> {
     let mime = mime
         .split(';')
@@ -10544,7 +10572,7 @@ fn fetch_capture_image_data_url_blocking(url: String) -> Result<String, String> 
             "Accept",
             "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         )
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .call()
         .map_err(|err| match err {
             ureq::Error::Status(code, _) => format!("截图图片下载失败：HTTP {code}。"),
@@ -10602,7 +10630,7 @@ fn fetch_model_asset_bytes(url: &str) -> Result<(Vec<u8>, &'static str), String>
             "Accept",
             "model/gltf-binary,model/gltf+json,application/octet-stream,text/plain,*/*;q=0.8",
         )
-        .set("User-Agent", "FreeUltraCode")
+        .set("User-Agent", "UltraGameStudio")
         .call()
         .map_err(|err| match err {
             ureq::Error::Status(code, _) => format!("模型下载失败：HTTP {code}。"),
@@ -11514,9 +11542,8 @@ fn cloudflare_response_to_image_data_url(
 
     let text = String::from_utf8(bytes)
         .map_err(|err| format!("Cloudflare 返回的响应不是图片，也不是可读 JSON: {err}"))?;
-    let parsed: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
-        format!("Cloudflare 返回的响应不是图片，也不是有效 JSON: {err}: {text}")
-    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| format!("Cloudflare 返回的响应不是图片，也不是有效 JSON: {err}: {text}"))?;
     image_data_url_from_cloudflare_json(&parsed)
         .ok_or_else(|| format!("Cloudflare 返回成功，但响应里没有可识别的图片: {text}"))
 }
@@ -11621,7 +11648,7 @@ fn setup_local_model_blocking(model: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         let script_path =
-            managed_temp_path(None, "scripts", "freeultracode-setup-local-model", "ps1");
+            managed_temp_path(None, "scripts", "ultragamestudio-setup-local-model", "ps1");
         std::fs::write(&script_path, LOCAL_MODEL_SETUP_PS1.as_bytes())
             .map_err(|e| format!("写入本地模型安装脚本失败: {e}"))?;
 
@@ -11683,7 +11710,8 @@ fn setup_comfyui_blocking(model: Option<String>, skip_model: bool) -> Result<(),
 
     #[cfg(target_os = "windows")]
     {
-        let script_path = managed_temp_path(None, "scripts", "freeultracode-setup-comfyui", "ps1");
+        let script_path =
+            managed_temp_path(None, "scripts", "ultragamestudio-setup-comfyui", "ps1");
         std::fs::write(&script_path, COMFYUI_SETUP_PS1.as_bytes())
             .map_err(|e| format!("写入 ComfyUI 安装脚本失败：{e}"))?;
 
@@ -11802,57 +11830,57 @@ async fn run_workflow(
     .map_err(|e| format!("运行任务调度失败: {e}"))?
 }
 
-fn fuc_cli_candidates(cwd: Option<&str>) -> Vec<PathBuf> {
+fn ugs_cli_candidates(cwd: Option<&str>) -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Some(dir) = cwd.map(str::trim).filter(|dir| !dir.is_empty()) {
         let root = PathBuf::from(dir);
-        out.push(root.join("app").join("cli").join("dist").join("fuc.mjs"));
-        out.push(root.join("cli").join("dist").join("fuc.mjs"));
+        out.push(root.join("app").join("cli").join("dist").join("ugs.mjs"));
+        out.push(root.join("cli").join("dist").join("ugs.mjs"));
     }
     if let Ok(cwd) = std::env::current_dir() {
-        out.push(cwd.join("app").join("cli").join("dist").join("fuc.mjs"));
-        out.push(cwd.join("cli").join("dist").join("fuc.mjs"));
+        out.push(cwd.join("app").join("cli").join("dist").join("ugs.mjs"));
+        out.push(cwd.join("cli").join("dist").join("ugs.mjs"));
         if let Some(parent) = cwd.parent() {
-            out.push(parent.join("app").join("cli").join("dist").join("fuc.mjs"));
-            out.push(parent.join("cli").join("dist").join("fuc.mjs"));
+            out.push(parent.join("app").join("cli").join("dist").join("ugs.mjs"));
+            out.push(parent.join("cli").join("dist").join("ugs.mjs"));
         }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            out.push(dir.join("fuc.mjs"));
-            out.push(dir.join("cli").join("dist").join("fuc.mjs"));
+            out.push(dir.join("ugs.mjs"));
+            out.push(dir.join("cli").join("dist").join("ugs.mjs"));
             out.push(
                 dir.join("..")
                     .join("..")
                     .join("app")
                     .join("cli")
                     .join("dist")
-                    .join("fuc.mjs"),
+                    .join("ugs.mjs"),
             );
         }
     }
     out
 }
 
-fn bundled_fuc_cli_path(app: &AppHandle) -> Option<PathBuf> {
+fn bundled_ugs_cli_path(app: &AppHandle) -> Option<PathBuf> {
     app.path()
         .resource_dir()
         .ok()
-        .map(|dir| dir.join("cli").join("fuc.mjs"))
+        .map(|dir| dir.join("cli").join("ugs.mjs"))
         .filter(|path| path.is_file())
 }
 
-fn locate_fuc_cli(cwd: Option<&str>, app: &AppHandle) -> Result<PathBuf, String> {
-    if let Some(path) = bundled_fuc_cli_path(app) {
+fn locate_ugs_cli(cwd: Option<&str>, app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(path) = bundled_ugs_cli_path(app) {
         return normalize_node_entry_path(&path)
-            .map_err(|e| format!("无法解析内置 fuc CLI 路径 {}: {e}", path.display()));
+            .map_err(|e| format!("无法解析内置 ugs CLI 路径 {}: {e}", path.display()));
     }
 
-    let candidates = fuc_cli_candidates(cwd);
+    let candidates = ugs_cli_candidates(cwd);
     for path in &candidates {
         if path.is_file() {
             return normalize_node_entry_path(path)
-                .map_err(|e| format!("无法解析 fuc CLI 路径 {}: {e}", path.display()));
+                .map_err(|e| format!("无法解析 ugs CLI 路径 {}: {e}", path.display()));
         }
     }
     let searched = candidates
@@ -11861,7 +11889,7 @@ fn locate_fuc_cli(cwd: Option<&str>, app: &AppHandle) -> Result<PathBuf, String>
         .collect::<Vec<_>>()
         .join("\n");
     Err(format!(
-        "未找到 app/cli/dist/fuc.mjs 或内置 cli/fuc.mjs。请先在 app/ 下运行 npm run cli:build。\n已搜索:\n{searched}"
+        "未找到 app/cli/dist/ugs.mjs 或内置 cli/ugs.mjs。请先在 app/ 下运行 npm run cli:build。\n已搜索:\n{searched}"
     ))
 }
 
@@ -11877,7 +11905,7 @@ fn normalize_node_entry_path(path: &Path) -> std::io::Result<PathBuf> {
     Ok(canonical)
 }
 
-fn default_ultracode_workdir(cli_path: &Path) -> PathBuf {
+fn default_studio_workdir(cli_path: &Path) -> PathBuf {
     let mut current = cli_path.parent();
     while let Some(dir) = current {
         if dir.file_name().and_then(|name| name.to_str()) == Some("app") {
@@ -11894,7 +11922,7 @@ fn default_ultracode_workdir(cli_path: &Path) -> PathBuf {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
-fn emit_ultracode_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, text: &str) {
+fn emit_studio_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, text: &str) {
     if text.trim().is_empty() {
         return;
     }
@@ -11912,8 +11940,12 @@ fn emit_ultracode_progress(app: &tauri::AppHandle, run_id: &str, stream: &str, t
     );
 }
 
+fn studio_enabled() -> bool {
+    false
+}
+
 #[tauri::command]
-async fn run_ultracode(
+async fn run_studio(
     task: String,
     cwd: Option<String>,
     extra_workspace_paths: Option<Vec<String>>,
@@ -11933,20 +11965,24 @@ async fn run_ultracode(
     trace: Option<bool>,
     interactive: Option<bool>,
     app: tauri::AppHandle,
-) -> Result<UltracodeRunResult, String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<UltracodeRunResult, String> {
+) -> Result<StudioRunResult, String> {
+    if !studio_enabled() {
+        return Err(
+            "/studio 动态多智能体编排已默认关闭。请直接使用普通聊天/编程模型处理任务。".to_string(),
+        );
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Result<StudioRunResult, String> {
         let task = task.trim().to_string();
         if task.is_empty() {
-            return Err("请提供任务：/ultracode <任务>".to_string());
+            return Err("请提供任务：/studio <任务>".to_string());
         }
 
         let cwd_trimmed = cwd.as_deref().map(str::trim).filter(|dir| !dir.is_empty());
-        let cli_path = locate_fuc_cli(cwd_trimmed, &app)?;
+        let cli_path = locate_ugs_cli(cwd_trimmed, &app)?;
         let workdir = cwd_trimmed
             .map(PathBuf::from)
             .filter(|path| path.is_dir())
-            .unwrap_or_else(|| default_ultracode_workdir(&cli_path));
-        let deep_research_workflow = bundled_deep_research_workflow_root(&app);
+            .unwrap_or_else(|| default_studio_workdir(&cli_path));
         let extra_workspace_paths =
             normalize_extra_workspace_paths(cwd.as_deref(), extra_workspace_paths);
         let workspace_context = if extra_workspace_paths.is_empty() {
@@ -11961,26 +11997,11 @@ async fn run_ultracode(
                     .join("\n")
             )
         };
-        let task = if task.contains("执行 deep-research")
-            || task.contains("Run deep research")
-            || task.contains("/deep-research")
-        {
-            match &deep_research_workflow {
-                Some(root) => format!(
-                    "{task}{workspace_context}\n\n内置 deep-research workflow 路径：{root}\n请优先读取并遵循该目录下 WORKFLOW.md 和 protocol/model-agnostic-deep-research.md；这是随 FreeUltraCode 发布的内置 workflow，不是用户电脑上的普通 skill，不要依赖用户工作区里是否存在 skills/ 目录。",
-                    root = root.to_string_lossy()
-                ),
-                None => format!(
-                    "{task}{workspace_context}\n\n内置 deep-research workflow 路径：未找到 Tauri bundled workflow resource；请按内置 deep-research 协议摘要执行，并在最终报告中记录该资源缺口。"
-                ),
-            }
-        } else {
-            format!("{task}{workspace_context}")
-        };
+        let task = format!("{task}{workspace_context}");
 
         let mut args = vec![
             cli_path.to_string_lossy().to_string(),
-            "ultracode".to_string(),
+            "studio".to_string(),
             task,
             "--json".to_string(),
             "--cwd".to_string(),
@@ -12047,20 +12068,13 @@ async fn run_ultracode(
         let mut cmd = new_spawn_command("node");
         cmd.args(&args)
             .current_dir(&workdir)
-            .env(
-                "FUC_BUILTIN_DEEP_RESEARCH_WORKFLOW_DIR",
-                deep_research_workflow
-                    .as_ref()
-                    .map(|path| path.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("无法启动 node 执行 /ultracode：请确认 Node.js 已安装并在 PATH 中。({e})"))?;
+            .map_err(|e| format!("无法启动 node 执行 /studio：请确认 Node.js 已安装并在 PATH 中。({e})"))?;
         register_ai_cli(&run_id, child.id());
 
         let stdout = child.stdout.take();
@@ -12080,7 +12094,7 @@ async fn run_ultracode(
                 };
                 out.push_str(&line);
                 out.push('\n');
-                emit_ultracode_progress(&app_stdout, &run_stdout, "stdout", &line);
+                emit_studio_progress(&app_stdout, &run_stdout, "stdout", &line);
             }
             out
         });
@@ -12099,7 +12113,7 @@ async fn run_ultracode(
                 };
                 out.push_str(&line);
                 out.push('\n');
-                emit_ultracode_progress(&app_stderr, &run_stderr, "stderr", &line);
+                emit_studio_progress(&app_stderr, &run_stderr, "stderr", &line);
             }
             out
         });
@@ -12111,14 +12125,14 @@ async fn run_ultracode(
                     if take_ai_cli_cancelled(&run_id) {
                         terminate_child_tree(&mut child);
                         unregister_ai_cli(&run_id);
-                        return Err("CLI \"ultracode\" 已由用户中断。".to_string());
+                        return Err("CLI \"studio\" 已由用户中断。".to_string());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(e) => {
                     terminate_child_tree(&mut child);
                     unregister_ai_cli(&run_id);
-                    return Err(format!("等待 /ultracode 进程失败: {e}"));
+                    return Err(format!("等待 /studio 进程失败: {e}"));
                 }
             }
         };
@@ -12128,7 +12142,7 @@ async fn run_ultracode(
         let cancelled = take_ai_cli_cancelled(&run_id);
         unregister_ai_cli(&run_id);
         if cancelled {
-            return Err("CLI \"ultracode\" 已由用户中断。".to_string());
+            return Err("CLI \"studio\" 已由用户中断。".to_string());
         }
 
         let result_json = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok();
@@ -12138,7 +12152,7 @@ async fn run_ultracode(
             .and_then(|value| value.as_str())
             .map(|value| value.to_string());
         let exit_code = status.code().unwrap_or(-1);
-        let result = UltracodeRunResult {
+        let result = StudioRunResult {
             exit_code,
             stdout,
             stderr,
@@ -12150,19 +12164,19 @@ async fn run_ultracode(
             Ok(result)
         } else {
             Err(format!(
-                "/ultracode 退出码 {exit_code}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+                "/studio 退出码 {exit_code}\n--- stdout ---\n{}\n--- stderr ---\n{}",
                 result.stdout.trim_end(),
                 result.stderr.trim_end()
             ))
         }
     })
     .await
-    .map_err(|e| format!("/ultracode 任务调度失败: {e}"))?
+    .map_err(|e| format!("/studio 任务调度失败: {e}"))?
 }
 
 /// System prompt steering the model to emit a pure IRGraph JSON object that maps
 /// onto a *runnable* Claude Code workflow (the injected-globals DSL).
-const AI_EDIT_SYSTEM: &str = "You are a workflow graph editor for FreeUltraCode. You receive the current workflow as an IRGraph JSON object plus a natural-language instruction (in Chinese or English). Return ONLY a single valid IRGraph JSON object (no markdown, no prose).
+const AI_EDIT_SYSTEM: &str = "You are a workflow graph editor for UltraGameStudio. You receive the current workflow as an IRGraph JSON object plus a natural-language instruction (in Chinese or English). Return ONLY a single valid IRGraph JSON object (no markdown, no prose).
 
 The IRGraph compiles to a real Claude Code workflow script, so use these exact node shapes:
 - Envelope: {version, meta, nodes, edges, layout?}.
@@ -12290,7 +12304,7 @@ const AI_CLI_HEARTBEAT_SECS: u64 = 12;
 /// longer default so legitimate long-running workflows are less likely to be
 /// killed too early.
 fn configured_ai_cli_timeout_secs() -> u64 {
-    std::env::var("FREEULTRACODE_AI_CLI_TIMEOUT_SECS")
+    std::env::var("ULTRAGAMESTUDIO_AI_CLI_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|secs| *secs >= 60)
@@ -12307,10 +12321,10 @@ fn ai_cli_timeout_secs(override_secs: Option<u64>) -> u64 {
 
 /// Whether to load the machine's global MCP servers for each workflow node.
 /// On by default so workflow nodes share the same MCP tools as a hand-run
-/// `claude` (e.g. pencil `mcp__pencil__...`). Set FREEULTRACODE_ENABLE_MCP=0
+/// `claude` (e.g. pencil `mcp__pencil__...`). Set ULTRAGAMESTUDIO_ENABLE_MCP=0
 /// (or false/no) to opt out and skip MCP init for faster cold spawns.
 fn mcp_enabled() -> bool {
-    std::env::var("FREEULTRACODE_ENABLE_MCP")
+    std::env::var("ULTRAGAMESTUDIO_ENABLE_MCP")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             // Default on: only an explicit disable value turns MCP off.
@@ -12320,7 +12334,7 @@ fn mcp_enabled() -> bool {
 }
 
 fn claude_bare_mode_disabled() -> bool {
-    std::env::var("FREEULTRACODE_DISABLE_CLAUDE_BARE")
+    std::env::var("ULTRAGAMESTUDIO_DISABLE_CLAUDE_BARE")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -12523,7 +12537,7 @@ fn write_claude_gateway_settings(
     let Some(settings) = env_vars.and_then(claude_gateway_settings_json) else {
         return Ok(None);
     };
-    let path = temp_output_path_for_cwd(cwd, "freeultracode-claude-settings", "json");
+    let path = temp_output_path_for_cwd(cwd, "ultragamestudio-claude-settings", "json");
     let bytes =
         serde_json::to_vec(&settings).map_err(|e| format!("生成 Claude 临时配置失败: {e}"))?;
     std::fs::write(&path, bytes).map_err(|e| format!("写入 Claude 临时配置失败: {e}"))?;
@@ -12713,7 +12727,7 @@ fn write_project_mcp_settings_value(
     cwd: Option<&str>,
     settings: &serde_json::Value,
 ) -> Result<TempFileGuard, String> {
-    let path = temp_output_path_for_cwd(cwd, "freeultracode-project-mcp", "json");
+    let path = temp_output_path_for_cwd(cwd, "ultragamestudio-project-mcp", "json");
     let bytes = serde_json::to_vec(settings).map_err(|e| format!("生成项目 MCP 配置失败: {e}"))?;
     std::fs::write(&path, bytes).map_err(|e| format!("写入项目 MCP 配置失败: {e}"))?;
     Ok(TempFileGuard::new(path))
@@ -12742,7 +12756,7 @@ fn write_gemini_project_mcp_settings(cwd: Option<&str>) -> Result<Option<TempFil
     let Some(settings) = gemini_project_mcp_settings_json(cwd) else {
         return Ok(None);
     };
-    let path = temp_output_path_for_cwd(cwd, "freeultracode-gemini-project-mcp", "json");
+    let path = temp_output_path_for_cwd(cwd, "ultragamestudio-gemini-project-mcp", "json");
     let bytes =
         serde_json::to_vec(&settings).map_err(|e| format!("生成 Gemini MCP 配置失败: {e}"))?;
     std::fs::write(&path, bytes).map_err(|e| format!("写入 Gemini MCP 配置失败: {e}"))?;
@@ -12865,8 +12879,8 @@ fn command_text_output_with_timeout(
     mut cmd: Command,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    let stdout_path = temp_output_path("freeultracode-cli-help-stdout", "txt");
-    let stderr_path = temp_output_path("freeultracode-cli-help-stderr", "txt");
+    let stdout_path = temp_output_path("ultragamestudio-cli-help-stdout", "txt");
+    let stderr_path = temp_output_path("ultragamestudio-cli-help-stderr", "txt");
     let _stdout_guard = TempFileGuard::new(stdout_path.clone());
     let _stderr_guard = TempFileGuard::new(stderr_path.clone());
     let stdout_file = std::fs::File::create(&stdout_path)
@@ -12931,9 +12945,9 @@ fn claude_cli_supports_bare(binary: &str, shell: &Option<ShellSpec>) -> bool {
 /// thinking stream as they are generated (matching the interactive CLI's live
 /// feel); the plain `-p` stream otherwise emits only one event per *completed*
 /// message, leaving the run log blank while a single long answer is composed.
-/// Set FREEULTRACODE_DISABLE_PARTIAL=1 if a CLI build predates the flag.
+/// Set ULTRAGAMESTUDIO_DISABLE_PARTIAL=1 if a CLI build predates the flag.
 fn partial_enabled() -> bool {
-    !std::env::var("FREEULTRACODE_DISABLE_PARTIAL")
+    !std::env::var("ULTRAGAMESTUDIO_DISABLE_PARTIAL")
         .map(|v| {
             let v = v.trim().to_ascii_lowercase();
             v == "1" || v == "true" || v == "yes"
@@ -12943,7 +12957,7 @@ fn partial_enabled() -> bool {
 
 /// Read the no-progress timeout override. Set to 0 to disable idle detection.
 fn configured_ai_cli_idle_timeout_secs() -> u64 {
-    std::env::var("FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS")
+    std::env::var("ULTRAGAMESTUDIO_AI_CLI_IDLE_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|secs| *secs == 0 || *secs >= 30)
@@ -12951,7 +12965,7 @@ fn configured_ai_cli_idle_timeout_secs() -> u64 {
 }
 
 fn ai_cli_idle_timeout_secs(override_secs: Option<u64>) -> u64 {
-    if let Ok(raw) = std::env::var("FREEULTRACODE_AI_CLI_IDLE_TIMEOUT_SECS") {
+    if let Ok(raw) = std::env::var("ULTRAGAMESTUDIO_AI_CLI_IDLE_TIMEOUT_SECS") {
         if let Ok(secs) = raw.trim().parse::<u64>() {
             if secs == 0 || secs >= 30 {
                 return secs;
@@ -13035,7 +13049,7 @@ fn ai_cli_result(text: String, usage: &Arc<Mutex<Option<serde_json::Value>>>) ->
 /// `🔧 Bash: ls app/src` / `🔧 Glob: **/*.tsx` / `🔧 Read: app/src/core/ir.ts`,
 /// so the run log shows *what* the agent is doing, not just the tool name.
 /// Retained as a fallback / for the codex text path; the claude path now emits
-/// structured `<<FUC_TOOL>>` sentinels instead.
+/// structured `<<UGS_TOOL>>` sentinels instead.
 #[allow(dead_code)]
 fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     // Prefer the most informative known field; fall back to compact JSON.
@@ -13107,11 +13121,14 @@ fn tool_subject(input: &serde_json::Value) -> String {
 /// the frontend render layer decodes (mirrors src/components/ai/lib/toolEvent.ts).
 /// `<`/`>` in the JSON payload are escaped as `<`/`>` (JSON parsing
 /// restores them) so a tool result that itself contains the literal sentinel
-/// markers can't emit a stray `<<FUC_TOOL_END>>` that prematurely closes the
+/// markers can't emit a stray `<<UGS_TOOL_END>>` that prematurely closes the
 /// block and leaks the rest of the payload as prose.
 fn encode_tool_patch(patch: &serde_json::Value) -> String {
-    let payload = patch.to_string().replace('<', "\\u003c").replace('>', "\\u003e");
-    format!("\n<<FUC_TOOL>>{}<<FUC_TOOL_END>>\n", payload)
+    let payload = patch
+        .to_string()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
+    format!("\n<<UGS_TOOL>>{}<<UGS_TOOL_END>>\n", payload)
 }
 
 fn encode_running_status_patch(run_id: &str, elapsed_secs: u64) -> String {
@@ -13316,8 +13333,15 @@ fn insert_codex_arg_string(
     key: &str,
     value: &Option<String>,
 ) {
-    if let Some(value) = value.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
-        map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    if let Some(value) = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
 }
 
@@ -13374,7 +13398,11 @@ fn codex_tool_patch(item: &CodexLiteItem, fallback_id: String) -> Option<serde_j
     if item_type.is_empty() || item_type == "agent_message" {
         return None;
     }
-    let result_raw = item.output.as_deref().or(item.text.as_deref()).unwrap_or("");
+    let result_raw = item
+        .output
+        .as_deref()
+        .or(item.text.as_deref())
+        .unwrap_or("");
     let truncated = result_raw.chars().count() > TOOL_RESULT_CLAMP;
     let result: String = result_raw.chars().take(TOOL_RESULT_CLAMP).collect();
     let is_error = item
@@ -13594,7 +13622,7 @@ async fn ai_cli(
         let codex_last_message_path = if is_codex {
             Some(temp_output_path_for_cwd(
                 cwd.as_deref(),
-                "freeultracode-codex-last",
+                "ultragamestudio-codex-last",
                 "txt",
             ))
         } else {
@@ -14585,12 +14613,12 @@ mod tests {
     #[test]
     fn list_cached_assets_finds_workspace_cache_files() {
         let dir = std::env::temp_dir().join(format!(
-            "fuc-assets-cache-{}-{}",
+            "ugs-assets-cache-{}-{}",
             std::process::id(),
             now_ms()
         ));
-        let clipboard_dir = dir.join(".freeultracode").join("clipboard-images");
-        let model_dir = dir.join(".freeultracode").join("model-assets");
+        let clipboard_dir = dir.join(".ultragamestudio").join("clipboard-images");
+        let model_dir = dir.join(".ultragamestudio").join("model-assets");
         std::fs::create_dir_all(&clipboard_dir).unwrap();
         std::fs::create_dir_all(&model_dir).unwrap();
         std::fs::write(clipboard_dir.join("shot.png"), b"png").unwrap();
@@ -14610,7 +14638,7 @@ mod tests {
     #[test]
     fn blueprint_mode_status_detects_installed_plugin() {
         let dir = std::env::temp_dir().join(format!(
-            "fuc-blueprint-status-{}-{}",
+            "ugs-blueprint-status-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -14644,7 +14672,7 @@ mod tests {
     #[test]
     fn blueprint_mode_uninstall_removes_default_plugin_dir() {
         let dir = std::env::temp_dir().join(format!(
-            "fuc-blueprint-uninstall-{}-{}",
+            "ugs-blueprint-uninstall-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -14689,7 +14717,7 @@ mod tests {
     fn ue_mcp_enable_uproject_plugins_is_idempotent_and_merges() {
         assert!(UE_MCP_REQUIRED_PLUGINS.contains(&"PythonScriptPlugin"));
         let dir = std::env::temp_dir().join(format!(
-            "fuc-ue-uproject-{}-{}",
+            "ugs-ue-uproject-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -14762,7 +14790,7 @@ mod tests {
     #[test]
     fn ue_mcp_remote_control_config_is_idempotent_and_version_aware() {
         let dir =
-            std::env::temp_dir().join(format!("fuc-ue-rc-{}-{}", std::process::id(), now_ms()));
+            std::env::temp_dir().join(format!("ugs-ue-rc-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&dir).unwrap();
 
         // Modern line (5.x): writes the modern startup CVars.
@@ -14770,16 +14798,16 @@ mod tests {
         assert!(m1.contains(&"Config/DefaultEngine.ini".to_string()));
         assert!(m1.contains(&"Config/DefaultRemoteControl.ini".to_string()));
         let ini = std::fs::read_to_string(dir.join("Config/DefaultEngine.ini")).unwrap();
-        assert!(ini.contains("FreeUltraCode: Unreal MCP RemoteControl auto-start"));
+        assert!(ini.contains("UltraGameStudio: Unreal MCP RemoteControl auto-start"));
         assert!(ini.contains("WebControl.EnableServerOnStartup 1"));
-        assert!(ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(ini.contains("UltraGameStudio: Unreal MCP full-access defaults"));
         assert!(ini.contains("[/Script/RemoteControlCommon.RemoteControlSettings]"));
         assert!(ini.contains("bAllowConsoleCommandRemoteExecution=True"));
         assert!(ini.contains("bEnableRemotePythonExecution=True"));
         assert!(ini.contains("bAllowRemotePythonExecution=True"));
         assert!(ini.contains("bRemoteExecution=True"));
         let rc_ini = std::fs::read_to_string(dir.join("Config/DefaultRemoteControl.ini")).unwrap();
-        assert!(rc_ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(rc_ini.contains("UltraGameStudio: Unreal MCP full-access defaults"));
         assert!(rc_ini.contains("[/Script/RemoteControlCommon.RemoteControlSettings]"));
         assert!(rc_ini.contains("bEnableRemotePythonExecution=True"));
         // Second run is a no-op (managed marker already present).
@@ -14793,7 +14821,7 @@ mod tests {
         std::fs::create_dir_all(&upgrade_config).unwrap();
         std::fs::write(
             upgrade_config.join("DefaultEngine.ini"),
-            "\n; >>> FreeUltraCode: Unreal MCP RemoteControl auto-start\n[/Script/Engine.Engine]\n+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n; <<< FreeUltraCode: Unreal MCP RemoteControl auto-start\n",
+            "\n; >>> UltraGameStudio: Unreal MCP RemoteControl auto-start\n[/Script/Engine.Engine]\n+ConsoleCommands=RemoteControl.EnableWebServerOnStartup 1\n+ConsoleCommands=WebControl.EnableServerOnStartup 1\n; <<< UltraGameStudio: Unreal MCP RemoteControl auto-start\n",
         )
         .unwrap();
         let upgraded = ue_mcp_write_remote_control_config(&upgrade_dir, Some((5, 3))).unwrap();
@@ -14801,7 +14829,7 @@ mod tests {
         assert!(upgraded.contains(&"Config/DefaultRemoteControl.ini".to_string()));
         let upgraded_ini =
             std::fs::read_to_string(upgrade_config.join("DefaultEngine.ini")).unwrap();
-        assert!(upgraded_ini.contains("FreeUltraCode: Unreal MCP full-access defaults"));
+        assert!(upgraded_ini.contains("UltraGameStudio: Unreal MCP full-access defaults"));
         assert!(upgraded_ini.contains("bEnableRemotePythonExecution=True"));
         let upgraded_again =
             ue_mcp_write_remote_control_config(&upgrade_dir, Some((5, 3))).unwrap();
@@ -14821,7 +14849,7 @@ mod tests {
     #[test]
     fn ue_mcp_project_mcp_json_merges_and_preserves_other_servers() {
         let dir = std::env::temp_dir().join(format!(
-            "fuc-ue-mcpjson-{}-{}",
+            "ugs-ue-mcpjson-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -14853,7 +14881,7 @@ mod tests {
     #[test]
     fn ue_mcp_project_mcp_json_archives_conflicting_unreal_servers() {
         let dir = std::env::temp_dir().join(format!(
-            "fuc-ue-mcpjson-conflict-{}-{}",
+            "ugs-ue-mcpjson-conflict-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -14903,7 +14931,7 @@ mod tests {
         let settings = serde_json::json!({
             "mcpServers": {
                 "ue-mcp-for-all-versions": {
-                    "command": "C:\\Users\\fengwei\\.freeultracode\\tools\\ue-mcp.exe",
+                    "command": "C:\\Users\\fengwei\\.ultragamestudio\\tools\\ue-mcp.exe",
                     "args": []
                 }
             }
@@ -14950,7 +14978,7 @@ mod tests {
         let settings = serde_json::json!({
             "mcpServers": {
                 "ue-mcp-for-all-versions": {
-                    "command": "C:\\Users\\fengwei\\.freeultracode\\tools\\ue-mcp.exe",
+                    "command": "C:\\Users\\fengwei\\.ultragamestudio\\tools\\ue-mcp.exe",
                     "args": ["--host", "127.0.0.1"],
                     "env": { "UE_PROJECT": "Game" }
                 }
@@ -14965,7 +14993,7 @@ mod tests {
         assert_eq!(args[2], "-c");
         assert_eq!(
             args[3],
-            "mcp_servers.ue-mcp-for-all-versions.command=\"C:\\\\Users\\\\fengwei\\\\.freeultracode\\\\tools\\\\ue-mcp.exe\""
+            "mcp_servers.ue-mcp-for-all-versions.command=\"C:\\\\Users\\\\fengwei\\\\.ultragamestudio\\\\tools\\\\ue-mcp.exe\""
         );
         assert_eq!(args[4], "-c");
         assert_eq!(
@@ -14984,7 +15012,7 @@ mod tests {
         let mut settings = serde_json::json!({
             "mcpServers": {
                 "ue-mcp-for-all-versions": {
-                    "command": "C:\\Users\\fengwei\\.freeultracode\\tools\\ue-mcp.exe",
+                    "command": "C:\\Users\\fengwei\\.ultragamestudio\\tools\\ue-mcp.exe",
                     "args": ["--host", "127.0.0.1"]
                 }
             }
@@ -15088,7 +15116,7 @@ mod tests {
     #[test]
     fn preview_fallback_finds_unique_bare_filename() {
         let root = std::env::temp_dir().join(format!(
-            "freeultracode-preview-test-{}-{}",
+            "ultragamestudio-preview-test-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -15106,7 +15134,7 @@ mod tests {
     #[test]
     fn preview_fallback_maps_p4_depot_path_to_workspace_tail() {
         let base = std::env::temp_dir().join(format!(
-            "freeultracode-preview-p4-test-{}-{}",
+            "ultragamestudio-preview-p4-test-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -15140,7 +15168,7 @@ mod tests {
     #[test]
     fn preview_fallback_handles_omitted_app_prefix() {
         let root = std::env::temp_dir().join(format!(
-            "freeultracode-preview-app-prefix-test-{}-{}",
+            "ultragamestudio-preview-app-prefix-test-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -15345,7 +15373,7 @@ mod tests {
     #[test]
     fn codex_sidecar_output_ignores_empty_files() {
         let path = std::env::temp_dir().join(format!(
-            "freeultracode-codex-sidecar-test-{}-{}.txt",
+            "ultragamestudio-codex-sidecar-test-{}-{}.txt",
             std::process::id(),
             now_ms()
         ));
@@ -15524,7 +15552,7 @@ mod tests {
     #[test]
     fn scan_workspace_snapshot_does_not_limit_file_count() {
         let root = std::env::temp_dir().join(format!(
-            "freeultracode-session-changes-{}-{}",
+            "ultragamestudio-session-changes-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -15622,7 +15650,7 @@ mod tests {
         );
 
         let files = merge_workspace_status_files_with_diff(
-            Path::new("E:/OpenWorkflow"),
+            Path::new("E:/UltraGameStudio"),
             status_files,
             diff_files,
         );
@@ -15815,7 +15843,7 @@ mod tests {
     #[test]
     fn p4_workspace_status_specs_scan_root_files_before_directories() {
         let root =
-            std::env::temp_dir().join(format!("fuc-p4-specs-{}-{}", std::process::id(), now_ms()));
+            std::env::temp_dir().join(format!("ugs-p4-specs-{}-{}", std::process::id(), now_ms()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("Content")).unwrap();
         std::fs::create_dir_all(root.join("Source")).unwrap();
@@ -15859,7 +15887,7 @@ mod tests {
     #[test]
     fn p4_timed_out_directory_spec_subdivides_to_children() {
         let root =
-            std::env::temp_dir().join(format!("fuc-p4-split-{}-{}", std::process::id(), now_ms()));
+            std::env::temp_dir().join(format!("ugs-p4-split-{}-{}", std::process::id(), now_ms()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("Content").join("Maps")).unwrap();
         std::fs::write(root.join("Content").join("Main.umap"), "map\n").unwrap();
@@ -15909,7 +15937,7 @@ mod tests {
 
     #[test]
     fn enqueue_vcs_scan_cancels_previous_scan_for_same_root() {
-        let root = format!("freeultracode-scan-test-{}", now_ms());
+        let root = format!("ultragamestudio-scan-test-{}", now_ms());
         enqueue_vcs_scan(root.clone(), "k1".to_string());
         let first = {
             let queue = vcs_scan_queue().lock().unwrap();
@@ -15939,7 +15967,7 @@ mod tests {
     #[test]
     fn workspace_changes_uses_session_time_when_baseline_is_late() {
         let root = std::env::temp_dir().join(format!(
-            "freeultracode-session-time-{}-{}",
+            "ultragamestudio-session-time-{}-{}",
             std::process::id(),
             now_ms()
         ));
@@ -16051,7 +16079,7 @@ pub fn run() {
                 tray = tray.icon(icon);
             }
             let _tray = tray
-                .tooltip("FreeUltraCode")
+                .tooltip("UltraGameStudio")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -16078,9 +16106,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             focus_main_window,
             notify_session_complete,
+            migrate_legacy_brand_storage,
             ai_edit_graph,
             run_workflow,
-            run_ultracode,
+            run_studio,
             ai_cli,
             cancel_ai_cli,
             slash_catalog,
@@ -16127,6 +16156,7 @@ pub fn run() {
             workspace_changes_cached,
             prepare_isolated_workspace,
             preview_local_file,
+            read_local_file_for_upload,
             save_clipboard_image,
             save_session_capture,
             fetch_capture_image_data_url,

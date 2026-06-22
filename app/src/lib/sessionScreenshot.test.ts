@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   captureBytesToBase64,
   planPageSlices,
   siblingPagePath,
+  withTimeout,
 } from './sessionScreenshot';
 
 describe('planPageSlices', () => {
@@ -71,5 +72,35 @@ describe('captureBytesToBase64', () => {
     expect(captureBytesToBase64(new Uint8Array([0, 1, 2, 253, 254, 255]))).toBe(
       'AAEC/f7/',
     );
+  });
+});
+
+describe('withTimeout', () => {
+  it('rejects when an operation never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = withTimeout(
+        new Promise<string>(() => {}),
+        100,
+        'CAPTURE_TIMEOUT',
+      );
+      const expectation = expect(pending).rejects.toThrow('CAPTURE_TIMEOUT');
+
+      await vi.advanceTimersByTimeAsync(100);
+      await expectation;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resolves when an operation finishes before the timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const done = withTimeout(Promise.resolve('ok'), 100, 'CAPTURE_TIMEOUT');
+
+      await expect(done).resolves.toBe('ok');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

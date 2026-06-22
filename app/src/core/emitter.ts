@@ -74,7 +74,7 @@ export function emitClaudeScript(ir: IRGraph): string {
 
   // Self-contained runtime helpers (e.g. `consensus`) so the exported script is
   // genuinely runnable in real Claude Code without any external global. Annotated
-  // `// @fuc:runtime` so the parser skips them and re-emits a fresh copy.
+  // `// @ugs:runtime` so the parser skips them and re-emits a fresh copy.
   const helpers = emitRuntimeHelpers(ir);
   if (helpers.length > 0) {
     lines.push(...helpers);
@@ -131,8 +131,8 @@ interface EmitCtx {
  * Exported so the parser strips the exact same markers when recovering the
  * authored prompt (keeping emit→parse→emit idempotent).
  */
-export const CTX_OPEN = '<!--fuc:ctx-->';
-export const CTX_CLOSE = '<!--/fuc:ctx-->';
+export const CTX_OPEN = '<!--ugs:ctx-->';
+export const CTX_CLOSE = '<!--/ugs:ctx-->';
 
 /* -------------------------------------------------------------------------- */
 /* scope emission                                                             */
@@ -682,10 +682,10 @@ function collectSchemaNames(ir: IRGraph): Set<string> {
  * quality patterns purely on top of the `agent`/`parallel` globals so the
  * exported script runs in real Claude Code with no external dependency. Written
  * with `String.raw` + `+` concatenation (no backticks / no `${}`) so its `\n`
- * escapes survive verbatim into the emitted script. Annotated `// @fuc:runtime`
+ * escapes survive verbatim into the emitted script. Annotated `// @ugs:runtime`
  * so the parser skips it and the emitter re-generates a fresh copy (idempotent).
  */
-const CONSENSUS_RUNTIME_HELPER = String.raw`async function consensus(voters, opts) { // @fuc:runtime consensus
+const CONSENSUS_RUNTIME_HELPER = String.raw`async function consensus(voters, opts) { // @ugs:runtime consensus
   const o = opts || {}
   const strategy = o.strategy || 'multi-lens'
   const want = strategy === 'self-consistency' ? Math.max(2, Math.min(7, o.samples || 3)) : voters.length

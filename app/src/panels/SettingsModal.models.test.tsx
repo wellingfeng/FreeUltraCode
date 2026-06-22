@@ -9,6 +9,7 @@ import {
 } from '@/lib/apiConfig';
 import { ACTIVE_GATEWAY_SELECTION_STORAGE } from '@/lib/gatewayConfig';
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
+import { remoteProviderId } from '@/lib/remoteWorkspace';
 import { defaultComposer } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
 import SettingsModal from './SettingsModal';
@@ -157,6 +158,21 @@ function providerCardForModelPicker(container: HTMLElement): HTMLElement {
   throw new Error('Provider card not found');
 }
 
+function channelSelectTrigger(container: HTMLElement): HTMLButtonElement {
+  const label = Array.from(container.querySelectorAll<HTMLLabelElement>('label')).find(
+    (item) =>
+      Array.from(item.querySelectorAll('span')).some(
+        (span) => span.textContent?.trim() === '渠道',
+      ),
+  );
+  expect(label).toBeInstanceOf(HTMLLabelElement);
+  const button = label?.querySelector<HTMLButtonElement>(
+    'div.relative > button[type="button"]',
+  );
+  expect(button).toBeInstanceOf(HTMLButtonElement);
+  return button!;
+}
+
 afterEach(() => {
   window.localStorage.clear();
   document.body.innerHTML = '';
@@ -284,6 +300,55 @@ describe('SettingsModal programming model selection', () => {
     }
   });
 
+  it('renames a programming channel by clicking its title', async () => {
+    const provider: Provider = {
+      id: 'provider-codex',
+      kind: 'codex',
+      name: 'Codex',
+      apiKey: 'token',
+      baseUrl: 'https://codex.example/v1',
+      transport: 'cli',
+      model: 'gpt-5.5',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      const nameButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>(
+          'button[aria-label^="编辑渠道"]',
+        ),
+      ).find((button) => button.textContent?.trim() === 'Codex');
+      expect(nameButton).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        nameButton?.click();
+      });
+
+      const input = view.container.querySelector<HTMLInputElement>(
+        'input[aria-label="渠道名称"]',
+      );
+      expect(input).toBeInstanceOf(HTMLInputElement);
+
+      await setInputValue(input!, 'Codex 备用');
+      await act(async () => {
+        input!.focus();
+        input!.blur();
+      });
+
+      const storedProviders = JSON.parse(
+        window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+      ) as Provider[];
+      expect(storedProviders[0].name).toBe('Codex 备用');
+      expect(view.container.textContent).toContain('Codex 备用');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it('switches the Settings default channel while a workflow is running without rebinding the active session', async () => {
     const providers: Provider[] = [
       {
@@ -401,6 +466,66 @@ describe('SettingsModal programming model selection', () => {
       ).toBeNull();
       expect(trigger().textContent).toContain('DeepSeek');
       expect(trigger().textContent).not.toContain('PackyCode');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('hides remote runner providers and dedupes identical local providers in the default selector', async () => {
+    const providers: Provider[] = [
+      {
+        id: 'provider-deepseek-direct',
+        kind: 'anthropic',
+        name: 'DeepSeek',
+        apiKey: 'sk-old',
+        baseUrl: 'https://deepseek.example/v1/',
+        model: 'deepseek-v4-pro',
+      },
+      {
+        id: 'provider-deepseek-cli',
+        kind: 'anthropic',
+        name: 'DeepSeek',
+        apiKey: 'sk-new',
+        baseUrl: 'https://deepseek.example/v1',
+        transport: 'cli',
+        model: 'deepseek-v4-pro',
+      },
+      {
+        id: remoteProviderId('rw_remote', 'deepseek'),
+        kind: 'anthropic',
+        name: '本地服务器测试1 · DeepSeek',
+        apiKey: 'remote-runner',
+        baseUrl: 'https://runner.example',
+        transport: 'cli',
+        model: 'deepseek-v4-pro',
+      },
+    ];
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(providers));
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      expect(view.container.textContent).not.toContain('本地服务器测试1 · DeepSeek');
+
+      await act(async () => {
+        channelSelectTrigger(view.container).click();
+      });
+
+      const optionTexts = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button[role="option"]'),
+      ).map((button) => button.textContent ?? '');
+      expect(
+        optionTexts.filter(
+          (text) =>
+            text.includes('DeepSeek') &&
+            text.includes('Claude Code · 默认渠道'),
+        ),
+      ).toHaveLength(1);
+      expect(optionTexts.some((text) => text.includes('本地服务器测试1'))).toBe(
+        false,
+      );
     } finally {
       await view.cleanup();
     }

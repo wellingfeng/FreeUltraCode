@@ -5,7 +5,7 @@
  * anywhere inside the same document makes these gradient + filter ids resolvable
  * via `url(#...)` from {@link irToFlow}'s edge styles. Keeping the defs here (not
  * inside `irToFlow`) lets the projection stay a pure data transform — it only
- * ever emits the static string `url(#fuc-edge-exec)` etc.
+ * ever emits the static string `url(#ugs-edge-exec)` etc.
  *
  * Gradients are defined in objectBoundingBox space so they orient left→right
  * across each edge's bounding box, matching the exec spine's reading direction.
@@ -21,15 +21,15 @@ export default function EdgeDefs() {
       focusable="false"
     >
       <defs>
-        <linearGradient id="fuc-edge-exec" x1="0" y1="0" x2="1" y2="0">
+        <linearGradient id="ugs-edge-exec" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stopColor="var(--edge-exec)" stopOpacity="0.85" />
           <stop offset="100%" stopColor="var(--accent-3)" stopOpacity="0.95" />
         </linearGradient>
-        <linearGradient id="fuc-edge-data" x1="0" y1="0" x2="1" y2="0">
+        <linearGradient id="ugs-edge-data" x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stopColor="var(--edge-data)" stopOpacity="0.75" />
           <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.85" />
         </linearGradient>
-        <filter id="fuc-edge-glow" x="-20%" y="-20%" width="140%" height="140%">
+        <filter id="ugs-edge-glow" x="-20%" y="-20%" width="140%" height="140%">
           <feGaussianBlur stdDeviation="2.2" result="b" />
           <feMerge>
             <feMergeNode in="b" />
