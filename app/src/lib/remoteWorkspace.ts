@@ -76,6 +76,14 @@ export type {
 export const REMOTE_WORKSPACE_STORAGE_KEY = 'ultragamestudio.remoteWorkspaces.v1';
 export const REMOTE_RUNNER_CONNECTION_STORAGE_KEY =
   'ultragamestudio.remoteRunnerConnection.v1';
+/**
+ * 内置默认云端连接：指向官方测试 Runner（腾讯云固定 IP，HTTP）。
+ * 未在本地保存过连接时，「添加云端项目」对话框会预填这两个值，用户仍可覆盖。
+ * 注意：这是测试用共享 Token，随客户端分发，仅供联调；生产环境应改用每用户独立 Token + HTTPS。
+ */
+export const DEFAULT_REMOTE_RUNNER_SERVER_URL = 'http://150.158.47.232:8787';
+export const DEFAULT_REMOTE_RUNNER_TOKEN =
+  'f5a7eed92786d0a06ef59b3ae0100011ad7ee3db78b441b7';
 /** Secret buckets (keychain) holding per-workspace tokens/keys. */
 export { REMOTE_RUNNER_CONNECTION_SECRET, REMOTE_WORKSPACE_SECRET } from '@/lib/secureStorage';
 /** Synthetic path scheme so remote workspaces flow through path-typed APIs. */
@@ -377,15 +385,24 @@ export function writeRemoteSecrets(
   }
 }
 
-export function readRemoteRunnerConnection(): RemoteRunnerConnection | null {
-  if (!hasStorage()) return null;
+export function readRemoteRunnerConnection(
+  opts: { allowDefault?: boolean } = {},
+): RemoteRunnerConnection | null {
+  const allowDefault = opts.allowDefault !== false;
+  const fallback: RemoteRunnerConnection | null = allowDefault
+    ? {
+        serverUrl: normalizeServerUrl(DEFAULT_REMOTE_RUNNER_SERVER_URL),
+        updatedAt: 0,
+      }
+    : null;
+  if (!hasStorage()) return fallback;
   try {
     const raw = window.localStorage.getItem(REMOTE_RUNNER_CONNECTION_STORAGE_KEY);
-    if (!raw) return null;
+    if (!raw) return fallback;
     const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed || typeof parsed !== 'object') return fallback;
     const v = parsed as Record<string, unknown>;
-    if (typeof v.serverUrl !== 'string' || !v.serverUrl.trim()) return null;
+    if (typeof v.serverUrl !== 'string' || !v.serverUrl.trim()) return fallback;
     return {
       serverUrl: normalizeServerUrl(v.serverUrl),
       updatedAt:
@@ -394,13 +411,17 @@ export function readRemoteRunnerConnection(): RemoteRunnerConnection | null {
           : 0,
     };
   } catch {
-    return null;
+    return fallback;
   }
 }
 
-export function readRemoteRunnerConnectionSecrets(): RemoteRunnerConnectionSecrets {
+export function readRemoteRunnerConnectionSecrets(
+  opts: { allowDefault?: boolean } = {},
+): RemoteRunnerConnectionSecrets {
+  const allowDefault = opts.allowDefault !== false;
   const record = readSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET);
-  return { token: record.token ?? '' };
+  const token = record.token || (allowDefault ? DEFAULT_REMOTE_RUNNER_TOKEN : '');
+  return { token };
 }
 
 export function saveRemoteRunnerConnection(
@@ -430,8 +451,9 @@ export function saveRemoteRunnerConnection(
 export function resolveRemoteRunnerConnection(
   workspace?: RemoteWorkspaceConfig | null,
 ): ResolvedRemoteRunnerConnection | null {
-  const global = readRemoteRunnerConnection();
-  const globalToken = readRemoteRunnerConnectionSecrets().token;
+  // 仅认用户显式保存的连接（不含内置默认），避免纯本地用户被误导向默认服务器发请求。
+  const global = readRemoteRunnerConnection({ allowDefault: false });
+  const globalToken = readRemoteRunnerConnectionSecrets({ allowDefault: false }).token;
   if (global?.serverUrl && globalToken) {
     return {
       serverUrl: global.serverUrl,
