@@ -11,12 +11,14 @@ import {
   blueprintModeInstall,
   blueprintModeStatus,
   blueprintModeUninstall,
+  listWorkspaceDirectory,
   probeProjectLspServer,
   scanProjectEnvironment,
   tauriAvailable,
   type ProjectEnvironmentScan,
 } from '@/lib/tauri';
 import type { WorkspaceSummary } from '@/store/history/types';
+import { historyStore } from '@/store/history/store';
 import { useStore } from '@/store/useStore';
 
 vi.mock('@/lib/tauri', async () => {
@@ -33,6 +35,7 @@ vi.mock('@/lib/tauri', async () => {
     installSkillFromText: vi.fn(),
     installSkillFromUrl: vi.fn(),
     uninstallSkill: vi.fn(),
+    listWorkspaceDirectory: vi.fn(),
     blueprintModeStatus: vi.fn(),
     blueprintModeInstall: vi.fn(),
     blueprintModeUninstall: vi.fn(),
@@ -482,6 +485,126 @@ describe('ProjectSettingsModal game project tabs', () => {
       expect(view.container.textContent).not.toContain('.claude\\skills');
     } finally {
       await view.cleanup();
+    }
+  });
+
+  it('does not scan workspace languages for embedded MCP or Skills tabs', async () => {
+    vi.mocked(listWorkspaceDirectory).mockClear();
+    vi.mocked(listWorkspaceDirectory).mockResolvedValue({
+      rootPath: workspace.path,
+      relativePath: '',
+      entries: [],
+      truncated: false,
+      totalEntries: 0,
+    });
+
+    const mcpView = await renderEmbeddedProjectTab('mcp', unrealScan(), workspace, true);
+    try {
+      expect(listWorkspaceDirectory).not.toHaveBeenCalled();
+    } finally {
+      await mcpView.cleanup();
+    }
+
+    const skillsView = await renderEmbeddedProjectTab(
+      'skills',
+      unrealScan(),
+      workspace,
+      true,
+    );
+    try {
+      expect(listWorkspaceDirectory).not.toHaveBeenCalled();
+    } finally {
+      await skillsView.cleanup();
+    }
+  });
+
+  it('runs workspace language scan only when the embedded LSP tab is active', async () => {
+    const lspWorkspace: WorkspaceSummary = { ...workspace, id: 'w_lsp_scan' };
+    vi.spyOn(historyStore, 'getWorkspace').mockResolvedValue(null);
+    vi.mocked(listWorkspaceDirectory).mockClear();
+    vi.mocked(probeProjectLspServer).mockResolvedValue({
+      serverId: 'test',
+      ok: false,
+      status: 'missing',
+      message: '未检测',
+      resolvedCommand: null,
+      checkedAtMs: 1,
+    });
+    vi.mocked(listWorkspaceDirectory).mockResolvedValue({
+      rootPath: lspWorkspace.path,
+      relativePath: '',
+      entries: [
+        {
+          relativePath: 'Source/Game.cpp',
+          path: `${lspWorkspace.path}\\Source\\Game.cpp`,
+          hidden: false,
+          sizeBytes: 100,
+          modifiedAtMs: null,
+          kind: 'file',
+          name: 'Game.cpp',
+        },
+      ],
+      truncated: false,
+      totalEntries: 1,
+    });
+
+    const view = await renderEmbeddedProjectTab('lsp', unrealScan(), lspWorkspace, true);
+
+    try {
+      await settle();
+      expect(listWorkspaceDirectory).toHaveBeenCalledTimes(1);
+      expect(view.container.textContent).toContain('C / C++');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('switches embedded tool tabs without rerunning project detection', async () => {
+    const rerenderWorkspace: WorkspaceSummary = { ...workspace, id: 'w_embed_rerender' };
+    vi.mocked(scanProjectEnvironment).mockClear();
+    vi.mocked(tauriAvailable).mockReturnValue(false);
+    vi.mocked(scanProjectEnvironment).mockResolvedValue(unrealScan());
+    useStore.setState({
+      locale: 'zh-CN',
+      gameExpertSettings: DEFAULT_GAME_EXPERT_SETTINGS,
+    });
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          <ProjectSettingsModal
+            workspace={rerenderWorkspace}
+            embedTab="mcp"
+            onClose={() => undefined}
+          />,
+        );
+      });
+      await settle();
+      expect(scanProjectEnvironment).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain('游戏 MCP 候选');
+
+      await act(async () => {
+        root.render(
+          <ProjectSettingsModal
+            workspace={rerenderWorkspace}
+            embedTab="lsp"
+            onClose={() => undefined}
+          />,
+        );
+      });
+      await settle();
+
+      expect(scanProjectEnvironment).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain('Language Server Protocol');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
     }
   });
 

@@ -5,7 +5,7 @@ import ReasoningBlock from './ReasoningBlock';
 import CopyButton from './CopyButton';
 import ToolCard from './ToolCard';
 import type { ToolEvent } from './lib/toolEvent';
-import type { OpenFileFn } from './FileChip';
+import { FileChipBudgetProvider, type OpenFileFn } from './FileChip';
 import { answerActionText } from './lib/messageText';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
@@ -72,57 +72,59 @@ function MessageContentImpl({
   const copyText = answerActionText(text);
 
   return (
-    <div className="ai-message group/msg relative flex flex-col">
-      {showActions && copyText && (
-        <div className="absolute -top-1 right-0 z-10 opacity-0 transition-opacity group-hover/msg:opacity-100">
-          <CopyButton
-            value={copyText}
-            label={t(locale, 'chat.copy')}
-            className="rounded border border-border-soft bg-panel-2/80 px-1.5 py-0.5 text-[11px] backdrop-blur"
-          />
-        </div>
-      )}
-      {segments.map((seg, i) => {
-        if (seg.type === 'reasoning') {
-          return (
-            <ReasoningBlock
-              key={`r${i}`}
-              text={seg.text}
-              done={seg.done}
-              streaming={streaming && !seg.done}
+    <FileChipBudgetProvider>
+      <div className="ai-message group/msg relative flex flex-col">
+        {showActions && copyText && (
+          <div className="absolute -top-1 right-0 z-10 opacity-0 transition-opacity group-hover/msg:opacity-100">
+            <CopyButton
+              value={copyText}
+              label={t(locale, 'chat.copy')}
+              className="rounded border border-border-soft bg-panel-2/80 px-1.5 py-0.5 text-[11px] backdrop-blur"
             />
-          );
-        }
-        if (seg.type === 'tools') {
+          </div>
+        )}
+        {segments.map((seg, i) => {
+          if (seg.type === 'reasoning') {
+            return (
+              <ReasoningBlock
+                key={`r${i}`}
+                text={seg.text}
+                done={seg.done}
+                streaming={streaming && !seg.done}
+              />
+            );
+          }
+          if (seg.type === 'tools') {
+            return (
+              <div key={`t${i}`} className="ai-tools-group flex flex-col">
+                {nestTools(seg.events).map(({ event, children }) => (
+                  <ToolCard
+                    key={event.id}
+                    event={event}
+                    childrenEvents={children}
+                    onOpenFile={onOpenFile}
+                    cwd={cwd}
+                  />
+                ))}
+              </div>
+            );
+          }
           return (
-            <div key={`t${i}`} className="ai-tools-group flex flex-col">
-              {nestTools(seg.events).map(({ event, children }) => (
-                <ToolCard
-                  key={event.id}
-                  event={event}
-                  childrenEvents={children}
-                  onOpenFile={onOpenFile}
-                  cwd={cwd}
-                />
-              ))}
+            <div key={`a${i}`} className="relative">
+              <Markdown
+                text={seg.text}
+                streaming={streaming && i === lastAnswerIdx}
+                onOpenFile={onOpenFile}
+                cwd={cwd}
+              />
+              {streaming && i === lastIdx && (
+                <span className="ai-caret ai-caret--trailing" aria-hidden />
+              )}
             </div>
           );
-        }
-        return (
-          <div key={`a${i}`} className="relative">
-            <Markdown
-              text={seg.text}
-              streaming={streaming && i === lastAnswerIdx}
-              onOpenFile={onOpenFile}
-              cwd={cwd}
-            />
-            {streaming && i === lastIdx && (
-              <span className="ai-caret ai-caret--trailing" aria-hidden />
-            )}
-          </div>
-        );
-      })}
-    </div>
+        })}
+      </div>
+    </FileChipBudgetProvider>
   );
 }
 

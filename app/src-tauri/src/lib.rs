@@ -6795,7 +6795,9 @@ async fn ue_mcp_setup_project(request: UeMcpSetupRequest) -> Result<UeMcpSetupRe
 const WORKSPACE_CHANGE_LINE_LIMIT: usize = 320;
 const WORKSPACE_CHANGE_TOTAL_LINE_LIMIT: usize = 2400;
 const WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT: usize = 160 * 1024;
+const WORKSPACE_CHANGE_SNAPSHOT_TOTAL_TEXT_LIMIT: usize = 32 * 1024 * 1024;
 const WORKSPACE_CHANGE_DIFF_DP_CELL_LIMIT: usize = 1_500_000;
+const WORKSPACE_CHANGE_JSON_CACHE_READ_LIMIT: u64 = 96 * 1024 * 1024;
 
 fn workspace_change_safe_cache_key(cache_key: &str) -> String {
     let mut out = String::new();
@@ -6822,6 +6824,12 @@ fn workspace_change_cache_file(root: &Path, cache_key: &str, suffix: &str) -> Pa
 }
 
 fn read_json_cache<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
+    if std::fs::metadata(path)
+        .ok()
+        .is_some_and(|metadata| metadata.len() > WORKSPACE_CHANGE_JSON_CACHE_READ_LIMIT)
+    {
+        return None;
+    }
     let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&raw).ok()
 }
@@ -6841,7 +6849,7 @@ fn write_json_cache<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), S
         .map_err(|e| format!("替换会话改动缓存失败: {e}"))
 }
 
-// --- Background workspace VCS scan service -------------------------------
+// --- Scan Host: background workspace VCS scans ----------------------------
 //
 // A single shared worker drains a queue of scan requests so large projects
 // (e.g. MoonEngine) scan slowly in the background instead of blocking the UI.
@@ -6963,6 +6971,17 @@ fn enqueue_vcs_scan(root_path: String, cache_key: String) {
         cache_key,
         progress,
     });
+}
+
+fn cancel_vcs_scan(root_path: &str) {
+    let mut queue = match vcs_scan_queue().lock() {
+        Ok(q) => q,
+        Err(e) => e.into_inner(),
+    };
+    if let Some(prev) = queue.active_by_root.remove(root_path) {
+        prev.cancelled.store(true, Ordering::Relaxed);
+    }
+    queue.pending.retain(|job| job.root_path != root_path);
 }
 
 fn vcs_scan_worker_loop() {
@@ -7111,9 +7130,60 @@ fn workspace_change_line_no(index: usize) -> u32 {
     (index + 1).min(u32::MAX as usize) as u32
 }
 
+fn workspace_change_known_binary_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "7z" | "a"
+            | "app"
+            | "avi"
+            | "bin"
+            | "blend"
+            | "bmp"
+            | "dll"
+            | "dylib"
+            | "exe"
+            | "fbx"
+            | "gif"
+            | "glb"
+            | "ico"
+            | "jar"
+            | "jpeg"
+            | "jpg"
+            | "lib"
+            | "mov"
+            | "mp3"
+            | "mp4"
+            | "obj"
+            | "ogg"
+            | "pak"
+            | "pdb"
+            | "png"
+            | "psd"
+            | "so"
+            | "tga"
+            | "uasset"
+            | "umap"
+            | "wav"
+            | "webm"
+            | "webp"
+            | "zip"
+    )
+}
+
 fn scan_workspace_snapshot(root: &Path) -> (Vec<WorkspaceChangeSnapshotFile>, bool) {
+    scan_workspace_snapshot_with_text_budget(root, WORKSPACE_CHANGE_SNAPSHOT_TOTAL_TEXT_LIMIT)
+}
+
+fn scan_workspace_snapshot_with_text_budget(
+    root: &Path,
+    text_budget: usize,
+) -> (Vec<WorkspaceChangeSnapshotFile>, bool) {
     let mut files = Vec::new();
     let mut truncated = false;
+    let mut remaining_text_budget = text_budget;
     let mut stack = vec![(root.to_path_buf(), String::new())];
 
     while let Some((dir, relative_dir)) = stack.pop() {
@@ -7147,11 +7217,16 @@ fn scan_workspace_snapshot(root: &Path) -> (Vec<WorkspaceChangeSnapshotFile>, bo
                 truncated = true;
                 continue;
             };
-            files.push(snapshot_file_from_path(
+            let snapshot = snapshot_file_from_path(
                 entry.path(),
                 relative_path,
                 &metadata,
-            ));
+                &mut remaining_text_budget,
+            );
+            if snapshot.truncated {
+                truncated = true;
+            }
+            files.push(snapshot);
         }
     }
 
@@ -7163,38 +7238,52 @@ fn snapshot_file_from_path(
     path: PathBuf,
     relative_path: String,
     metadata: &std::fs::Metadata,
+    remaining_text_budget: &mut usize,
 ) -> WorkspaceChangeSnapshotFile {
-    let mut binary = false;
+    let mut binary = workspace_change_known_binary_file(&path);
     let mut content = None;
     let mut truncated = false;
     let mut bytes = Vec::new();
-    match std::fs::File::open(&path) {
-        Ok(mut handle) => {
-            let read_limit = WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT as u64 + 1;
-            if std::io::Read::by_ref(&mut handle)
-                .take(read_limit)
-                .read_to_end(&mut bytes)
-                .is_err()
-            {
-                truncated = true;
-            } else {
-                if bytes.len() > WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT {
-                    bytes.truncate(WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT);
-                    truncated = true;
+
+    if !binary {
+        let file_size = usize::try_from(metadata.len()).unwrap_or(usize::MAX);
+        if file_size > WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT || file_size > *remaining_text_budget {
+            truncated = true;
+        } else {
+            match std::fs::File::open(&path) {
+                Ok(mut handle) => {
+                    let read_cap = WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT.min(*remaining_text_budget);
+                    let read_limit = read_cap as u64 + 1;
+                    if std::io::Read::by_ref(&mut handle)
+                        .take(read_limit)
+                        .read_to_end(&mut bytes)
+                        .is_err()
+                    {
+                        truncated = true;
+                    } else {
+                        let charged = bytes.len().min(read_cap);
+                        *remaining_text_budget = (*remaining_text_budget).saturating_sub(charged);
+                        if bytes.len() > WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT
+                            || bytes.len() > read_cap
+                        {
+                            bytes.truncate(read_cap);
+                            truncated = true;
+                        }
+                        if probably_binary(&bytes) {
+                            binary = true;
+                        } else if truncated {
+                            content = None;
+                        } else {
+                            content = decode_preview_text(bytes).or_else(|| {
+                                binary = true;
+                                None
+                            });
+                        }
+                    }
                 }
-                if probably_binary(&bytes) {
-                    binary = true;
-                } else if truncated {
-                    content = None;
-                } else {
-                    content = decode_preview_text(bytes).or_else(|| {
-                        binary = true;
-                        None
-                    });
-                }
+                Err(_) => truncated = true,
             }
         }
-        Err(_) => truncated = true,
     }
 
     WorkspaceChangeSnapshotFile {
@@ -8149,7 +8238,13 @@ fn workspace_change_file_from_current_path(
     if !metadata.is_file() {
         return None;
     }
-    let snapshot = snapshot_file_from_path(path, file.path.clone(), &metadata);
+    let mut remaining_text_budget = WORKSPACE_CHANGE_SNAPSHOT_TEXT_LIMIT;
+    let snapshot = snapshot_file_from_path(
+        path,
+        file.path.clone(),
+        &metadata,
+        &mut remaining_text_budget,
+    );
     let mut change = snapshot_file_to_change(&snapshot, "added");
     change.status = file.status.clone();
     change.old_path = file.old_path.clone();
@@ -9533,6 +9628,11 @@ async fn workspace_vcs_status_cached(
 #[tauri::command]
 fn workspace_vcs_status_scan(root_path: String, cache_key: String) {
     enqueue_vcs_scan(root_path, cache_key);
+}
+
+#[tauri::command]
+fn workspace_vcs_status_cancel(root_path: String) {
+    cancel_vcs_scan(&root_path);
 }
 
 #[tauri::command]
@@ -13031,6 +13131,55 @@ fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
     );
 }
 
+const AI_CLI_PROGRESS_BATCH_INTERVAL_MS: u64 = 75;
+const AI_CLI_PROGRESS_BATCH_MAX_BYTES: usize = 16 * 1024;
+
+struct AiCliProgressBatcher<'a> {
+    app: &'a tauri::AppHandle,
+    run_id: &'a str,
+    pending: String,
+    last_flush: std::time::Instant,
+}
+
+impl<'a> AiCliProgressBatcher<'a> {
+    fn new(app: &'a tauri::AppHandle, run_id: &'a str) -> Self {
+        Self {
+            app,
+            run_id,
+            pending: String::new(),
+            last_flush: std::time::Instant::now(),
+        }
+    }
+
+    fn push(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.pending.push_str(text);
+        if self.pending.len() >= AI_CLI_PROGRESS_BATCH_MAX_BYTES
+            || self.last_flush.elapsed()
+                >= std::time::Duration::from_millis(AI_CLI_PROGRESS_BATCH_INTERVAL_MS)
+        {
+            self.flush();
+        }
+    }
+
+    fn emit_now(&mut self, text: &str) {
+        self.flush();
+        emit_progress(self.app, self.run_id, text);
+        self.last_flush = std::time::Instant::now();
+    }
+
+    fn flush(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        emit_progress(self.app, self.run_id, &self.pending);
+        self.pending.clear();
+        self.last_flush = std::time::Instant::now();
+    }
+}
+
 fn emit_usage(app: &tauri::AppHandle, run_id: &str, usage: &serde_json::Value) {
     let _ = app.emit(
         "ai-cli-usage",
@@ -13950,6 +14099,7 @@ async fn ai_cli(
             // heartbeats (a slow first token on a cold/large request can take
             // tens of seconds). Emitted at most once per run.
             let mut requesting_done = false;
+            let mut progress = AiCliProgressBatcher::new(&app2, &run2);
             if let Some(o) = stdout {
                 let mut reader = std::io::BufReader::new(o);
                 let mut line = String::new();
@@ -13991,7 +14141,7 @@ async fn ai_cli(
                                 if let Ok(mut current) = codex_streamed_output_reader.lock() {
                                     current.push_str(&line);
                                 }
-                                emit_progress(&app2, &run2, &line);
+                                progress.emit_now(&line);
                             } else if let Some(patch) =
                                 codex_tool_patch(item, format!("cx{}", tool_starts.len()))
                             {
@@ -14003,7 +14153,7 @@ async fn ai_cli(
                                         .to_string(),
                                     std::time::Instant::now(),
                                 );
-                                emit_progress(&app2, &run2, &encode_tool_patch(&patch));
+                                progress.emit_now(&encode_tool_patch(&patch));
                             }
                         }
                         continue;
@@ -14026,7 +14176,7 @@ async fn ai_cli(
                                     } else {
                                         format!("⚙ 会话已启动（{model}），开始处理…")
                                     };
-                                    emit_progress(&app2, &run2, &format!("{line}\n"));
+                                    progress.emit_now(&format!("{line}\n"));
                                 }
                             }
                             Some("message") => {
@@ -14037,7 +14187,7 @@ async fn ai_cli(
                                         v.get("content").and_then(|content| content.as_str())
                                     {
                                         acc.push_str(tx);
-                                        emit_progress(&app2, &run2, tx);
+                                        progress.push(tx);
                                     }
                                 }
                             }
@@ -14066,7 +14216,7 @@ async fn ai_cli(
                                 if !input.is_null() {
                                     patch["args"] = input;
                                 }
-                                emit_progress(&app2, &run2, &encode_tool_patch(&patch));
+                                progress.emit_now(&encode_tool_patch(&patch));
                             }
                             Some("tool_result") => {
                                 let id = v
@@ -14105,14 +14255,14 @@ async fn ai_cli(
                                         "result": result_text,
                                         "truncated": truncated,
                                     });
-                                    emit_progress(&app2, &run2, &encode_tool_patch(&patch));
+                                    progress.emit_now(&encode_tool_patch(&patch));
                                 }
                             }
                             Some("error") => {
                                 if let Some(message) =
                                     v.get("message").and_then(|value| value.as_str())
                                 {
-                                    emit_progress(&app2, &run2, &format!("\n⚠ {message}\n"));
+                                    progress.emit_now(&format!("\n⚠ {message}\n"));
                                 }
                             }
                             _ => {}
@@ -14136,7 +14286,7 @@ async fn ai_cli(
                                 } else {
                                     format!("⚙ 会话已启动（{model}），开始处理…")
                                 };
-                                emit_progress(&app2, &run2, &format!("{line}\n"));
+                                progress.emit_now(&format!("{line}\n"));
                             } else if !requesting_done
                                 && v.get("subtype").and_then(|s| s.as_str()) == Some("status")
                                 && v.get("status").and_then(|s| s.as_str()) == Some("requesting")
@@ -14146,7 +14296,7 @@ async fn ai_cli(
                                 // first token reads as "requesting" rather than a
                                 // silent gap padded by heartbeats.
                                 requesting_done = true;
-                                emit_progress(&app2, &run2, "⏳ 正在请求模型…\n");
+                                progress.emit_now("⏳ 正在请求模型…\n");
                             }
                         }
                         Some("stream_event") => {
@@ -14165,10 +14315,10 @@ async fn ai_cli(
                                                     delta.get("text").and_then(|t| t.as_str())
                                                 {
                                                     if prev_kind == "thinking" {
-                                                        emit_progress(&app2, &run2, "</think>");
+                                                        progress.emit_now("</think>");
                                                     }
                                                     prev_kind = "text";
-                                                    emit_progress(&app2, &run2, tx);
+                                                    progress.push(tx);
                                                 }
                                             }
                                             Some("thinking_delta") => {
@@ -14177,12 +14327,10 @@ async fn ai_cli(
                                                     .and_then(|t| t.as_str())
                                                 {
                                                     if prev_kind != "thinking" {
-                                                        emit_progress(
-                                                            &app2, &run2, "<think>",
-                                                        );
+                                                        progress.emit_now("<think>");
                                                     }
                                                     prev_kind = "thinking";
-                                                    emit_progress(&app2, &run2, tx);
+                                                    progress.push(tx);
                                                 }
                                             }
                                             _ => {}
@@ -14217,9 +14365,9 @@ async fn ai_cli(
                                                 acc.push_str(tx);
                                                 if !partial_streaming {
                                                     if prev_kind == "thinking" {
-                                                        emit_progress(&app2, &run2, "</think>");
+                                                        progress.emit_now("</think>");
                                                     }
-                                                    emit_progress(&app2, &run2, tx);
+                                                    progress.push(tx);
                                                 }
                                             }
                                         }
@@ -14244,7 +14392,7 @@ async fn ai_cli(
                                                 std::time::Instant::now(),
                                             );
                                             if prev_kind == "thinking" {
-                                                emit_progress(&app2, &run2, "</think>");
+                                                progress.emit_now("</think>");
                                             }
                                             prev_kind = "";
                                             // Structured sentinel for the rich card.
@@ -14259,11 +14407,7 @@ async fn ai_cli(
                                             if !input.is_null() {
                                                 patch["args"] = input;
                                             }
-                                            emit_progress(
-                                                &app2,
-                                                &run2,
-                                                &encode_tool_patch(&patch),
-                                            );
+                                            progress.emit_now(&encode_tool_patch(&patch));
                                         }
                                         _ => {}
                                     }
@@ -14299,7 +14443,7 @@ async fn ai_cli(
                                     let result_body: String =
                                         raw.chars().take(TOOL_RESULT_CLAMP).collect();
                                     if prev_kind == "thinking" {
-                                        emit_progress(&app2, &run2, "</think>");
+                                        progress.emit_now("</think>");
                                     }
                                     prev_kind = "";
                                     if !id.is_empty() {
@@ -14310,11 +14454,7 @@ async fn ai_cli(
                                             "result": result_body,
                                             "truncated": truncated,
                                         });
-                                        emit_progress(
-                                            &app2,
-                                            &run2,
-                                            &encode_tool_patch(&patch),
-                                        );
+                                        progress.emit_now(&encode_tool_patch(&patch));
                                     }
                                 }
                             }
@@ -14332,6 +14472,7 @@ async fn ai_cli(
                                 }
                                 emit_usage(&app2, &run2, &usage);
                             }
+                            progress.flush();
                             // Signal the wait loop that the turn is logically
                             // complete so it needn't wait on a lingering process.
                             stream_result_seen_reader.store(true, Ordering::Relaxed);
@@ -14340,6 +14481,7 @@ async fn ai_cli(
                     }
                 }
             }
+            progress.flush();
             if result.trim().is_empty() {
                 acc
             } else {
@@ -15577,6 +15719,54 @@ mod tests {
     }
 
     #[test]
+    fn scan_workspace_snapshot_caps_total_text_content() {
+        let root = std::env::temp_dir().join(format!(
+            "ultragamestudio-session-changes-budget-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        std::fs::write(root.join("a.txt"), "first\n").expect("write first");
+        std::fs::write(root.join("b.txt"), "second\n").expect("write second");
+
+        let (files, truncated) = scan_workspace_snapshot_with_text_budget(&root, "first\n".len());
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(truncated);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "a.txt");
+        assert_eq!(files[0].content.as_deref(), Some("first\n"));
+        assert!(!files[0].truncated);
+        assert_eq!(files[1].path, "b.txt");
+        assert!(files[1].truncated);
+        assert!(files[1].content.is_none());
+    }
+
+    #[test]
+    fn scan_workspace_snapshot_skips_known_binary_content() {
+        let root = std::env::temp_dir().join(format!(
+            "ultragamestudio-session-changes-binary-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("create temp root");
+
+        std::fs::write(root.join("asset.uasset"), "text-like payload").expect("write asset");
+
+        let (files, truncated) = scan_workspace_snapshot_with_text_budget(&root, 1024);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(!truncated);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "asset.uasset");
+        assert!(files[0].binary);
+        assert!(files[0].content.is_none());
+    }
+
+    #[test]
     fn truncate_workspace_changes_does_not_limit_file_count() {
         let mut files: Vec<WorkspaceChangeFile> = (0..300)
             .map(|index| WorkspaceChangeFile {
@@ -15965,6 +16155,24 @@ mod tests {
     }
 
     #[test]
+    fn cancel_vcs_scan_cancels_active_and_pending_jobs_for_root() {
+        let root = format!("ultragamestudio-scan-cancel-test-{}", now_ms());
+        enqueue_vcs_scan(root.clone(), "k1".to_string());
+        let active = {
+            let queue = vcs_scan_queue().lock().unwrap();
+            queue.active_by_root.get(&root).cloned()
+        };
+        let active = active.expect("scan registered");
+
+        cancel_vcs_scan(&root);
+
+        assert!(active.cancelled.load(Ordering::Relaxed));
+        let queue = vcs_scan_queue().lock().unwrap();
+        assert!(!queue.active_by_root.contains_key(&root));
+        assert!(!queue.pending.iter().any(|job| job.root_path == root));
+    }
+
+    #[test]
     fn workspace_changes_uses_session_time_when_baseline_is_late() {
         let root = std::env::temp_dir().join(format!(
             "ultragamestudio-session-time-{}-{}",
@@ -16153,6 +16361,7 @@ pub fn run() {
             workspace_file_diff,
             workspace_vcs_status_cached,
             workspace_vcs_status_scan,
+            workspace_vcs_status_cancel,
             workspace_changes_cached,
             prepare_isolated_workspace,
             preview_local_file,

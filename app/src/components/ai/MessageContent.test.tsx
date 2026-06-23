@@ -4,6 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import MessageContent from './MessageContent';
 import { encodeToolPatch } from './lib/toolEvent';
+import { MESSAGE_FILE_CHIP_LIMIT } from './lib/fileChipBudget';
 import { useStore } from '@/store/useStore';
 
 /**
@@ -52,6 +53,31 @@ describe('MessageContent integration', () => {
     // The `.ultragamestudio` separator must survive: no `UltraGameStudio.ultragamestudio` collapse.
     expect(html).not.toMatch(/UltraGameStudio\.ultragamestudio/);
     expect(html).toMatch(/UltraGameStudio\\\.ultragamestudio\\clipboard-images/);
+  });
+
+  it('caps rendered local file references in one message', () => {
+    const B = String.fromCharCode(92);
+    const maxVisibleFileRefs = MESSAGE_FILE_CHIP_LIMIT;
+    const paths = Array.from(
+      { length: maxVisibleFileRefs + 4 },
+      (_, i) =>
+        `E:${B}UltraGameStudio${B}.ultragamestudio${B}clipboard-images${B}pasted-${i}.png`,
+    ).join('\n');
+
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: `本地文件：\n${paths}`,
+        streaming: false,
+        onOpenFile: () => {},
+      }),
+    );
+
+    expect(html.match(/ai-file-chip-thumb/g)).toHaveLength(maxVisibleFileRefs);
+    expect(html.match(/ai-file-chip-limit/g)).toHaveLength(1);
+    expect(html.match(/<br\/>/g)?.length ?? 0).toBeLessThanOrEqual(
+      maxVisibleFileRefs + 2,
+    );
+    expect(html).toMatch(/已折叠后续文件引用|More file references folded/);
   });
 
   it('renders highlighted code, table, and file chip', () => {

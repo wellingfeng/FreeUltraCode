@@ -475,6 +475,15 @@ const SKILL_TEXT: Record<string, Partial<Record<Locale, LocaleText>>> = {
         'Review the technical plan: check architecture boundaries, module dependencies, performance budget, save/networking impact, test entry points, and refactor risk.',
     },
   },
+  'technical-director:ue-architecture-review': {
+    'en-US': {
+      label: 'Strict UE Architecture Review',
+      summary:
+        'Run a high-bar Unreal Gameplay Framework, module-boundary, reflection/replication/GAS, performance, and automation-test architecture review.',
+      prompt:
+        'Strict UE architecture review: use the Technical Director lens for a red-team architecture review. Default to a high bar; treat missing evidence as a blocker instead of passing by assumption. Check Unreal Engine / UE5 practices: Gameplay Framework ownership, UObject/Actor lifecycle, C++ and Blueprint split, reflection macros and UPROPERTY/UFUNCTION exposure, module/plugin boundaries, GAS boundaries, networking replication and server authority, soft references and async loading, Tick/Timer/Delegate/Event usage, save migration, Unreal Insights measurement, and automation/functional test entry points. Return a go/no-go verdict, must-fix items, should-fix items, acceptable tradeoffs, validation checklist, and smallest refactor path.',
+    },
+  },
   'technical-director:performance-budget': {
     'en-US': {
       label: 'Define Performance Budget',

@@ -928,7 +928,7 @@ function ProjectToolsSettings({
     <ProjectSettingsModal
       // Remount when the active workspace changes so project-scoped state
       // (scan, settings, lifecycle) re-initializes for the new workspace.
-      key={`${workspace.id}:${embedTab}`}
+      key={workspace.id}
       workspace={workspace}
       embedTab={embedTab}
       onClose={() => undefined}

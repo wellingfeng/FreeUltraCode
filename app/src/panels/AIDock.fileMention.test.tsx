@@ -6,6 +6,10 @@ import { defaultBlueprint } from '@/core/defaultBlueprint';
 import { defaultComposer, samplePromptGroups } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
 import {
+  OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+  type OpenProjectRightPanelFilePreviewEventDetail,
+} from './projectRightPanelEvents';
+import {
   remoteWorkspacePath,
   saveRemoteWorkspace,
 } from '@/lib/remoteWorkspace';
@@ -164,6 +168,53 @@ afterEach(() => {
 });
 
 describe('AIDock file mentions', () => {
+  it('routes clicked chat file chips into the project right panel when available', async () => {
+    resetStore();
+    useStore.setState({
+      messages: [
+        {
+          id: 'u_file_preview',
+          role: 'user',
+          createdAt: 1,
+          text: 'app/src/App.tsx',
+        },
+      ],
+    });
+    const capturedDetail: {
+      current: OpenProjectRightPanelFilePreviewEventDetail | null;
+    } = { current: null };
+    const handlePreviewRequest = (event: Event) => {
+      capturedDetail.current =
+        (event as CustomEvent<OpenProjectRightPanelFilePreviewEventDetail>)
+          .detail;
+      event.preventDefault();
+    };
+    window.addEventListener(
+      OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+      handlePreviewRequest,
+    );
+    const view = await renderDock();
+
+    try {
+      const chip = view.container.querySelector<HTMLButtonElement>('.ai-file-chip');
+      expect(chip).toBeInstanceOf(HTMLButtonElement);
+
+      await act(async () => {
+        chip?.click();
+      });
+
+      expect(capturedDetail.current?.ref.path).toBe('app/src/App.tsx');
+      expect(capturedDetail.current?.cwd).toBe('E:\\UltraGameStudio');
+      expect(view.container.querySelector('.fixed.inset-0')).toBeNull();
+    } finally {
+      window.removeEventListener(
+        OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+        handlePreviewRequest,
+      );
+      await view.cleanup();
+    }
+  });
+
   it('walks workspace directories from @ and inserts the chosen file', async () => {
     resetStore();
     tauriMocks.listWorkspaceDirectory.mockImplementation(

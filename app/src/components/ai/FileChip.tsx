@@ -1,4 +1,10 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react';
 import { FileCode, FolderOpen, ImageOff, Loader2 } from 'lucide-react';
 import {
   displayFileRefLabel,
@@ -7,6 +13,13 @@ import {
   isImageFileRef,
   type FileRef,
 } from './lib/filePath';
+import {
+  FileChipBudgetContext,
+  claimFileChipSlot,
+  createFileChipBudget,
+  useFileChipBudget,
+  type FileChipSlot,
+} from './lib/fileChipBudget';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
 import { previewLocalFile } from '@/lib/tauri';
@@ -28,6 +41,49 @@ interface ContextMenuPosition {
 const MENU_WIDTH = 168;
 const MENU_HEIGHT = 36;
 const MENU_MARGIN = 8;
+
+export function FileChipBudgetProvider({
+  children,
+  limit,
+}: {
+  children: ReactNode;
+  limit?: number;
+}) {
+  const budget = createFileChipBudget(limit);
+
+  return (
+    <FileChipBudgetContext.Provider value={budget}>
+      {children}
+    </FileChipBudgetContext.Provider>
+  );
+}
+
+function useFileChipSlot(): FileChipSlot {
+  const budget = useFileChipBudget();
+  const idRef = useRef<symbol | null>(null);
+  if (!budget) return 'visible';
+
+  if (!idRef.current) idRef.current = Symbol('file-chip');
+  const slotId = idRef.current;
+  const existing = budget.slots.get(slotId);
+  if (existing) return existing;
+
+  const slot = claimFileChipSlot(budget);
+  budget.slots.set(slotId, slot);
+  return slot;
+}
+
+export function FileChipLimitNotice() {
+  const locale = useStore((s) => s.locale);
+  return (
+    <span
+      className="ai-file-chip-limit inline-flex max-w-full items-center rounded border border-border-soft bg-panel-2 px-1.5 py-0.5 align-baseline text-[11px] leading-snug text-fg-faint"
+      title={t(locale, 'chat.fileRefsFolded')}
+    >
+      {t(locale, 'chat.fileRefsFolded')}
+    </span>
+  );
+}
 
 function contextMenuPosition(event: ReactMouseEvent): ContextMenuPosition {
   if (typeof window === 'undefined') {
@@ -111,6 +167,22 @@ function useImageThumbnail(
  * visual signal that this token is a file path.
  */
 export default function FileChip({
+  refData,
+  onOpenFile,
+  cwd,
+}: {
+  refData: FileRef;
+  onOpenFile?: OpenFileFn;
+  cwd?: string;
+}) {
+  const slot = useFileChipSlot();
+  if (slot === 'notice') return <FileChipLimitNotice />;
+  if (slot === 'hidden') return null;
+
+  return <VisibleFileChip refData={refData} onOpenFile={onOpenFile} cwd={cwd} />;
+}
+
+export function VisibleFileChip({
   refData,
   onOpenFile,
   cwd,

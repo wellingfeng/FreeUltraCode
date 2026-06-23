@@ -84,7 +84,7 @@ afterEach(() => {
 });
 
 describe('ProjectFileTree game team details', () => {
-  it('opens role properties and skills in the preview drawer without replacing the file panel', async () => {
+  it('opens role properties and skills in the same right panel slot', async () => {
     resetStore();
     const view = await renderProjectFileTree();
 
@@ -98,16 +98,15 @@ describe('ProjectFileTree game team details', () => {
       });
 
       const asides = view.container.querySelectorAll('aside');
-      const filePanel = asides[0];
-      const previewDrawer = asides[1];
+      const rightPanel = asides[0];
 
-      expect(filePanel?.textContent).toContain('项目文件');
-      expect(filePanel?.textContent).not.toContain('岗位视角和 Skill');
-      expect(previewDrawer?.textContent).toContain('岗位视角和 Skill');
-      expect(previewDrawer?.textContent).toContain('专家视角库 / 岗位视角与 Skill');
-      expect(previewDrawer?.textContent).toContain('技术总监');
-      expect(previewDrawer?.textContent).toContain('职责');
-      expect(previewDrawer?.textContent).toContain('发起功能开发');
+      expect(asides).toHaveLength(1);
+      expect(view.container.querySelector('.fixed.inset-0')).toBeNull();
+      expect(rightPanel?.textContent).toContain('岗位视角和 Skill');
+      expect(rightPanel?.textContent).toContain('专家视角库 / 岗位视角与 Skill');
+      expect(rightPanel?.textContent).toContain('技术总监');
+      expect(rightPanel?.textContent).toContain('职责');
+      expect(rightPanel?.textContent).toContain('发起功能开发');
     } finally {
       await view.cleanup();
     }

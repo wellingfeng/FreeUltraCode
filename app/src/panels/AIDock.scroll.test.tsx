@@ -468,6 +468,67 @@ describe('AIDock stream scroll state', () => {
     }
   });
 
+  it('renders one timeline marker per user turn', async () => {
+    resetChatSession('s_timeline', chatMessages('timeline'));
+    const view = await renderChatDock();
+
+    try {
+      const markers = view.container.querySelectorAll<HTMLButtonElement>(
+        '[data-ugs-timeline-marker="true"]',
+      );
+
+      expect(markers.length).toBe(4);
+      expect(markers[0].getAttribute('aria-label')).toContain(
+        '跳转到段落 1：timeline message 0',
+      );
+      expect(markers[3].getAttribute('aria-label')).toContain(
+        '跳转到段落 4：timeline message 6',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('loads hidden history before jumping from a timeline marker', async () => {
+    resetChatSession('s_timeline_long', longChatMessages('timeline-long', 220));
+    const view = await renderChatDock();
+    const originalRaf = window.requestAnimationFrame;
+    const originalScrollIntoView = window.HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = vi.fn();
+
+    try {
+      window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+        callback(0);
+        return 0;
+      }) as typeof window.requestAnimationFrame;
+      window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+      const stream = streamElement(view.container);
+      expect(
+        stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+      ).toBe(80);
+
+      const firstMarker = view.container.querySelector<HTMLButtonElement>(
+        '[data-ugs-timeline-marker="true"]',
+      );
+      expect(firstMarker).toBeInstanceOf(HTMLButtonElement);
+      expect(firstMarker?.dataset.hidden).toBe('true');
+
+      await act(async () => {
+        firstMarker?.click();
+      });
+
+      expect(
+        stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+      ).toBe(220);
+      expect(scrollIntoView).toHaveBeenCalled();
+    } finally {
+      window.requestAnimationFrame = originalRaf;
+      window.HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      await view.cleanup();
+    }
+  });
+
   it('follows an appended message to the bottom while pinned', async () => {
     resetChatSession('s1', chatMessages('s1'));
     const view = await renderChatDock();

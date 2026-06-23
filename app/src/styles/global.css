@@ -541,58 +541,103 @@ pre,
 }
 
 .ugs-stream-nav {
-  background: color-mix(
-    in oklab,
-    var(--stream-surface-control-bg) 28%,
-    transparent
-  );
-  opacity: 0.28;
-  transform: translateY(-50%) translateX(4px);
-  transition: opacity 160ms ease, transform 160ms ease, background 160ms ease;
+  pointer-events: none;
+  opacity: 0.42;
+  transition: opacity 160ms ease;
 }
 .ugs-stream-nav:hover,
 .ugs-stream-nav:focus-within {
-  background: color-mix(
-    in oklab,
-    var(--stream-surface-control-bg) 72%,
-    transparent
-  );
   opacity: 1;
-  transform: translateY(-50%) translateX(0);
 }
-.ugs-stream-nav-button {
+.ugs-stream-nav-track {
+  position: absolute;
+  inset: 0 auto;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: color-mix(
+    in oklab,
+    var(--stream-surface-border) 70%,
+    var(--stream-link) 30%
+  );
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.ugs-stream-nav-marker {
+  position: absolute;
+  left: 50%;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  border: 1px solid color-mix(in oklab, var(--stream-fg) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--stream-surface-control-bg) 82%, var(--stream-fg) 18%);
+  box-shadow:
+    0 0 0 2px color-mix(in oklab, var(--stream-surface-bg) 70%, transparent),
+    0 8px 18px -12px rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+.ugs-stream-nav-marker[data-hidden='true'] {
+  opacity: 0.58;
+}
+.ugs-stream-nav-marker:hover,
+.ugs-stream-nav-marker:focus-visible,
+.ugs-stream-nav-marker--active {
+  border-color: var(--stream-link);
+  background: var(--stream-link);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--stream-link) 18%, transparent),
+    0 0 18px color-mix(in oklab, var(--stream-link) 30%, transparent);
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1.18);
+}
+.ugs-stream-nav-marker:focus-visible {
+  outline: 2px solid var(--stream-link);
+  outline-offset: 3px;
+}
+.ugs-stream-nav-tooltip {
+  position: absolute;
+  right: calc(100% + 0.55rem);
+  top: 50%;
+  max-width: min(18rem, calc(100vw - 7rem));
+  transform: translate(6px, -50%);
+  overflow: hidden;
   border: 1px solid var(--stream-surface-border);
-  background: color-mix(
-    in oklab,
-    var(--stream-surface-control-bg) 56%,
-    transparent
-  );
-  box-shadow: 0 8px 24px -18px rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--stream-surface-popover-bg) 92%, transparent);
+  box-shadow: 0 10px 28px -18px rgba(0, 0, 0, 0.82);
+  color: var(--stream-fg-strong);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  opacity: 0;
+  padding: 0.38rem 0.55rem;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
 }
-.ugs-stream-nav-button:hover,
-.ugs-stream-nav-button:focus-visible {
-  border-color: color-mix(
-    in oklab,
-    var(--stream-link) 50%,
-    var(--stream-surface-border)
-  );
-  background: color-mix(
-    in oklab,
-    var(--stream-surface-control-bg) 88%,
-    var(--stream-link) 8%
-  );
-}
-.ugs-stream-nav-button:disabled {
-  background: color-mix(
-    in oklab,
-    var(--stream-surface-control-bg) 36%,
-    transparent
-  );
+.ugs-stream-nav-marker:hover .ugs-stream-nav-tooltip,
+.ugs-stream-nav-marker:focus-visible .ugs-stream-nav-tooltip {
+  opacity: 1;
+  transform: translate(0, -50%);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ugs-stream-nav {
+  .ugs-stream-nav,
+  .ugs-stream-nav-marker,
+  .ugs-stream-nav-tooltip {
     transition: none;
   }
 }

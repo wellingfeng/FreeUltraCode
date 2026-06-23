@@ -1428,32 +1428,6 @@ export async function listWorkspaceChanges(
   });
 }
 
-/** Read lightweight VCS status for project-tree icon overlays. No diff hunks. */
-export async function listWorkspaceVcsStatus(
-  rootPath: string,
-): Promise<WorkspaceChanges> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges>('workspace_vcs_status', {
-    rootPath,
-  });
-}
-
-/** Read root-level VCS status first so project-tree overlays can update incrementally. */
-export async function listWorkspaceVcsStatusShallow(
-  rootPath: string,
-): Promise<WorkspaceChanges> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges>('workspace_vcs_status_shallow', {
-    rootPath,
-  });
-}
-
 /** Read the last persisted session-change snapshot without rescanning files. */
 export async function readWorkspaceChangesCache(
   rootPath: string,
@@ -1464,21 +1438,6 @@ export async function readWorkspaceChangesCache(
   }
   const invoke = await getInvoke();
   return invoke<WorkspaceChanges | null>('workspace_changes_cached', {
-    rootPath,
-    cacheKey,
-  });
-}
-
-/** Read the last cached full VCS status snapshot so icons render instantly. */
-export async function readWorkspaceVcsStatusCache(
-  rootPath: string,
-  cacheKey: string,
-): Promise<WorkspaceChanges | null> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  return invoke<WorkspaceChanges | null>('workspace_vcs_status_cached', {
     rootPath,
     cacheKey,
   });
@@ -1497,27 +1456,6 @@ export async function workspaceFileDiff(
     rootPath,
     path,
   });
-}
-
-/** Queue a background full VCS scan; progress arrives via onWorkspaceVcsScanProgress. */
-export async function startWorkspaceVcsStatusScan(
-  rootPath: string,
-  cacheKey: string,
-): Promise<void> {
-  if (!tauriAvailable()) {
-    throw new Error('NO_BACKEND');
-  }
-  const invoke = await getInvoke();
-  await invoke('workspace_vcs_status_scan', { rootPath, cacheKey });
-}
-
-export interface WorkspaceVcsScanProgress {
-  rootPath: string;
-  phase: 'scanning' | 'done' | 'error' | string;
-  scannedSpecs: number;
-  foundItems: number;
-  truncated: boolean;
-  message?: string | null;
 }
 
 export type LegacyBrandMigrationPhase =
@@ -1543,18 +1481,6 @@ export interface LegacyBrandMigrationProgress {
   archivedRoots: number;
   currentPath?: string | null;
   message?: string | null;
-}
-
-/** Subscribe to background VCS scan progress events. */
-export async function onWorkspaceVcsScanProgress(
-  cb: (progress: WorkspaceVcsScanProgress) => void,
-): Promise<UnlistenFn> {
-  if (!tauriAvailable()) return () => {};
-  const listen = await getListen();
-  return listen<WorkspaceVcsScanProgress>(
-    'workspace-vcs-scan-progress',
-    (event) => cb(event.payload),
-  );
 }
 
 /** Run the one-time FreeUltraCode -> UltraGameStudio storage migration. */

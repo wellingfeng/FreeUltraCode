@@ -315,6 +315,36 @@
           ]
         },
         {
+          "id": "ue-architecture-review",
+          "label": "UE 架构严审",
+          "summary": "按 Unreal Gameplay Framework、模块边界、反射/复制/GAS、性能预算和自动化测试做高标准架构审核。",
+          "prompt": "UE 架构严审：请以技术总监视角做红队式架构审核。默认标准从严；信息不足要列为阻塞项，不要默认通过。必须按 Unreal Engine / UE5 工程习惯检查：Gameplay Framework 归属（GameMode/GameState/PlayerState/Controller/Pawn/ActorComponent/Subsystem）、UObject/Actor 生命周期、C++ 与 Blueprint 分工、反射宏和 UPROPERTY/UFUNCTION 暴露面、模块/插件边界（Runtime/Editor、Public/Private、Build.cs 依赖）、GAS 与 Ability/Attribute/Effect/Tag 的使用边界、网络复制与服务器权威、资源软引用与异步加载、Tick/Timer/Delegate/Event 使用、存档版本迁移、Unreal Insights 性能量测、自动化/功能测试入口。请输出 go/no-go 结论、必须修复项、建议修复项、可接受取舍、验证清单和最小改造路径。",
+          "protocol": {
+            "triggerConditions": "需要对 UE/UE5 技术架构、模块拆分、玩法框架、GAS、复制、性能或长期可维护性做严格审核时。",
+            "inputs": "当前需求或技术方案、相关 C++/Blueprint/插件/模块/配置/网络/存档/性能上下文；若缺失，直接列为审核阻塞项。",
+            "executionSteps": [
+              "先判定是否符合 Unreal Gameplay Framework 归属，不允许把全局状态、玩家状态、规则、表现和编辑器逻辑混在同一层。",
+              "检查模块和插件边界：Runtime/Editor 分离，Public/Private 依赖最小化，Build.cs 依赖合理，不引入跨模块循环或隐式全局单例。",
+              "检查 C++/Blueprint 分工：核心规则、复制、性能关键路径优先 C++；Blueprint 只暴露设计师需要的稳定参数和编排面。",
+              "检查 UE 反射、生命周期和内存：UPROPERTY 持有关系清楚，软/硬引用选择合理，异步加载、GC、World teardown 和对象创建时机可解释。",
+              "检查联网和 GAS：服务器权威、RPC、OnRep、预测/回滚、Gameplay Tags、Attribute、Effect、Ability 边界明确；不得绕开 GAS 做平行技能系统。",
+              "检查性能、测试和迁移：给 CPU/GPU/内存/加载预算，要求 Unreal Insights/stat 数据入口，列出自动化测试、功能测试、存档迁移和回归门禁。"
+            ],
+            "toolsAndResources": "UE 官方架构习惯、项目源码、.uproject/.uplugin、Build.cs、C++/Blueprint 资产、网络复制配置、性能采样、自动化测试入口。",
+            "outputs": "go/no-go 结论、阻塞项、must-fix/should-fix/nice-to-have 分级、风险解释、可接受取舍、最小改造路线和验证清单。",
+            "acceptanceCriteria": "严审结果不能只给泛泛建议；必须能指出 UE 层级归属、模块依赖、复制/GAS、生命周期、性能和测试证据。存在服务器权威不清、核心循环强 Tick、模块循环、Blueprint 过度承载核心逻辑、无性能/测试入口时，默认不能通过。"
+          },
+          "collaboratorExpertIds": [
+            "technical-director",
+            "unreal-specialist",
+            "engine-programmer",
+            "lead-programmer",
+            "network-programmer",
+            "performance-analyst",
+            "qa-lead"
+          ]
+        },
+        {
           "id": "performance-budget",
           "label": "制定性能预算",
           "summary": "拆出 CPU、GPU、内存、加载和回归指标。",

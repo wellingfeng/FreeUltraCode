@@ -29,7 +29,12 @@ import SmartLink from './SmartLink';
 import ToolLine from './ToolLine';
 import Callout from './Callout';
 import { detectCallout, stripCalloutMarker } from './lib/callout';
-import FileChip, { type OpenFileFn } from './FileChip';
+import {
+  FileChipLimitNotice,
+  VisibleFileChip,
+  type OpenFileFn,
+} from './FileChip';
+import { claimFileChipSlot, useFileChipBudget } from './lib/fileChipBudget';
 import { isModelUrl } from './lib/modelLink';
 
 function markdownUrlTransform(url: string, key: string): string | null | undefined {
@@ -112,42 +117,99 @@ function MarkdownImpl({
           ],
     [streaming],
   );
+  const fileChipBudget = useFileChipBudget();
+
+  const isLineBreak = (child: ReactNode): boolean =>
+    isValidElement(child) && child.type === 'br';
+
+  const renderFileRef = (refData: ReturnType<typeof scanFileRefs>[number], key: number) => {
+    if (typeof refData === 'string') return { node: refData, hidden: false };
+    const slot = claimFileChipSlot(fileChipBudget);
+    if (slot === 'notice') {
+      return { node: <FileChipLimitNotice key={key} />, hidden: false };
+    }
+    if (slot === 'hidden') return { node: null, hidden: true };
+    return {
+      node: (
+        <VisibleFileChip
+          key={key}
+          refData={refData}
+          onOpenFile={onOpenFile}
+          cwd={cwd}
+        />
+      ),
+      hidden: false,
+    };
+  };
+
+  const linkifyText = (
+    text: string,
+    key?: number,
+  ): { node: ReactNode; hiddenOnly: boolean } => {
+    const parts = scanFileRefs(text);
+    if (parts.length === 1 && typeof parts[0] === 'string') {
+      return { node: text, hiddenOnly: false };
+    }
+
+    let hasVisibleText = false;
+    let hasVisibleRef = false;
+    let hasHiddenRef = false;
+    const nodes = parts.map((part, i) => {
+      if (typeof part === 'string') {
+        if (part.trim()) hasVisibleText = true;
+        return part ? <span key={i}>{part}</span> : null;
+      }
+      const rendered = renderFileRef(part, i);
+      if (rendered.hidden) {
+        hasHiddenRef = true;
+      } else if (rendered.node) {
+        hasVisibleRef = true;
+      }
+      return rendered.node;
+    });
+
+    const hiddenOnly = hasHiddenRef && !hasVisibleText && !hasVisibleRef;
+    return {
+      node: hiddenOnly ? null : key == null ? nodes : <span key={key}>{nodes}</span>,
+      hiddenOnly,
+    };
+  };
 
   // Recursively walk rendered children, replacing bare file references inside
   // plain-text leaves with clickable chips. Elements (e.g. <strong>, <code>,
   // chips) pass through untouched so we never double-linkify code or links.
   const linkify = (children: ReactNode): ReactNode => {
     if (typeof children === 'string') {
-      const parts = scanFileRefs(children);
-      if (parts.length === 1 && typeof parts[0] === 'string') return children;
-      return parts.map((p, i) =>
-        typeof p === 'string' ? (
-          <span key={i}>{p}</span>
-        ) : (
-          <FileChip key={i} refData={p} onOpenFile={onOpenFile} cwd={cwd} />
-        ),
-      );
+      return linkifyText(children).node;
     }
-    if (Array.isArray(children)) return children.map((c, i) => linkifyKeyed(c, i));
+    if (Array.isArray(children)) {
+      const out: ReactNode[] = [];
+      let skipNextBreak = false;
+      children.forEach((child, i) => {
+        if (skipNextBreak) {
+          skipNextBreak = false;
+          if (isLineBreak(child)) return;
+        }
+        const result = linkifyKeyed(child, i);
+        if (result.hiddenOnly) {
+          const last = out[out.length - 1];
+          if (isLineBreak(last)) out.pop();
+          skipNextBreak = true;
+        }
+        out.push(result.node);
+      });
+      return out;
+    }
     return children;
   };
-  const linkifyKeyed = (child: ReactNode, key: number): ReactNode => {
+  const linkifyKeyed = (
+    child: ReactNode,
+    key: number,
+  ): { node: ReactNode; hiddenOnly: boolean } => {
     if (typeof child === 'string') {
-      const parts = scanFileRefs(child);
-      if (parts.length === 1 && typeof parts[0] === 'string') return child;
-      return (
-        <span key={key}>
-          {parts.map((p, i) =>
-            typeof p === 'string' ? (
-              <span key={i}>{p}</span>
-            ) : (
-              <FileChip key={i} refData={p} onOpenFile={onOpenFile} cwd={cwd} />
-            ),
-          )}
-        </span>
-      );
+      return linkifyText(child, key);
     }
-    return child;
+    return { node: child, hiddenOnly: false };
   };
 
   // Extract the plain-text content of a paragraph's children to test whether the

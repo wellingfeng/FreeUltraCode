@@ -382,6 +382,52 @@ function fieldId(prefix: string, id: string): string {
   return `${prefix}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
 }
 
+const PROJECT_SETTINGS_SCAN_CACHE_TTL_MS = 5 * 60 * 1000;
+const PROJECT_SETTINGS_LANGUAGE_SCAN_BUDGET_MS = 900;
+
+type ProjectSettingsScanCacheEntry<T> = {
+  value: T;
+  cachedAtMs: number;
+};
+
+const projectEnvironmentScanCache = new Map<
+  string,
+  ProjectSettingsScanCacheEntry<ProjectEnvironmentScan>
+>();
+const projectLanguageScanCache = new Map<
+  string,
+  ProjectSettingsScanCacheEntry<ProjectLanguageScan>
+>();
+
+function projectSettingsCacheEnabled(): boolean {
+  return import.meta.env.MODE !== 'test' && tauriAvailable();
+}
+
+function projectSettingsScanCacheKey(rootPath: string): string {
+  return workspacePathKey(rootPath.trim());
+}
+
+function readProjectSettingsScanCache<T>(
+  cache: Map<string, ProjectSettingsScanCacheEntry<T>>,
+  key: string,
+): T | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAtMs > PROJECT_SETTINGS_SCAN_CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function writeProjectSettingsScanCache<T>(
+  cache: Map<string, ProjectSettingsScanCacheEntry<T>>,
+  key: string,
+  value: T,
+): void {
+  cache.set(key, { value, cachedAtMs: Date.now() });
+}
+
 async function scanWorkspaceLanguages(
   rootPath: string,
   scan: ProjectEnvironmentScan | null,
@@ -395,13 +441,18 @@ async function scanWorkspaceLanguages(
   const maxDirectories = 180;
   const maxFiles = 6000;
   const maxDepth = 7;
+  const startedAtMs = Date.now();
 
   while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (directoriesScanned >= maxDirectories || paths.length >= maxFiles) {
+    if (
+      directoriesScanned >= maxDirectories ||
+      paths.length >= maxFiles ||
+      Date.now() - startedAtMs >= PROJECT_SETTINGS_LANGUAGE_SCAN_BUDGET_MS
+    ) {
       truncated = true;
       break;
     }
+    const current = queue.shift()!;
     directoriesScanned += 1;
     const listing = await listWorkspaceDirectory(rootPath, current.relativePath);
     truncated ||= listing.truncated;
@@ -1484,6 +1535,8 @@ export default function ProjectSettingsModal({
 }: ProjectSettingsModalProps) {
   const [tab, setTab] = useState<ProjectSettingsTab>(embedTab ?? 'overview');
   const locale = useStore((s) => s.locale);
+  const activeTabRef = useRef<ProjectSettingsTab>(embedTab ?? 'overview');
+  const embedTabRef = useRef<ProjectEmbedTab | undefined>(embedTab);
 
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const dragState = useRef<{
@@ -1557,6 +1610,9 @@ export default function ProjectSettingsModal({
     [],
   );
   const lspAvailabilityProbingRef = useRef<Set<string>>(new Set());
+  const languageScanRunIdRef = useRef(0);
+  const refreshRunIdRef = useRef(0);
+  const forceNextLanguageScanRef = useRef(false);
   const [dirty, setDirty] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [lspQuery, setLspQuery] = useState('');
@@ -1582,6 +1638,7 @@ export default function ProjectSettingsModal({
   const [languageScan, setLanguageScan] = useState<ProjectLanguageScan>(() =>
     fallbackLanguageScanForEngine(projectSettingsFromMetadata(workspace.metadata).engine),
   );
+  const [languageScanLoading, setLanguageScanLoading] = useState(false);
   const [unitySetupBusy, setUnitySetupBusy] = useState(false);
   const [unitySetupStep, setUnitySetupStep] = useState<string | null>(null);
   const [unitySetupResult, setUnitySetupResult] =
@@ -1798,11 +1855,65 @@ export default function ProjectSettingsModal({
     setDirty(true);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const runLanguageScan = useCallback(
+    async (
+      rootPath: string,
+      nextScan: ProjectEnvironmentScan,
+      options: { force?: boolean } = {},
+    ) => {
+      if (!rootPath.trim() || isRemoteWorkspacePath(rootPath) || !tauriAvailable()) {
+        return;
+      }
+      const cacheEnabled = projectSettingsCacheEnabled();
+      const cacheKey = projectSettingsScanCacheKey(rootPath);
+      if (!options.force && cacheEnabled) {
+        const cached = readProjectSettingsScanCache(
+          projectLanguageScanCache,
+          cacheKey,
+        );
+        if (cached) {
+          setLanguageScan(cached);
+          return;
+        }
+      }
+
+      const runId = languageScanRunIdRef.current + 1;
+      languageScanRunIdRef.current = runId;
+      setLanguageScanLoading(true);
+      try {
+        const nextLanguageScan = await scanWorkspaceLanguages(rootPath, nextScan);
+        if (languageScanRunIdRef.current !== runId) return;
+        if (cacheEnabled) {
+          writeProjectSettingsScanCache(
+            projectLanguageScanCache,
+            cacheKey,
+            nextLanguageScan,
+          );
+        }
+        setLanguageScan(nextLanguageScan);
+      } catch (err) {
+        if (languageScanRunIdRef.current !== runId) return;
+        setLanguageScan({
+          ...fallbackLanguageScanForEngine(nextScan.engine.engine),
+          error: describeError(err),
+        });
+      } finally {
+        if (languageScanRunIdRef.current === runId) {
+          setLanguageScanLoading(false);
+        }
+      }
+    },
+    [],
+  );
+
+  const refresh = useCallback(async (options: { force?: boolean } = {}) => {
+    const refreshRunId = refreshRunIdRef.current + 1;
+    refreshRunIdRef.current = refreshRunId;
     setLoading(true);
     setStatus(null);
     try {
       const latestRecord = await historyStore.getWorkspace(workspace.id);
+      if (refreshRunIdRef.current !== refreshRunId) return;
       setRecord(latestRecord);
       const baseSettings = projectSettingsFromMetadata(
         latestRecord?.metadata ?? workspace.metadata,
@@ -1813,23 +1924,31 @@ export default function ProjectSettingsModal({
         setScan(null);
         setLanguageScan(fallbackLanguageScanForEngine(baseSettings.engine));
       } else if (nextWorkspacePath.trim()) {
-        nextScan = await scanProjectEnvironment(nextWorkspacePath);
+        const cacheEnabled = projectSettingsCacheEnabled();
+        const cacheKey = projectSettingsScanCacheKey(nextWorkspacePath);
+        const cachedScan =
+          !options.force && cacheEnabled
+            ? readProjectSettingsScanCache(projectEnvironmentScanCache, cacheKey)
+            : null;
+        nextScan = cachedScan ?? (await scanProjectEnvironment(nextWorkspacePath));
+        if (refreshRunIdRef.current !== refreshRunId) return;
+        if (cacheEnabled && !cachedScan) {
+          writeProjectSettingsScanCache(projectEnvironmentScanCache, cacheKey, nextScan);
+        }
         setScan(nextScan);
-        if (tauriAvailable()) {
-          try {
-            const nextLanguageScan = await scanWorkspaceLanguages(
-              nextWorkspacePath,
-              nextScan,
-            );
-            setLanguageScan(nextLanguageScan);
-          } catch (err) {
-            setLanguageScan({
-              ...fallbackLanguageScanForEngine(nextScan.engine.engine),
-              error: describeError(err),
-            });
-          }
-        } else {
-          setLanguageScan(fallbackLanguageScanForEngine(nextScan.engine.engine));
+        const cachedLanguageScan =
+          !options.force && cacheEnabled
+            ? readProjectSettingsScanCache(projectLanguageScanCache, cacheKey)
+            : null;
+        setLanguageScan(
+          cachedLanguageScan ?? fallbackLanguageScanForEngine(nextScan.engine.engine),
+        );
+        if (
+          options.force &&
+          activeTabRef.current === 'lsp' &&
+          (embedTabRef.current === undefined || embedTabRef.current === 'lsp')
+        ) {
+          forceNextLanguageScanRef.current = true;
         }
       } else {
         setScan(null);
@@ -1841,19 +1960,49 @@ export default function ProjectSettingsModal({
       setSettings(nextSettings);
       setDirty(false);
     } catch (err) {
+      if (refreshRunIdRef.current !== refreshRunId) return;
       setStatus(
         locale === 'zh-CN'
           ? `检测失败：${describeError(err)}`
           : `Scan failed: ${describeError(err)}`,
       );
     } finally {
-      setLoading(false);
+      if (refreshRunIdRef.current === refreshRunId) {
+        setLoading(false);
+      }
     }
-  }, [workspace.id, workspace.metadata, workspace.path, locale]);
+  }, [
+    locale,
+    workspace.id,
+    workspace.metadata,
+    workspace.path,
+  ]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const handleRefreshClick = useCallback(() => {
+    void refresh({ force: true });
+  }, [refresh]);
+
+  useEffect(() => {
+    activeTabRef.current = tab;
+  }, [tab]);
+
+  useEffect(() => {
+    embedTabRef.current = embedTab;
+    if (embedTab) setTab(embedTab);
+  }, [embedTab]);
+
+  useEffect(() => {
+    if (tab !== 'lsp' || !scan || isRemoteWorkspace || !workspacePath.trim()) {
+      return;
+    }
+    const force = forceNextLanguageScanRef.current;
+    forceNextLanguageScanRef.current = false;
+    void runLanguageScan(workspacePath, scan, { force });
+  }, [isRemoteWorkspace, runLanguageScan, scan, tab, workspacePath]);
 
   useEffect(() => {
     if (!showGameFeatures || skillSubTabTouchedRef.current) return;
@@ -1978,7 +2127,8 @@ export default function ProjectSettingsModal({
 
     let cancelled = false;
     const candidateIds = candidates.map((server) => server.id);
-    candidateIds.forEach((id) => lspAvailabilityProbingRef.current.add(id));
+    const probingIds = lspAvailabilityProbingRef.current;
+    candidateIds.forEach((id) => probingIds.add(id));
     setLspAvailabilityProbingIds((current) =>
       Array.from(new Set([...current, ...candidateIds])),
     );
@@ -2003,7 +2153,7 @@ export default function ProjectSettingsModal({
       }
       if (cancelled) return;
       setLspAvailabilityProbes((current) => ({ ...current, ...results }));
-      candidateIds.forEach((id) => lspAvailabilityProbingRef.current.delete(id));
+      candidateIds.forEach((id) => probingIds.delete(id));
       setLspAvailabilityProbingIds((current) =>
         current.filter((id) => !candidateIds.includes(id)),
       );
@@ -2011,7 +2161,7 @@ export default function ProjectSettingsModal({
 
     return () => {
       cancelled = true;
-      candidateIds.forEach((id) => lspAvailabilityProbingRef.current.delete(id));
+      candidateIds.forEach((id) => probingIds.delete(id));
       setLspAvailabilityProbingIds((current) =>
         current.filter((id) => !candidateIds.includes(id)),
       );
@@ -3976,10 +4126,14 @@ export default function ProjectSettingsModal({
       ]);
       const availableCount = availableIds.size;
       const languageText =
-        languageScan.languages
-          .slice(0, 12)
-          .map((item) => `${item.label}${item.fileCount ? ` ${item.fileCount}` : ''}`)
-          .join('、') || tr('未识别', locale);
+        languageScanLoading && languageScan.source === 'engine-fallback'
+          ? locale === 'zh-CN'
+            ? '扫描中...'
+            : 'Scanning...'
+          : languageScan.languages
+              .slice(0, 12)
+              .map((item) => `${item.label}${item.fileCount ? ` ${item.fileCount}` : ''}`)
+              .join('、') || tr('未识别', locale);
       return (
         <div className="grid gap-4">
           <section className="rounded-md border border-border bg-panel-2 p-4">
@@ -4004,9 +4158,13 @@ export default function ProjectSettingsModal({
               </div>
               <div className="flex flex-wrap gap-2 text-[11px]">
                 <span className="rounded border border-border-soft bg-bg-alt px-2 py-1 text-fg-faint">
-                  {locale === 'zh-CN'
-                    ? `扫描 ${languageScan.filesScanned} 文件`
-                    : `${languageScan.filesScanned} files scanned`}
+                  {languageScanLoading
+                    ? locale === 'zh-CN'
+                      ? '语言扫描中'
+                      : 'Language scan running'
+                    : locale === 'zh-CN'
+                      ? `扫描 ${languageScan.filesScanned} 文件`
+                      : `${languageScan.filesScanned} files scanned`}
                 </span>
                 <span className="rounded border border-accent/40 bg-accent/10 px-2 py-1 text-accent">
                   {locale === 'zh-CN'
@@ -4831,7 +4989,7 @@ export default function ProjectSettingsModal({
             </div>
             <button
               type="button"
-              onClick={refresh}
+              onClick={handleRefreshClick}
               disabled={loading}
               title={tr('重新检测', locale)}
               aria-label={tr('重新检测', locale)}

@@ -33,6 +33,10 @@ import GameTeamPanel, {
   OPEN_GAME_TEAM_DETAILS_EVENT,
   type OpenGameTeamDetailsEventDetail,
 } from '@/panels/GameTeamPanel';
+import {
+  OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+  type OpenProjectRightPanelFilePreviewEventDetail,
+} from '@/panels/projectRightPanelEvents';
 import { t, type Locale } from '@/lib/i18n';
 import {
   buildSessionFileTree,
@@ -65,14 +69,6 @@ import {
   projectFileTreeMaxWidth,
 } from '@/lib/projectFileTreeSizing';
 import {
-  // 文件修改状态扫描功能已停用：这些 P4/VCS 扫描接口会对服务器（尤其是
-  // Perforce 大型 depot）发起海量 reconcile 请求，存在压垮服务器的风险，
-  // 因此整个“扫描文件修改状态”功能连同其后台扫描调用一并注释关闭。
-  // listWorkspaceVcsStatusShallow,
-  // readWorkspaceVcsStatusCache,
-  // startWorkspaceVcsStatusScan,
-  // onWorkspaceVcsScanProgress,
-  // type WorkspaceVcsScanProgress,
   listWorkspaceDirectory,
   openLocalPath,
   engineRevealAsset,
@@ -93,14 +89,6 @@ import {
   type RemoteWorkspaceFilesUpdatedDetail,
 } from '@/lib/remoteWorkspace';
 import { basename } from '@/lib/folderPicker';
-import {
-  buildWorkspaceVcsTreeStatus,
-  workspaceVcsStatusForEntry,
-  workspaceVcsStatusLabel,
-  type WorkspaceVcsTreeStatusIndex,
-  type WorkspaceVcsTreeStatusKind,
-  type WorkspaceVcsVirtualTreeEntry,
-} from '@/lib/workspaceVcsTreeStatus';
 import { useStore } from '@/store/useStore';
 
 type ProjectPanelTab = 'files' | 'session';
@@ -147,17 +135,9 @@ interface WorkspaceTreeState {
 
 type WorkspaceTreeCache = Record<string, WorkspaceTreeState>;
 
-type WorkspaceVcsTreeState =
-  | { status: 'idle'; snapshot: WorkspaceChanges | null; message?: undefined }
-  | { status: 'loading'; snapshot: WorkspaceChanges | null; message?: undefined }
-  | { status: 'ready'; snapshot: WorkspaceChanges; message?: undefined }
-  | { status: 'error'; snapshot: WorkspaceChanges | null; message: string };
-
 interface ProjectTreeRenderEntry {
   entry: WorkspaceTreeEntry;
   virtualDeleted: boolean;
-  vcsStatus?: WorkspaceVcsTreeStatusKind;
-  vcsScanning?: boolean;
 }
 
 const IMAGE_EXTENSIONS = new Set([
@@ -221,32 +201,12 @@ const THUMBNAIL_ROOT_MARGIN = '280px 0px';
 const CONTEXT_MENU_WIDTH = 176;
 const CONTEXT_MENU_HEIGHT = 36;
 const CONTEXT_MENU_MARGIN = 8;
-// 文件修改状态扫描已停用，扫描轮询间隔与开关偏好读取不再需要。
-// const VCS_TREE_REFRESH_INTERVAL_MS = 30_000;
-// const VCS_STATUS_SCAN_ENABLED_STORAGE_KEY =
-//   'ultragamestudio.projectFileTreeVcsScan.v1';
-//
-// function readVcsScanEnabledPreference(): boolean {
-//   if (typeof window === 'undefined') return false;
-//   // Default OFF: scanning file modification status runs many VCS commands, so
-//   // it stays disabled until the user explicitly opts in.
-//   return (
-//     window.localStorage.getItem(VCS_STATUS_SCAN_ENABLED_STORAGE_KEY) === 'on'
-//   );
-// }
-const VCS_STATUS_ICON_SRC: Record<WorkspaceVcsTreeStatusKind, string> = {
-  added: `${import.meta.env.BASE_URL}vcs/tortoisegit/AddedIcon.png`,
-  modified: `${import.meta.env.BASE_URL}vcs/tortoisegit/ModifiedIcon.png`,
-  deleted: `${import.meta.env.BASE_URL}vcs/tortoisegit/DeletedIcon.png`,
-  renamed: `${import.meta.env.BASE_URL}vcs/tortoisegit/ReplacedIcon.png`,
-};
-
-function changeSourceLabel(source?: string): string {
-  if (source === 'git') return 'Git';
-  if (source === 'svn') return 'SVN';
-  if (source === 'p4') return 'P4';
-  if (source === 'none') return '无 VCS';
-  return '快照';
+function projectRightPanelVisible(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (typeof window.matchMedia === 'function') {
+    return window.matchMedia('(min-width: 1024px)').matches;
+  }
+  return window.innerWidth >= 1024;
 }
 
 function directoryKey(path: string): string {
@@ -439,8 +399,6 @@ function PreviewGlyph({
 function PreviewCard({
   entry,
   engine,
-  vcsStatus,
-  vcsScanning,
   thumbnail,
   thumbnailId,
   draggable,
@@ -453,8 +411,6 @@ function PreviewCard({
 }: {
   entry: WorkspaceTreeEntry;
   engine: ProjectEngine;
-  vcsStatus?: WorkspaceVcsTreeStatusKind;
-  vcsScanning?: boolean;
   thumbnail?: ThumbnailState;
   thumbnailId: string;
   draggable: boolean;
@@ -536,23 +492,6 @@ function PreviewCard({
         )}
         {thumbnail?.status === 'loading' && (
           <Loader2 size={16} className="absolute right-1.5 top-1.5 animate-spin text-white/80" />
-        )}
-        {vcsStatus && (
-          <img
-            src={VCS_STATUS_ICON_SRC[vcsStatus]}
-            alt=""
-            title={workspaceVcsStatusLabel(vcsStatus)}
-            draggable={false}
-            className="absolute left-1.5 top-1.5 h-5 w-5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]"
-          />
-        )}
-        {!vcsStatus && vcsScanning && (
-          <span
-            title="正在扫描状态"
-            className="absolute left-1.5 top-1.5 inline-flex rounded-full bg-black/45 p-0.5 text-amber-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]"
-          >
-            <Loader2 size={18} className="animate-spin" />
-          </span>
         )}
         <span className="absolute bottom-1 left-1 rounded bg-black/55 px-1.5 py-0.5 text-[9px] font-medium leading-none text-white/90">
           {label}
@@ -643,56 +582,6 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function VcsStatusOverlay({
-  status,
-  scanning,
-}: {
-  status?: WorkspaceVcsTreeStatusKind;
-  scanning?: boolean;
-}) {
-  if (!status && !scanning) return null;
-  return (
-    <span
-      title={status ? workspaceVcsStatusLabel(status) : '正在扫描状态'}
-      className="pointer-events-none absolute -bottom-1 -right-1 flex h-[13px] w-[13px] items-center justify-center"
-    >
-      {status ? (
-        <img
-          src={VCS_STATUS_ICON_SRC[status]}
-          alt=""
-          draggable={false}
-          className="h-4 w-4 max-w-none drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)]"
-        />
-      ) : (
-        <Loader2
-          size={13}
-          className="animate-spin rounded-full bg-bg/85 p-[1px] text-amber-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.75)]"
-        />
-      )}
-    </span>
-  );
-}
-
-function rootPathForVirtualEntry(rootPath: string, relativePath: string): string {
-  const root = rootPath.replace(/[\\/]+$/g, '');
-  return root ? `${root}/${relativePath}` : relativePath;
-}
-
-function workspaceTreeEntryFromVirtual(
-  rootPath: string,
-  entry: WorkspaceVcsVirtualTreeEntry,
-): WorkspaceTreeEntry {
-  return {
-    name: entry.name,
-    path: rootPathForVirtualEntry(rootPath, entry.relativePath),
-    relativePath: entry.relativePath,
-    kind: entry.kind,
-    hidden: entry.name.startsWith('.'),
-    sizeBytes: null,
-    modifiedAtMs: null,
-  };
-}
-
 function compareTreeEntries(a: WorkspaceTreeEntry, b: WorkspaceTreeEntry): number {
   if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
   return a.name
@@ -700,58 +589,10 @@ function compareTreeEntries(a: WorkspaceTreeEntry, b: WorkspaceTreeEntry): numbe
     .localeCompare(b.name.toLocaleLowerCase()) || a.name.localeCompare(b.name);
 }
 
-function buildRenderEntries(
-  entries: WorkspaceTreeEntry[],
-  directory: string,
-  rootPath: string,
-  vcsIndex: WorkspaceVcsTreeStatusIndex,
-): ProjectTreeRenderEntry[] {
-  const realPaths = new Set(entries.map((entry) => directoryKey(entry.relativePath)));
-  // No per-directory spinners: while the background scan runs, directories
-  // without a known status simply keep their default icon (no overlay). The
-  // overall scan progress is shown as a thin top progress bar instead.
-  const renderEntries: ProjectTreeRenderEntry[] = entries.map((entry) => {
-    const vcsStatus = workspaceVcsStatusForEntry(entry, vcsIndex);
-    return {
-      entry,
-      virtualDeleted: false,
-      vcsStatus,
-      vcsScanning: false,
-    };
-  });
-
-  for (const virtualEntry of vcsIndex.virtualEntriesByDirectory[directory] ?? []) {
-    const key = directoryKey(virtualEntry.relativePath);
-    if (realPaths.has(key)) continue;
-    renderEntries.push({
-      entry: workspaceTreeEntryFromVirtual(rootPath, virtualEntry),
-      virtualDeleted: true,
-      vcsStatus: virtualEntry.status,
-    });
-  }
-
-  return renderEntries.sort((a, b) => compareTreeEntries(a.entry, b.entry));
-}
-
-function treeVcsStatusLine(
-  workspaceLabel: string,
-  state: WorkspaceVcsTreeState,
-): string {
-  if (state.status === 'loading') {
-    const source = state.snapshot?.source && state.snapshot.source !== 'none'
-      ? changeSourceLabel(state.snapshot.source)
-      : 'VCS';
-    if (state.snapshot?.source && state.snapshot.source !== 'none') {
-      return `${workspaceLabel} · ${source} · ${state.snapshot.files.length} 项 · 正在后台扫描...`;
-    }
-    return `正在刷新 ${source} 状态...`;
-  }
-  if (state.status === 'error') return `VCS 状态刷新失败：${state.message}`;
-  if (state.snapshot?.source && state.snapshot.source !== 'none') {
-    const suffix = state.snapshot.truncated ? ' · 部分目录未完成收集' : '';
-    return `${workspaceLabel} · ${changeSourceLabel(state.snapshot.source)} · ${state.snapshot.files.length} 项改动${suffix}`;
-  }
-  return workspaceLabel;
+function buildRenderEntries(entries: WorkspaceTreeEntry[]): ProjectTreeRenderEntry[] {
+  return entries
+    .map((entry) => ({ entry, virtualDeleted: false }))
+    .sort((a, b) => compareTreeEntries(a.entry, b.entry));
 }
 
 function sessionFileBadgeLabel(locale: Locale, entry: SessionFileEntry): string {
@@ -803,10 +644,6 @@ export default function ProjectFileTree() {
   // 「会话文件」标签的数据来源：当前会话里 AI 工具调用（<<UGS_TOOL>> 内联事件）
   // 修改过的文件，并合并运行结束时已经持久化的会话改动缓存。
   const sessionMessages = useStore((s) => s.messages);
-  // 文件修改状态扫描已停用，会话忙/闲状态不再用于触发自动重扫。
-  // const aiEditingSessions = useStore((s) => s.aiEditingSessions);
-  // const chattingSessions = useStore((s) => s.chattingSessions);
-  // const runningSessions = useStore((s) => s.runningSessions);
   const sessionActivityVersion = useStore(
     (s) =>
       `${s.aiEditingSessions.length}:${s.chattingSessions.length}:${s.runningSessions.length}`,
@@ -821,6 +658,7 @@ export default function ProjectFileTree() {
   // 「会话文件」标签则用会话自己的工作目录（见 openSessionFile），二者解耦，
   // 避免会话文件因为文件夹下拉条被切到子目录而解析到错误的绝对路径。
   const [previewCwd, setPreviewCwd] = useState<string | undefined>(undefined);
+  const [previewDiffEnabled, setPreviewDiffEnabled] = useState(false);
   // 「工作区改动」tab 已停用（会触发 P4 reconcile 洪水）。改为「会话文件」tab：
   // 只展示当前会话里 AI 修改过的文件；新增/修改/删除来自已落盘缓存。
   const [panelTab, setPanelTab] = useState<ProjectPanelTab>(() => {
@@ -837,29 +675,12 @@ export default function ProjectFileTree() {
       ? 'preview'
       : 'tree';
   });
-  // 文件修改状态扫描已停用。保留一个恒定的 idle 快照，使文件树渲染逻辑
-  // （vcsTreeStatusIndex / treeVcsStatusLine）继续工作但永远不显示状态图标，
-  // 也不会触发任何后台 P4/VCS 扫描请求。
-  const vcsTreeState: WorkspaceVcsTreeState = { status: 'idle', snapshot: null };
-  // const [vcsTreeState, setVcsTreeState] = useState<WorkspaceVcsTreeState>({
-  //   status: 'idle',
-  //   snapshot: null,
-  // });
-  // const [vcsScanProgress, setVcsScanProgress] =
-  //   useState<WorkspaceVcsScanProgress | null>(null);
-  // const [vcsScanEnabled, setVcsScanEnabled] = useState<boolean>(
-  //   readVcsScanEnabledPreference,
-  // );
   const [previewDirectories, setPreviewDirectories] = useState<Record<string, string>>({});
   const [thumbnailCache, setThumbnailCache] = useState<ThumbnailCache>({});
   const [visibleThumbnails, setVisibleThumbnails] = useState<ThumbnailVisibility>({});
   const [contextMenu, setContextMenu] = useState<ProjectEntryContextMenuState>(null);
   const [collapsedSessionDirs, setCollapsedSessionDirs] = useState<Record<string, true>>({});
   const visibleThumbnailsRef = useRef<ThumbnailVisibility>({});
-  // 文件修改状态扫描已停用，相关序列号 / in-flight 标记不再需要。
-  // const vcsTreeLoadSeqRef = useRef(0);
-  // const vcsTreeRefreshInFlightRef = useRef(false);
-  // const activeSessionBusyRef = useRef(false);
 
   useEffect(() => {
     cacheRef.current = cache;
@@ -1050,29 +871,6 @@ export default function ProjectFileTree() {
     if (key !== selectedRootKey) setSelectedRootKey(key);
   }, [selectedRootPath, selectedRootKey]);
 
-  // 文件修改状态扫描已停用，不再计算会话忙/闲状态。
-  // const activeSessionBusy = useMemo(() => {
-  //   if (!activeSessionId) return false;
-  //   const matchesActive = (key: { workspaceId: string | null; sessionId: string | null }) =>
-  //     key.sessionId === activeSessionId &&
-  //     (key.workspaceId ?? null) === (activeWorkspaceId ?? null);
-  //   return (
-  //     aiEditingSessions.some(matchesActive) ||
-  //     chattingSessions.some(matchesActive) ||
-  //     runningSessions.some(matchesActive)
-  //   );
-  // }, [
-  //   activeSessionId,
-  //   activeWorkspaceId,
-  //   aiEditingSessions,
-  //   chattingSessions,
-  //   runningSessions,
-  // ]);
-  // 文件修改状态扫描已停用，无需后台 VCS 状态缓存键。
-  // const vcsStatusCacheKey = useMemo(
-  //   () => changesCacheKey ?? `vcs:${activeWorkspace?.id ?? 'default'}`,
-  //   [changesCacheKey, activeWorkspace?.id],
-  // );
   const activeTree = activeRootKey ? cache[activeRootKey] : undefined;
   const rootState = activeTree?.directories[''];
   const projectEngine = useMemo(
@@ -1088,11 +886,6 @@ export default function ProjectFileTree() {
     () => previewDirectoryState?.entries ?? [],
     [previewDirectoryState?.entries],
   );
-  const vcsTreeStatusIndex = useMemo(
-    () => buildWorkspaceVcsTreeStatus(vcsTreeState.snapshot),
-    [vcsTreeState.snapshot],
-  );
-
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'ultragamestudio.projectFileTreeWidth.v1',
     defaultWidth: projectFileTreeDefaultWidth(),
@@ -1197,20 +990,6 @@ export default function ProjectFileTree() {
     }
   }, []);
 
-  // 文件修改状态扫描已停用，开关切换逻辑不再需要。
-  // const toggleVcsScanEnabled = useCallback(() => {
-  //   setVcsScanEnabled((prev) => {
-  //     const next = !prev;
-  //     if (typeof window !== 'undefined') {
-  //       window.localStorage.setItem(
-  //         VCS_STATUS_SCAN_ENABLED_STORAGE_KEY,
-  //         next ? 'on' : 'off',
-  //       );
-  //     }
-  //     return next;
-  //   });
-  // }, []);
-
   const updatePanelTab = useCallback((nextTab: ProjectPanelTab) => {
     setTeamDetailsPreview(null);
     setPanelTab(nextTab);
@@ -1223,11 +1002,37 @@ export default function ProjectFileTree() {
     const openTeamDetails = (event: Event) => {
       const detail = (event as CustomEvent<OpenGameTeamDetailsEventDetail>).detail;
       setPreviewRef(null);
+      setPreviewDiffEnabled(false);
       setTeamDetailsPreview({ nodeId: detail?.nodeId });
     };
     window.addEventListener(OPEN_GAME_TEAM_DETAILS_EVENT, openTeamDetails);
     return () =>
       window.removeEventListener(OPEN_GAME_TEAM_DETAILS_EVENT, openTeamDetails);
+  }, []);
+
+  useEffect(() => {
+    const openFilePreview = (event: Event) => {
+      if (!projectRightPanelVisible()) return;
+      const detail =
+        (event as CustomEvent<OpenProjectRightPanelFilePreviewEventDetail>)
+          .detail;
+      if (!detail?.ref) return;
+
+      event.preventDefault();
+      setTeamDetailsPreview(null);
+      setPreviewCwd(detail.cwd || undefined);
+      setPreviewDiffEnabled(false);
+      setPreviewRef(detail.ref);
+    };
+    window.addEventListener(
+      OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+      openFilePreview,
+    );
+    return () =>
+      window.removeEventListener(
+        OPEN_PROJECT_RIGHT_PANEL_FILE_PREVIEW_EVENT,
+        openFilePreview,
+      );
   }, []);
 
   const openSessionFile = useCallback(
@@ -1243,6 +1048,7 @@ export default function ProjectFileTree() {
         undefined;
       setTeamDetailsPreview(null);
       setPreviewCwd(sessionCwd || undefined);
+      setPreviewDiffEnabled(true);
       setPreviewRef({ path: entry.path, basename: entry.basename });
     },
     [composerWorkspace, sessionChangesRootPath, rootFolders],
@@ -1258,140 +1064,6 @@ export default function ProjectFileTree() {
       return { ...prev, [key]: true };
     });
   }, []);
-
-  // ===========================================================================
-  // 文件修改状态扫描（VCS status scan）—— 已整体停用
-  //
-  // 该功能会对版本控制服务器发起大量请求：在 Perforce 大型 depot（如 UE 引擎库）
-  // 下，它会按目录递归执行 `p4 reconcile -n -ead <dir>/...`，单次扫描可产生数百条
-  // reconcile 请求，足以拖垮 P4 服务器。为彻底消除该风险，整段后台扫描逻辑连同其
-  // 触发点一并注释关闭。`refreshVcsTreeStatus` 保留为 no-op，使现有调用点无需改动。
-  // 如需恢复，请同时取消注释顶部的 tauri 导入、相关 state/ref 与下方各 effect。
-  // ===========================================================================
-  const refreshVcsTreeStatus = useCallback(() => {
-    /* no-op: 文件修改状态扫描已停用 */
-  }, []);
-
-  // const refreshVcsTreeStatus = useCallback(() => {
-  //   if (!vcsScanEnabled) return;
-  //   if (!activeWorkspacePath || vcsTreeRefreshInFlightRef.current) return;
-  //   vcsTreeRefreshInFlightRef.current = true;
-  //   const seq = vcsTreeLoadSeqRef.current + 1;
-  //   vcsTreeLoadSeqRef.current = seq;
-  //
-  //   void (async () => {
-  //     // 1) Render the last cached snapshot instantly so switching back to a
-  //     //    workspace shows icons immediately without re-scanning from zero.
-  //     try {
-  //       const cached = await readWorkspaceVcsStatusCache(
-  //         activeWorkspacePath,
-  //         vcsStatusCacheKey,
-  //       );
-  //       if (vcsTreeLoadSeqRef.current !== seq) return;
-  //       if (cached) {
-  //         setVcsTreeState({ status: 'ready', snapshot: cached });
-  //       } else {
-  //         setVcsTreeState((prev) => ({ status: 'loading', snapshot: prev.snapshot }));
-  //       }
-  //     } catch {
-  //       setVcsTreeState((prev) => ({ status: 'loading', snapshot: prev.snapshot }));
-  //     }
-  //
-  //     // 2) Quick shallow root-level pass so top-level icons update fast.
-  //     try {
-  //       const shallowSnapshot = await listWorkspaceVcsStatusShallow(activeWorkspacePath);
-  //       if (vcsTreeLoadSeqRef.current !== seq) return;
-  //       setVcsTreeState((prev) => {
-  //         // Don't downgrade a richer cached/full snapshot to the shallow one.
-  //         if (prev.status === 'ready' && prev.snapshot.scanScope === 'full') {
-  //           return prev;
-  //         }
-  //         return { status: 'loading', snapshot: shallowSnapshot };
-  //       });
-  //     } catch {
-  //       // Background scan below will surface the real error via progress events.
-  //     }
-  //
-  //     // 3) Kick off the background full scan. It runs in a backend worker,
-  //     //    caches its result, and reports progress via events. We don't await
-  //     //    the full scan here, so the UI stays responsive on large projects.
-  //     try {
-  //       await startWorkspaceVcsStatusScan(activeWorkspacePath, vcsStatusCacheKey);
-  //     } catch (err) {
-  //       if (vcsTreeLoadSeqRef.current !== seq) return;
-  //       setVcsTreeState((prev) => ({
-  //         status: 'error',
-  //         snapshot: prev.snapshot,
-  //         message: errorMessage(err),
-  //       }));
-  //     } finally {
-  //       if (vcsTreeLoadSeqRef.current === seq) {
-  //         vcsTreeRefreshInFlightRef.current = false;
-  //       }
-  //     }
-  //   })();
-  // }, [activeWorkspacePath, vcsStatusCacheKey, vcsScanEnabled]);
-
-  // Drive UI from background scan progress events: update the thin progress bar
-  // while scanning, and re-read the cached result when a scan completes.
-  // 已停用：不再监听后台扫描进度事件。
-  // useEffect(() => {
-  //   if (!activeWorkspacePath) return;
-  //   let unlisten: (() => void) | undefined;
-  //   let disposed = false;
-  //   void onWorkspaceVcsScanProgress((progress) => {
-  //     if (progress.phase === 'scanning') {
-  //       setVcsScanProgress(progress);
-  //       return;
-  //     }
-  //     if (progress.phase === 'error') {
-  //       setVcsScanProgress(null);
-  //       setVcsTreeState((prev) => ({
-  //         status: 'error',
-  //         snapshot: prev.snapshot,
-  //         message: progress.message ?? 'VCS 状态扫描失败',
-  //       }));
-  //       return;
-  //     }
-  //     // phase === 'done': pull the freshly cached snapshot.
-  //     setVcsScanProgress(null);
-  //     const seq = vcsTreeLoadSeqRef.current;
-  //     void readWorkspaceVcsStatusCache(activeWorkspacePath, vcsStatusCacheKey)
-  //       .then((snapshot) => {
-  //         if (vcsTreeLoadSeqRef.current !== seq || !snapshot) return;
-  //         setVcsTreeState({ status: 'ready', snapshot });
-  //       })
-  //       .catch(() => {});
-  //   }).then((fn) => {
-  //     if (disposed) {
-  //       fn();
-  //     } else {
-  //       unlisten = fn;
-  //     }
-  //   });
-  //   return () => {
-  //     disposed = true;
-  //     unlisten?.();
-  //   };
-  // }, [activeWorkspacePath, vcsStatusCacheKey]);
-
-  // 已停用：不再在挂载 / 切换工作区时启动扫描，也不再每 30 秒轮询扫描。
-  // useEffect(() => {
-  //   vcsTreeLoadSeqRef.current = vcsTreeLoadSeqRef.current + 1;
-  //   vcsTreeRefreshInFlightRef.current = false;
-  //   setVcsScanProgress(null);
-  //   setVcsTreeState({ status: 'idle', snapshot: null });
-  //   if (!activeWorkspacePath || !vcsScanEnabled) return;
-  //
-  //   refreshVcsTreeStatus();
-  //   if (typeof window === 'undefined') return;
-  //
-  //   const interval = window.setInterval(
-  //     refreshVcsTreeStatus,
-  //     VCS_TREE_REFRESH_INTERVAL_MS,
-  //   );
-  //   return () => window.clearInterval(interval);
-  // }, [activeWorkspacePath, refreshVcsTreeStatus, vcsScanEnabled]);
 
   useEffect(() => {
     if (!activeRootKey || !selectedRootPath) return;
@@ -1631,11 +1303,10 @@ export default function ProjectFileTree() {
       ...prev,
       [activeRootKey]: '',
     }));
-    refreshVcsTreeStatus();
     void loadDirectory(activeRootKey, selectedRootPath, '', {
       force: true,
     });
-  }, [activeRootKey, selectedRootPath, loadDirectory, refreshVcsTreeStatus]);
+  }, [activeRootKey, selectedRootPath, loadDirectory]);
 
   const previewProjectFile = useCallback(
     (path: string, opts?: { cwd?: string }) => {
@@ -1647,74 +1318,6 @@ export default function ProjectFileTree() {
     },
     [],
   );
-
-  // 工作区改动扫描已停用：原实现会调用 refreshCachedSessionChanges →
-  // listWorkspaceChanges → 后端 p4_workspace_changes，对 P4 发起大量 reconcile
-  // 请求。改动 tab 入口已移除（改为「会话文件」tab）。
-
-  // const refreshSessionChanges = useCallback(() => {
-  //   if (!workspaceChangesRootPath || !changesCacheKey) return;
-  //   const seq = changesLoadSeqRef.current + 1;
-  //   changesLoadSeqRef.current = seq;
-  //   setSelectedChangeKey(null);
-  //   setChangesState((prev) => ({
-  //     status: 'loading',
-  //     snapshot: prev.snapshot,
-  //   }));
-  //   void refreshCachedSessionChanges(
-  //     workspaceChangesRootPath,
-  //     changesCacheKey,
-  //     null,
-  //   )
-  //     .then((snapshot) => {
-  //       if (changesLoadSeqRef.current !== seq) return;
-  //       setChangesState({ status: 'ready', snapshot });
-  //     })
-  //     .catch((err) => {
-  //       if (changesLoadSeqRef.current !== seq) return;
-  //       setChangesState((prev) => ({
-  //         status: 'error',
-  //         snapshot: prev.snapshot,
-  //         message: errorMessage(err),
-  //       }));
-  //     });
-  // }, [workspaceChangesRootPath, changesCacheKey]);
-
-  // 已停用：不再在切换到“工作区改动”标签时自动发起改动扫描。
-  // 该扫描在 P4 工作区下同样会触发大量 reconcile 请求；如需查看改动，
-  // 请改用面板底部的“刷新改动”按钮手动触发。
-  // useEffect(() => {
-  //   if (panelTab !== 'changes') return;
-  //   if (!vcsScanEnabled) return;
-  //   if (!workspaceChangesRootPath || !changesCacheKey) return;
-  //   if (changesState.status !== 'idle') return;
-  //   refreshSessionChanges();
-  // }, [
-  //   vcsScanEnabled,
-  //   workspaceChangesRootPath,
-  //   changesCacheKey,
-  //   changesState.status,
-  //   panelTab,
-  //   refreshSessionChanges,
-  // ]);
-
-  // 已停用：会话从忙变闲时不再自动重扫工作区改动 / 文件状态。
-  // useEffect(() => {
-  //   const wasBusy = activeSessionBusyRef.current;
-  //   activeSessionBusyRef.current = activeSessionBusy;
-  //   if (!wasBusy || activeSessionBusy) return;
-  //   if (!vcsScanEnabled) return;
-  //   if (!workspaceChangesRootPath || !changesCacheKey) return;
-  //   refreshSessionChanges();
-  //   refreshVcsTreeStatus();
-  // }, [
-  //   activeSessionBusy,
-  //   vcsScanEnabled,
-  //   workspaceChangesRootPath,
-  //   changesCacheKey,
-  //   refreshSessionChanges,
-  //   refreshVcsTreeStatus,
-  // ]);
 
   const openPreviewDirectory = useCallback(
     (relativePath: string, options: { skipLoad?: boolean } = {}) => {
@@ -1736,12 +1339,7 @@ export default function ProjectFileTree() {
       if (!activeTree) return null;
       const key = directoryKey(relativePath);
       const directory = activeTree.directories[key];
-      const renderEntries = buildRenderEntries(
-        directory?.entries ?? [],
-        key,
-        selectedRootPath,
-        vcsTreeStatusIndex,
-      );
+      const renderEntries = buildRenderEntries(directory?.entries ?? []);
 
       if (!directory && renderEntries.length === 0) return null;
       if (
@@ -1777,11 +1375,10 @@ export default function ProjectFileTree() {
 
       return (
         <>
-          {renderEntries.map(({ entry, virtualDeleted, vcsStatus, vcsScanning }) => {
+          {renderEntries.map(({ entry, virtualDeleted }) => {
             const entryKey = directoryKey(entry.relativePath);
             const expanded = activeTree.expanded[entryKey] === true;
             const isDirectory = entry.kind === 'directory';
-            const isDeleted = vcsStatus === 'deleted';
             const iconStatusClass = isDirectory ? 'text-accent-2' : 'text-fg-faint';
 
             return (
@@ -1808,19 +1405,14 @@ export default function ProjectFileTree() {
                   onClick={() => {
                     if (isDirectory) {
                       toggleDirectory(entry, { skipLoad: virtualDeleted });
-                    } else if (!virtualDeleted && !isDeleted) {
+                    } else if (!virtualDeleted) {
                       setTeamDetailsPreview(null);
                       setPreviewCwd(selectedRootPath || undefined);
+                      setPreviewDiffEnabled(false);
                       setPreviewRef(fileRefFromEntry(entry));
                     }
                   }}
-                  title={
-                    vcsStatus
-                      ? `${entry.path}\n${workspaceVcsStatusLabel(vcsStatus)}`
-                      : vcsScanning
-                        ? `${entry.path}\n正在扫描状态`
-                      : entry.path
-                  }
+                  title={entry.path}
                   className={
                     'group flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs transition-colors hover:bg-panel-2 hover:text-fg ' +
                     (virtualDeleted
@@ -1830,8 +1422,7 @@ export default function ProjectFileTree() {
                         : remoteWorkspaceSelected
                           ? 'cursor-default '
                           : 'cursor-grab active:cursor-grabbing ') +
-                    (entry.hidden ? 'text-fg-faint ' : 'text-fg-dim ') +
-                    (isDeleted ? 'opacity-80' : '')
+                    (entry.hidden ? 'text-fg-faint ' : 'text-fg-dim ')
                   }
                   style={{ paddingLeft: 8 + level * 14 }}
                 >
@@ -1856,9 +1447,8 @@ export default function ProjectFileTree() {
                     ) : (
                       <File size={14} className={'shrink-0 ' + iconStatusClass} />
                     )}
-                    <VcsStatusOverlay status={vcsStatus} scanning={vcsScanning} />
                   </span>
-                  <span className={'min-w-0 flex-1 truncate ' + (isDeleted ? 'line-through' : '')}>
+                  <span className="min-w-0 flex-1 truncate">
                     {entry.name}
                   </span>
                 </button>
@@ -1898,18 +1488,12 @@ export default function ProjectFileTree() {
       startEntryDrag,
       toggleDirectory,
       trackEntryDrag,
-      vcsTreeStatusIndex,
     ],
   );
 
   const renderPreviewMode = useCallback((): ReactNode => {
     const directory = previewDirectoryState;
-    const renderEntries = buildRenderEntries(
-      directory?.entries ?? [],
-      previewDirectoryKey,
-      selectedRootPath,
-      vcsTreeStatusIndex,
-    );
+    const renderEntries = buildRenderEntries(directory?.entries ?? []);
     const segments = previewDirectoryKey
       ? previewDirectoryKey.split('/').filter(Boolean)
       : [];
@@ -1971,15 +1555,13 @@ export default function ProjectFileTree() {
           </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2">
-            {renderEntries.map(({ entry, virtualDeleted, vcsStatus, vcsScanning }) => {
+            {renderEntries.map(({ entry, virtualDeleted }) => {
               const key = thumbnailKey(entry);
               return (
                 <PreviewCard
                   key={`${virtualDeleted ? 'deleted:' : ''}${entry.path}`}
                   entry={entry}
                   engine={projectEngine}
-                  vcsStatus={vcsStatus}
-                  vcsScanning={vcsScanning}
                   thumbnailId={key}
                   draggable={!virtualDeleted}
                   thumbnail={
@@ -2010,11 +1592,11 @@ export default function ProjectFileTree() {
                         skipLoad: virtualDeleted,
                       });
                     } else if (
-                      !virtualDeleted &&
-                      vcsStatus !== 'deleted'
+                      !virtualDeleted
                     ) {
                       setTeamDetailsPreview(null);
                       setPreviewCwd(selectedRootPath || undefined);
+                      setPreviewDiffEnabled(false);
                       setPreviewRef(fileRefFromEntry(entry));
                     }
                   }}
@@ -2051,7 +1633,6 @@ export default function ProjectFileTree() {
     thumbnailCache,
     trackEntryDrag,
     updateThumbnailVisibility,
-    vcsTreeStatusIndex,
   ]);
 
   const renderSessionFiles = useCallback((): ReactNode => {
@@ -2192,18 +1773,16 @@ export default function ProjectFileTree() {
 
   const rootLoading = rootState?.status === 'loading';
   const canRefresh = Boolean(selectedRootPath && !rootLoading);
-  const projectTreeStatusTitle = treeVcsStatusLine(
-    selectedRootPath
-      ? basename(selectedRootPath) || selectedRootPath
-      : activeWorkspace?.name ?? t(locale, 'projectTree.noWorkspace'),
-    vcsTreeState,
-  );
+  const projectTreeStatusTitle = selectedRootPath
+    ? basename(selectedRootPath) || selectedRootPath
+    : activeWorkspace?.name ?? t(locale, 'projectTree.noWorkspace');
   // Folder bar sizing: show every attached folder, but cap the visible height at
   // 3 rows (≈30px each) and scroll beyond that. The bar only renders when there
   // are 2+ folders, so a single-folder project stays compact.
   const FOLDER_ROW_HEIGHT = 30;
   const MAX_VISIBLE_FOLDERS = 3;
   const folderBarMaxHeight = FOLDER_ROW_HEIGHT * MAX_VISIBLE_FOLDERS;
+  const previewPanelOpen = Boolean(previewRef || teamDetailsPreview);
 
   return (
     <>
@@ -2214,11 +1793,45 @@ export default function ProjectFileTree() {
         <div
           onMouseDown={onResizeStart}
           title={t(locale, 'common.resizeWidth')}
+          data-file-preview-ignore-outside-pointer="true"
           className="group absolute -left-1 bottom-0 top-0 z-20 flex w-2 cursor-col-resize items-center justify-center"
         >
           <div className="h-full w-0.5 bg-transparent transition-colors group-hover:bg-accent/40" />
         </div>
 
+        {previewPanelOpen ? (
+          <FilePreviewDrawer
+            refData={teamDetailsPreview ? null : previewRef}
+            customContent={
+              teamDetailsPreview
+                ? {
+                    label: '岗位视角和 Skill',
+                    path: '专家视角库 / 岗位视角与 Skill',
+                    children: (
+                      <GameTeamPanel
+                        mode="details"
+                        selectedNodeId={teamDetailsPreview.nodeId ?? null}
+                      />
+                    ),
+                  }
+                : null
+            }
+            cwd={previewCwd}
+            previewFile={previewProjectFile}
+            diffEnabled={
+              previewDiffEnabled &&
+              Boolean(previewCwd && !isRemoteWorkspacePath(previewCwd))
+            }
+            canOpenExternally={!previewCwd || !isRemoteWorkspacePath(previewCwd)}
+            variant="embedded"
+            onClose={() => {
+              setPreviewRef(null);
+              setTeamDetailsPreview(null);
+              setPreviewDiffEnabled(false);
+            }}
+          />
+        ) : (
+          <>
         <header className="shrink-0 border-b border-border-soft px-3 py-2">
           <div className="flex min-w-0 items-center gap-2">
             <div
@@ -2262,31 +1875,30 @@ export default function ProjectFileTree() {
             </div>
             {panelTab === 'files' && (
               <div className="ml-auto flex shrink-0 rounded-md border border-border-soft bg-panel-2 p-0.5">
-                {/* 文件修改状态扫描已停用，移除其开关按钮（眼睛图标）。 */}
-              <button
-                type="button"
-                aria-pressed={viewMode === 'tree'}
-                title={t(locale, 'projectTree.treeMode')}
-                onClick={() => updateViewMode('tree')}
-                className={
-                  'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
-                  (viewMode === 'tree' ? 'bg-panel text-fg' : '')
-                }
-              >
-                <List size={13} />
-              </button>
-              <button
-                type="button"
-                aria-pressed={viewMode === 'preview'}
-                title={t(locale, 'projectTree.previewMode')}
-                onClick={() => updateViewMode('preview')}
-                className={
-                  'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
-                  (viewMode === 'preview' ? 'bg-panel text-fg' : '')
-                }
-              >
-                <LayoutGrid size={13} />
-              </button>
+                <button
+                  type="button"
+                  aria-pressed={viewMode === 'tree'}
+                  title={t(locale, 'projectTree.treeMode')}
+                  onClick={() => updateViewMode('tree')}
+                  className={
+                    'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
+                    (viewMode === 'tree' ? 'bg-panel text-fg' : '')
+                  }
+                >
+                  <List size={13} />
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={viewMode === 'preview'}
+                  title={t(locale, 'projectTree.previewMode')}
+                  onClick={() => updateViewMode('preview')}
+                  className={
+                    'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
+                    (viewMode === 'preview' ? 'bg-panel text-fg' : '')
+                  }
+                >
+                  <LayoutGrid size={13} />
+                </button>
               </div>
             )}
           </div>
@@ -2388,6 +2000,8 @@ export default function ProjectFileTree() {
             </button>
           </div>
         )}
+          </>
+        )}
       </aside>
 
       {contextMenu && (
@@ -2404,33 +2018,6 @@ export default function ProjectFileTree() {
         />
       )}
 
-      {/* 岗位详情复用普通文件预览抽屉的 fixed 外壳，避免把组织架构节点渲染成
-          “项目文件”面板内部内容。 */}
-      <FilePreviewDrawer
-        refData={teamDetailsPreview ? null : previewRef}
-        customContent={
-          teamDetailsPreview
-            ? {
-                label: '岗位视角和 Skill',
-                path: '专家视角库 / 岗位视角与 Skill',
-                children: (
-                  <GameTeamPanel
-                    mode="details"
-                    selectedNodeId={teamDetailsPreview.nodeId ?? null}
-                  />
-                ),
-              }
-            : null
-        }
-        cwd={previewCwd}
-        previewFile={previewProjectFile}
-        diffEnabled={!previewCwd || !isRemoteWorkspacePath(previewCwd)}
-        canOpenExternally={!previewCwd || !isRemoteWorkspacePath(previewCwd)}
-        onClose={() => {
-          setPreviewRef(null);
-          setTeamDetailsPreview(null);
-        }}
-      />
     </>
   );
 }

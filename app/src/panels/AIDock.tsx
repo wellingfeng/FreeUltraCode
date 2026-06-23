@@ -13,7 +13,6 @@ import {
 import {
   ArrowDownToLine,
   ArrowUp,
-  ArrowUpToLine,
   Check,
   ChevronDown,
   ChevronRight,
@@ -219,6 +218,7 @@ import StudioRunCard from "@/panels/StudioRunCard";
 import GameTeamPanel, {
   OPEN_GAME_TEAM_DETAILS_EVENT,
 } from "@/panels/GameTeamPanel";
+import { requestProjectRightPanelFilePreview } from "@/panels/projectRightPanelEvents";
 import { activeChatTitle, formatMessageTime } from "@/panels/aidock/chatTitle";
 import {
   fileMentionEntryForTarget,
@@ -262,9 +262,15 @@ import FilePreviewDrawer, {
   type FilePreviewDrawerLayoutDetail,
 } from "@/components/ai/FilePreviewDrawer";
 import type { FileRef } from "@/components/ai/lib/filePath";
-import { displayFileRefLabel } from "@/components/ai/lib/filePath";
+import {
+  displayFileRefLabel,
+  isImageFileRef,
+} from "@/components/ai/lib/filePath";
 import { scanFileRefs } from "@/components/ai/lib/fileScan";
-import FileChip, { type OpenFileIntent } from "@/components/ai/FileChip";
+import FileChip, {
+  FileChipBudgetProvider,
+  type OpenFileIntent,
+} from "@/components/ai/FileChip";
 import { shallow } from "zustand/shallow";
 import { isActiveAiEditingSession, useStore } from "@/store/useStore";
 import {
@@ -295,6 +301,7 @@ const MIN_DOCK_HEIGHT = 120;
 const EAGER_MESSAGE_TAIL = 6;
 const INITIAL_MESSAGE_WINDOW = 80;
 const MESSAGE_WINDOW_PAGE = 80;
+const TIMELINE_SUMMARY_LIMIT = 40;
 /** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
 const CHAT_INPUT_HEIGHT = 300;
 
@@ -328,6 +335,18 @@ function clampChatInputHeight(h: number): number {
 function clampHeight(h: number): number {
   const max = typeof window !== "undefined" ? window.innerHeight * 0.75 : 600;
   return Math.min(Math.max(h, MIN_DOCK_HEIGHT), max);
+}
+
+function timelineMarkerTop(index: number, total: number): number {
+  if (total <= 1) return 50;
+  return 6 + (index / (total - 1)) * 88;
+}
+
+function summarizeTimelineText(text: string): string {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact) return "空段落";
+  if (compact.length <= TIMELINE_SUMMARY_LIMIT) return compact;
+  return compact.slice(0, TIMELINE_SUMMARY_LIMIT - 3).trimEnd() + "...";
 }
 
 const ASSET_SESSION_JUMP_EVENT = "ugs:asset-session-jump";
@@ -1692,6 +1711,12 @@ export default function AIDock({
     string | null
   >(null);
   const assetJumpHighlightTimerRef = useRef<number | null>(null);
+  const [activeTopicMessageId, setActiveTopicMessageId] = useState<
+    string | null
+  >(null);
+  const [pendingTimelineJumpId, setPendingTimelineJumpId] = useState<
+    string | null
+  >(null);
 
   const isReadOnly = mode === "running";
   // Cache TTL is a session-open-time setting: changeable only before the first
@@ -1894,6 +1919,18 @@ export default function AIDock({
         .map((message) => message.id),
     [messages],
   );
+  const timelineMarkers = useMemo(() => {
+    const topics = messages
+      .map((message, messageIndex) => ({ message, messageIndex }))
+      .filter(({ message }) => message.role === "user");
+    return topics.map(({ message, messageIndex }, topicIndex) => ({
+      id: message.id,
+      label: summarizeTimelineText(message.text),
+      number: topicIndex + 1,
+      position: timelineMarkerTop(topicIndex, topics.length),
+      messageIndex,
+    }));
+  }, [messages]);
   const slashSuggestions = useMemo(
     () => buildSlashSuggestions(slashCatalogEntries, locale),
     [locale, slashCatalogEntries],
@@ -3634,16 +3671,24 @@ export default function AIDock({
         });
         return;
       }
+      if (
+        requestProjectRightPanelFilePreview({
+          ref,
+          cwd: workspaceCwd || undefined,
+        })
+      ) {
+        setFilePreviewRef(null);
+        return;
+      }
       setFilePreviewRef(ref);
     },
     [activeRemoteWorkspaceRoot, workspaceCwd],
   );
 
-  // File/image paths typed or pasted into the composer are just plain text
+  // Image paths typed or pasted into the composer are just plain text
   // inside the <textarea>, so they can't be clicked the way chips in a sent
-  // message can. Scan the draft for file references and surface them as a
-  // clickable strip below the input, so a pasted screenshot path (or any file
-  // path) can be previewed before the message is sent.
+  // message can. Scan the draft for image refs and surface only those as a
+  // clickable strip below the input before the message is sent.
   const draftFileRefs = useMemo<FileRef[]>(() => {
     const text = draft.trim();
     if (!text) return [];
@@ -3651,6 +3696,7 @@ export default function AIDock({
     const seen = new Set<string>();
     for (const part of scanFileRefs(text)) {
       if (typeof part === "string") continue;
+      if (!isImageFileRef(part)) continue;
       const key = displayFileRefLabel(part, workspaceCwd);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -3914,15 +3960,68 @@ export default function AIDock({
     [searchMatches.length],
   );
 
-  const scrollToStreamEdge = useCallback((edge: "top" | "bottom") => {
-    const stream = streamRef.current;
-    if (!stream) return;
-    if (edge === "bottom") stickToBottomRef.current = true;
-    stream.scrollTo({
-      top: edge === "top" ? 0 : stream.scrollHeight,
-      behavior: "smooth",
-    });
+  const flashMessageHighlight = useCallback((messageId: string) => {
+    setAssetJumpHighlightId(messageId);
+    if (assetJumpHighlightTimerRef.current != null) {
+      window.clearTimeout(assetJumpHighlightTimerRef.current);
+    }
+    assetJumpHighlightTimerRef.current = window.setTimeout(() => {
+      setAssetJumpHighlightId(null);
+      assetJumpHighlightTimerRef.current = null;
+    }, 1800);
   }, []);
+
+  const scrollToTimelineMessage = useCallback(
+    (messageId: string) => {
+      const targetIndex = messages.findIndex(
+        (message) => message.id === messageId,
+      );
+      if (targetIndex < 0) return;
+
+      if (!renderFullMessageList && targetIndex < hiddenMessageCount) {
+        const requiredWindowSize = messages.length - targetIndex;
+        const nextWindowSize = Math.min(
+          messages.length,
+          Math.max(INITIAL_MESSAGE_WINDOW, requiredWindowSize),
+        );
+        messageWindowSizesRef.current.set(
+          activeStreamScrollKey,
+          nextWindowSize,
+        );
+        setMessageWindow((current) =>
+          current.key === activeStreamScrollKey && current.size >= nextWindowSize
+            ? current
+            : { key: activeStreamScrollKey, size: nextWindowSize },
+        );
+      }
+
+      setPendingTimelineJumpId(messageId);
+    },
+    [activeStreamScrollKey, hiddenMessageCount, messages, renderFullMessageList],
+  );
+
+  useLayoutEffect(() => {
+    if (!pendingTimelineJumpId) return;
+    const node = messageRefs.current.get(pendingTimelineJumpId);
+    if (!node) return;
+
+    window.requestAnimationFrame(() => {
+      const nextNode = messageRefs.current.get(pendingTimelineJumpId);
+      if (!nextNode) return;
+      nextNode.scrollIntoView?.({
+        block: "center",
+        inline: "nearest",
+        behavior: "smooth",
+      });
+      flashMessageHighlight(pendingTimelineJumpId);
+      setPendingTimelineJumpId(null);
+    });
+  }, [
+    flashMessageHighlight,
+    hiddenMessageCount,
+    messages.length,
+    pendingTimelineJumpId,
+  ]);
 
   useEffect(() => {
     const handleAssetSessionJump = (event: Event) => {
@@ -3996,14 +4095,7 @@ export default function AIDock({
         } else {
           scrollStreamToBottom(stream);
         }
-        setAssetJumpHighlightId(targetMessageId);
-        if (assetJumpHighlightTimerRef.current != null) {
-          window.clearTimeout(assetJumpHighlightTimerRef.current);
-        }
-        assetJumpHighlightTimerRef.current = window.setTimeout(() => {
-          setAssetJumpHighlightId(null);
-          assetJumpHighlightTimerRef.current = null;
-        }, 1800);
+        flashMessageHighlight(targetMessageId);
         setAssetJumpTarget(null);
       });
     });
@@ -4012,6 +4104,7 @@ export default function AIDock({
     activeStreamScrollKey,
     activeWorkspaceId,
     assetJumpTarget,
+    flashMessageHighlight,
     messages,
     renderFullMessageList,
     visibleMessageCount,
@@ -4094,54 +4187,52 @@ export default function AIDock({
     [],
   );
 
+  const updateActiveTopicFromScroll = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream || topicMessageIds.length === 0) {
+      setActiveTopicMessageId(null);
+      return;
+    }
+
+    const streamRect = stream.getBoundingClientRect();
+    const readLine = stream.scrollTop + Math.max(48, stream.clientHeight * 0.18);
+    const topics = topicMessageIds
+      .map((id) => {
+        const node = messageRefs.current.get(id);
+        if (!node) return null;
+        return {
+          id,
+          top:
+            node.getBoundingClientRect().top -
+            streamRect.top +
+            stream.scrollTop,
+        };
+      })
+      .filter((item): item is { id: string; top: number } => item !== null);
+    if (topics.length === 0) {
+      setActiveTopicMessageId(null);
+      return;
+    }
+
+    const active =
+      [...topics].reverse().find((topic) => topic.top <= readLine) ??
+      topics[0];
+    setActiveTopicMessageId((current) =>
+      current === active.id ? current : active.id,
+    );
+  }, [topicMessageIds]);
+
   // Track whether the user is parked at (or near) the bottom. Manual upward
   // scroll pins this session to the visible message anchor; bottom stays sticky
   // and follows new streamed content.
   const handleStreamScroll = useCallback(() => {
     rememberStreamScrollSnapshot();
-  }, [rememberStreamScrollSnapshot]);
+    updateActiveTopicFromScroll();
+  }, [rememberStreamScrollSnapshot, updateActiveTopicFromScroll]);
 
-  const scrollToTopic = useCallback(
-    (direction: -1 | 1) => {
-      const stream = streamRef.current;
-      if (!stream || topicMessageIds.length === 0) return;
-
-      const streamRect = stream.getBoundingClientRect();
-      const topics = topicMessageIds
-        .map((id) => {
-          const node = messageRefs.current.get(id);
-          if (!node) return null;
-          return {
-            id,
-            top:
-              node.getBoundingClientRect().top -
-              streamRect.top +
-              stream.scrollTop,
-          };
-        })
-        .filter((item): item is { id: string; top: number } => item !== null);
-      if (topics.length === 0) return;
-
-      const threshold = 4;
-      const currentTop = stream.scrollTop;
-      const target =
-        direction > 0
-          ? topics.find((topic) => topic.top > currentTop + threshold)
-          : [...topics]
-              .reverse()
-              .find((topic) => topic.top < currentTop - threshold);
-
-      if (!target) return;
-      messageRefs.current
-        .get(target.id)
-        ?.scrollIntoView({
-          block: "start",
-          inline: "nearest",
-          behavior: "smooth",
-        });
-    },
-    [topicMessageIds],
-  );
+  useLayoutEffect(() => {
+    updateActiveTopicFromScroll();
+  }, [hiddenMessageCount, messages.length, updateActiveTopicFromScroll]);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -6433,53 +6524,43 @@ export default function AIDock({
       <Search size={14} />
     </button>
   );
-  const streamNavButtonClass =
-    "ugs-stream-nav-button flex h-7 w-7 items-center justify-center rounded-md text-fg-dim transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-35";
   const composerToolButtonClass =
     "flex h-7 shrink-0 items-center justify-center rounded-md border border-transparent bg-transparent px-2 text-xs text-fg-dim transition-colors hover:bg-border-soft/55 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40";
-  const streamNavigation = isChat && messages.length > 0 && (
+  const streamNavigation = isChat && timelineMarkers.length > 0 && (
     <div
-      className="ugs-stream-nav absolute right-2 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-lg p-1"
-      aria-label={t(locale, "dock.streamNavAria")}
+      className="ugs-stream-nav absolute bottom-4 right-2 top-4 z-20 w-8"
+      aria-label={t(locale, "dock.streamTimelineAria")}
     >
-      <button
-        type="button"
-        onClick={() => scrollToStreamEdge("top")}
-        title={t(locale, "dock.navTop")}
-        aria-label={t(locale, "dock.navTop")}
-        className={streamNavButtonClass}
-      >
-        <ArrowUpToLine size={14} />
-      </button>
-      <button
-        type="button"
-        onClick={() => scrollToTopic(-1)}
-        disabled={topicMessageIds.length === 0}
-        title={t(locale, "dock.navPrevTopic")}
-        aria-label={t(locale, "dock.navPrevTopic")}
-        className={streamNavButtonClass}
-      >
-        <ChevronUp size={14} />
-      </button>
-      <button
-        type="button"
-        onClick={() => scrollToTopic(1)}
-        disabled={topicMessageIds.length === 0}
-        title={t(locale, "dock.navNextTopic")}
-        aria-label={t(locale, "dock.navNextTopic")}
-        className={streamNavButtonClass}
-      >
-        <ChevronDown size={14} />
-      </button>
-      <button
-        type="button"
-        onClick={() => scrollToStreamEdge("bottom")}
-        title={t(locale, "dock.navBottom")}
-        aria-label={t(locale, "dock.navBottom")}
-        className={streamNavButtonClass}
-      >
-        <ArrowDownToLine size={14} />
-      </button>
+      <div className="ugs-stream-nav-track" aria-hidden="true" />
+      {timelineMarkers.map((marker) => {
+        const active =
+          marker.id === activeTopicMessageId ||
+          marker.id === assetJumpHighlightId ||
+          marker.id === pendingTimelineJumpId;
+        const hidden = marker.messageIndex < hiddenMessageCount;
+        const ariaLabel = t(locale, "dock.timelineMarker")
+          .replace("{index}", String(marker.number))
+          .replace("{summary}", marker.label);
+        return (
+          <button
+            key={marker.id}
+            type="button"
+            data-ugs-timeline-marker="true"
+            data-active={active ? "true" : undefined}
+            data-hidden={hidden ? "true" : undefined}
+            onClick={() => scrollToTimelineMessage(marker.id)}
+            title={marker.label}
+            aria-label={ariaLabel}
+            className={cn(
+              "ugs-stream-nav-marker",
+              active && "ugs-stream-nav-marker--active",
+            )}
+            style={{ top: `${marker.position}%` }}
+          >
+            <span className="ugs-stream-nav-tooltip">{marker.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
   const generationMode:
@@ -6881,6 +6962,7 @@ export default function AIDock({
             onScroll={handleStreamScroll}
             className={
               "ugs-ai-return-stream min-h-0 overflow-y-auto p-3 " +
+              (isChat && timelineMarkers.length > 0 ? "pr-12 " : "") +
               (centerInput ? "mx-auto w-full" : "h-full")
             }
             style={
@@ -7850,14 +7932,16 @@ export default function AIDock({
               data-testid="composer-file-refs"
               className="flex flex-wrap items-center gap-1 px-2 pb-1"
             >
-              {draftFileRefs.map((ref) => (
-                <FileChip
-                  key={displayFileRefLabel(ref, workspaceCwd)}
-                  refData={ref}
-                  onOpenFile={onOpenFile}
-                  cwd={workspaceCwd}
-                />
-              ))}
+              <FileChipBudgetProvider>
+                {draftFileRefs.map((ref) => (
+                  <FileChip
+                    key={displayFileRefLabel(ref, workspaceCwd)}
+                    refData={ref}
+                    onOpenFile={onOpenFile}
+                    cwd={workspaceCwd}
+                  />
+                ))}
+              </FileChipBudgetProvider>
             </div>
           )}
 

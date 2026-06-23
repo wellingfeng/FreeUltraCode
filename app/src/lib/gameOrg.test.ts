@@ -41,11 +41,20 @@ describe("game organization tree", () => {
     const featureSkill = technicalDirector?.skills.find(
       (skill) => skill.id === "feature-development",
     );
+    const ueReviewSkill = technicalDirector?.skills.find(
+      (skill) => skill.id === "ue-architecture-review",
+    );
 
     expect(technicalDirector?.icon).toBe("tech");
     expect(featureSkill?.commandText).toContain("/technical-director ");
     expect(featureSkill?.commandText).toContain("Skill 标准六项");
     expect(featureSkill?.protocol.executionSteps.length).toBeGreaterThan(0);
+    expect(ueReviewSkill?.label).toBe("UE 架构严审");
+    expect(ueReviewSkill?.commandText).toContain("Unreal Gameplay Framework");
+    expect(ueReviewSkill?.commandText).toContain("go/no-go");
+    expect(ueReviewSkill?.protocol.acceptanceCriteria).toContain(
+      "默认不能通过",
+    );
     const parsed = parseGameExpertCommand(
       featureSkill?.commandText ?? "",
       settings,
@@ -60,6 +69,9 @@ describe("game organization tree", () => {
     const featureSkill = technicalDirector?.skills.find(
       (skill) => skill.id === "feature-development",
     );
+    const ueReviewSkill = technicalDirector?.skills.find(
+      (skill) => skill.id === "ue-architecture-review",
+    );
 
     expect(tree.label).toBe("Producer");
     expect(technicalDirector?.label).toBe("Technical Director");
@@ -67,6 +79,8 @@ describe("game organization tree", () => {
     expect(featureSkill?.label).toBe("Start Feature Development");
     expect(featureSkill?.commandText).toContain("/technical-director ");
     expect(featureSkill?.commandText).toContain("Start feature development");
+    expect(ueReviewSkill?.label).toBe("Strict UE Architecture Review");
+    expect(ueReviewSkill?.commandText).toContain("server authority");
   });
 
   it("keeps user-customized organization text unchanged when locale changes", () => {
@@ -257,6 +271,19 @@ describe("game organization tree", () => {
       expect.arrayContaining(["client-perf-pass", "perf-profiling"]),
     );
     expect(perfMatches[0]?.matchedTerms.length).toBeGreaterThan(0);
+  });
+
+  it("recommends the strict UE architecture review for Unreal architecture audits", () => {
+    const tree = buildGameOrgTree(gameOrgSettings(), "zh-CN");
+    const matches = recommendGameOrgSkills(
+      tree,
+      "UE5 架构审核：检查 GAS、网络复制、模块依赖和 Blueprint 分工",
+      { limit: 5 },
+    );
+
+    expect(matches.map((match) => match.skillId)).toContain(
+      "ue-architecture-review",
+    );
   });
 
   it("recommends functional art skills for concrete asset generation requests", () => {

@@ -22,7 +22,6 @@ import {
 import {
   openLocalPath,
   previewLocalFile,
-  workspaceFileDiff,
   type LocalFilePreview,
   type WorkspaceChangeFile,
   type WorkspaceChangeLine,
@@ -30,6 +29,7 @@ import {
 } from '@/lib/tauri';
 import { cn } from '@/lib/cn';
 import { createObjectUrlFromBase64, revokeObjectUrl } from '@/lib/objectUrl';
+import { readWorkspaceFileDiffOnDemand } from '@/lib/scanHost';
 import { useResizableWidth } from '@/lib/useResizableWidth';
 import {
   displayFileRefPath,
@@ -67,6 +67,7 @@ const MARKDOWN_PREVIEW_EXT = new Set([
 ]);
 
 type TextPreviewMode = 'code' | 'html' | 'markdown';
+type FilePreviewDrawerVariant = 'overlay' | 'embedded';
 
 export interface FilePreviewCustomContent {
   label: string;
@@ -88,6 +89,8 @@ export interface FilePreviewDrawerLayoutDetail {
 const FILE_PREVIEW_DEFAULT_WIDTH = 760;
 const FILE_PREVIEW_MIN_WIDTH = 360;
 const FILE_PREVIEW_MAX_WIDTH = 1280;
+const FILE_PREVIEW_OUTSIDE_POINTER_IGNORE_SELECTOR =
+  '[data-file-preview-ignore-outside-pointer="true"]';
 
 function publishFilePreviewDrawerLayout(
   detail: FilePreviewDrawerLayoutDetail,
@@ -111,6 +114,13 @@ function filePreviewMaxWidth(): number {
 
 function filePreviewDefaultWidth(): number {
   return Math.min(FILE_PREVIEW_DEFAULT_WIDTH, filePreviewMaxWidth());
+}
+
+function shouldIgnoreOutsidePointer(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest(FILE_PREVIEW_OUTSIDE_POINTER_IGNORE_SELECTOR) !== null
+  );
 }
 
 function extensionFromPath(path: string): string {
@@ -420,8 +430,9 @@ export default function FilePreviewDrawer({
   customContent = null,
   cwd,
   previewFile = previewLocalFile,
-  diffEnabled = true,
+  diffEnabled = false,
   canOpenExternally = true,
+  variant = 'overlay',
   onClose,
 }: {
   refData: FileRef | null;
@@ -430,13 +441,16 @@ export default function FilePreviewDrawer({
   previewFile?: typeof previewLocalFile;
   diffEnabled?: boolean;
   canOpenExternally?: boolean;
+  variant?: FilePreviewDrawerVariant;
   onClose: () => void;
 }) {
   const drawerId = useId();
+  const embedded = variant === 'embedded';
   const [state, setState] = useState<PreviewState>({ status: 'idle' });
   const [diffState, setDiffState] = useState<DiffState>({ status: 'idle' });
   const [isExpanded, setIsExpanded] = useState(false);
   const asideRef = useRef<HTMLElement | null>(null);
+  const embeddedPanelRef = useRef<HTMLDivElement | null>(null);
   const { width, onResizeStart } = useResizableWidth({
     storageKey: 'ultragamestudio.filePreviewWidth.v1',
     defaultWidth: filePreviewDefaultWidth(),
@@ -447,6 +461,7 @@ export default function FilePreviewDrawer({
   const open = Boolean(refData || customContent);
 
   useEffect(() => {
+    if (embedded) return;
     publishFilePreviewDrawerLayout({
       id: drawerId,
       open,
@@ -455,10 +470,11 @@ export default function FilePreviewDrawer({
         : 0,
       expanded: open && isExpanded,
     });
-  }, [drawerId, isExpanded, open, width]);
+  }, [drawerId, embedded, isExpanded, open, width]);
 
   useEffect(
     () => () => {
+      if (embedded) return;
       publishFilePreviewDrawerLayout({
         id: drawerId,
         open: false,
@@ -466,8 +482,12 @@ export default function FilePreviewDrawer({
         expanded: false,
       });
     },
-    [drawerId],
+    [drawerId, embedded],
   );
+
+  useEffect(() => {
+    if (embedded && isExpanded) setIsExpanded(false);
+  }, [embedded, isExpanded]);
 
   useEffect(() => {
     if (!refData || customContent) {
@@ -498,7 +518,7 @@ export default function FilePreviewDrawer({
 
     let disposed = false;
     setDiffState({ status: 'loading' });
-    void workspaceFileDiff(cwd, refData.path)
+    void readWorkspaceFileDiffOnDemand({ rootPath: cwd, path: refData.path })
       .then((diff) => {
         if (!disposed) setDiffState({ status: 'ready', diff });
       })
@@ -514,7 +534,7 @@ export default function FilePreviewDrawer({
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (isExpanded) {
+      if (!embedded && isExpanded) {
         setIsExpanded(false);
         return;
       }
@@ -522,15 +542,16 @@ export default function FilePreviewDrawer({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isExpanded, onClose, open]);
+  }, [embedded, isExpanded, onClose, open]);
 
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
+      if (shouldIgnoreOutsidePointer(event.target)) return;
       const target = event.target as Node | null;
       if (!target) return;
-      const aside = asideRef.current;
-      if (aside && aside.contains(target)) return;
+      const panel = embedded ? embeddedPanelRef.current : asideRef.current;
+      if (panel && panel.contains(target)) return;
       onClose();
     };
     // Defer registration so the click that opened the preview doesn't immediately close it.
@@ -541,7 +562,7 @@ export default function FilePreviewDrawer({
       window.clearTimeout(timer);
       document.removeEventListener('pointerdown', onPointerDown, true);
     };
-  }, [onClose, open]);
+  }, [embedded, onClose, open]);
 
   const file = state.status === 'ready' ? state.file : null;
   const imageUrl = useBase64ObjectUrl(
@@ -565,17 +586,9 @@ export default function FilePreviewDrawer({
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 pointer-events-none">
-      <aside
-        ref={asideRef}
-        className={cn(
-          'pointer-events-auto absolute bottom-0 right-0 top-0 flex flex-col bg-panel shadow-2xl',
-          isExpanded ? 'left-0' : 'border-l border-border',
-        )}
-        style={isExpanded ? undefined : { width }}
-      >
-        {!isExpanded && (
+  const panelContent = (
+    <>
+        {!embedded && !isExpanded && (
           <div
             onMouseDown={onResizeStart}
             title="拖动调整预览宽度"
@@ -600,15 +613,17 @@ export default function FilePreviewDrawer({
               {path || customContent?.meta}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setIsExpanded((value) => !value)}
-            title={isExpanded ? '还原预览宽度' : '占满窗口'}
-            aria-label={isExpanded ? '还原预览宽度' : '占满窗口'}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg"
-          >
-            {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          </button>
+          {!embedded && (
+            <button
+              type="button"
+              onClick={() => setIsExpanded((value) => !value)}
+              title={isExpanded ? '还原预览宽度' : '占满窗口'}
+              aria-label={isExpanded ? '还原预览宽度' : '占满窗口'}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg"
+            >
+              {isExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          )}
           {file && canOpenExternally && (
             <button
               type="button"
@@ -755,6 +770,28 @@ export default function FilePreviewDrawer({
             </div>
           </div>
         )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div ref={embeddedPanelRef} className="flex min-h-0 flex-1 flex-col bg-panel">
+        {panelContent}
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 pointer-events-none">
+      <aside
+        ref={asideRef}
+        className={cn(
+          'pointer-events-auto absolute bottom-0 right-0 top-0 flex flex-col bg-panel shadow-2xl',
+          isExpanded ? 'left-0' : 'border-l border-border',
+        )}
+        style={isExpanded ? undefined : { width }}
+      >
+        {panelContent}
       </aside>
     </div>
   );

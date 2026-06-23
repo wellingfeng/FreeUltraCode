@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tauriAvailable } from '@/lib/tauri';
 import AIDock from './AIDock';
+import { MESSAGE_FILE_CHIP_LIMIT } from '@/components/ai/lib/fileChipBudget';
 import { defaultBlueprint } from '@/core/defaultBlueprint';
 import {
   remoteWorkspacePath,
@@ -461,6 +462,79 @@ describe('AIDock pasted clipboard images', () => {
         'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
         { cwd: 'E:\\UltraGameStudio' },
       );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('only renders unsent image paths as composer preview chips', async () => {
+    resetStore();
+    useStore.setState({
+      composerDraft: [
+        'E:\\UltraGameStudio\\app\\src\\App.tsx',
+        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+        'E:\\UltraGameStudio\\notes.txt',
+      ].join('\n'),
+    });
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+      fileName: 'shot.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
+    const view = await renderDock();
+
+    try {
+      const strip = view.container.querySelector(
+        '[data-testid="composer-file-refs"]',
+      );
+      expect(strip).not.toBeNull();
+      expect(
+        strip!.querySelectorAll('.ai-file-chip, .ai-file-chip-thumb'),
+      ).toHaveLength(1);
+      expect(strip!.querySelector('.ai-file-chip-thumb')).not.toBeNull();
+      expect(strip!.textContent).not.toContain('App.tsx');
+      expect(strip!.textContent).not.toContain('notes.txt');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('caps unsent image preview chips in the composer', async () => {
+    resetStore();
+    const B = String.fromCharCode(92);
+    useStore.setState({
+      composerDraft: Array.from(
+        { length: MESSAGE_FILE_CHIP_LIMIT + 3 },
+        (_, i) =>
+          `E:${B}UltraGameStudio${B}.ultragamestudio${B}clipboard-images${B}shot-${i}.png`,
+      ).join('\n'),
+    });
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+      fileName: 'shot.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
+    const view = await renderDock();
+
+    try {
+      const strip = view.container.querySelector(
+        '[data-testid="composer-file-refs"]',
+      );
+      expect(strip).not.toBeNull();
+      expect(strip!.querySelectorAll('.ai-file-chip-thumb')).toHaveLength(
+        MESSAGE_FILE_CHIP_LIMIT,
+      );
+      expect(strip!.querySelectorAll('.ai-file-chip-limit')).toHaveLength(1);
     } finally {
       await view.cleanup();
     }
