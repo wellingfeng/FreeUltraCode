@@ -9,6 +9,7 @@ import {
   isRemoteWorkspacePath,
   loadRemoteWorkspaces,
   parseRemoteProviderId,
+  purgeDefaultRemoteWorkspaces,
   readRemoteRunnerConnection,
   readRemoteRunnerConnectionSecrets,
   readRemoteSecrets,
@@ -166,6 +167,68 @@ describe('remote workspace persistence', () => {
     expect(
       readRemoteRunnerConnectionSecrets({ allowDefault: false }).token,
     ).toBe('old-local-token');
+  });
+});
+
+describe('purgeDefaultRemoteWorkspaces', () => {
+  it('removes ghost workspaces left by the built-in default prefill', () => {
+    const ghost = saveRemoteWorkspace({
+      label: '默认云端',
+      serverUrl: DEFAULT_REMOTE_RUNNER_SERVER_URL,
+      adapter: 'claude',
+    });
+
+    const removed = purgeDefaultRemoteWorkspaces();
+
+    expect(removed).toEqual([ghost.id]);
+    expect(loadRemoteWorkspaces()).toHaveLength(0);
+  });
+
+  it('keeps a workspace the user explicitly configured against the default url', () => {
+    const real = saveRemoteWorkspace(
+      {
+        label: '我配置过的',
+        serverUrl: DEFAULT_REMOTE_RUNNER_SERVER_URL,
+        adapter: 'claude',
+      },
+      { token: 'my-own-token' },
+    );
+
+    const removed = purgeDefaultRemoteWorkspaces();
+
+    expect(removed).toEqual([]);
+    expect(getRemoteWorkspace(real.id)).not.toBeNull();
+  });
+
+  it('does not touch workspaces pointing at a custom server', () => {
+    const custom = saveRemoteWorkspace({
+      label: '自建服务器',
+      serverUrl: 'https://runner.example.com:8787',
+      adapter: 'codex',
+    });
+
+    const removed = purgeDefaultRemoteWorkspaces();
+
+    expect(removed).toEqual([]);
+    expect(getRemoteWorkspace(custom.id)).not.toBeNull();
+  });
+
+  it('leaves everything alone when the user saved a real custom connection', () => {
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.example.com:8787' },
+      { token: 'real-token' },
+    );
+    const ghost = saveRemoteWorkspace({
+      label: '默认云端',
+      serverUrl: DEFAULT_REMOTE_RUNNER_SERVER_URL,
+      adapter: 'claude',
+    });
+
+    const removed = purgeDefaultRemoteWorkspaces();
+
+    // 用户已显式保存非默认连接，视为有意使用云端，不做清理。
+    expect(removed).toEqual([]);
+    expect(getRemoteWorkspace(ghost.id)).not.toBeNull();
   });
 });
 

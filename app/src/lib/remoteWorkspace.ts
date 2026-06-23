@@ -383,6 +383,72 @@ export function deleteRemoteWorkspace(id: string): void {
   removeRemoteWorkspaceProviders(id);
 }
 
+/** True when a serverUrl is the built-in default test runner. */
+function isDefaultRunnerServerUrl(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return (
+    normalizeServerUrl(raw) ===
+    normalizeServerUrl(DEFAULT_REMOTE_RUNNER_SERVER_URL)
+  );
+}
+
+/** Remove the saved global runner connection (localStorage + keychain). */
+function clearRemoteRunnerConnection(): void {
+  if (hasStorage()) {
+    try {
+      window.localStorage.removeItem(REMOTE_RUNNER_CONNECTION_STORAGE_KEY);
+    } catch {
+      /* non-fatal */
+    }
+  }
+  writeSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET, { token: '' });
+}
+
+/**
+ * 清理「内置默认云端 Runner 自动预填」遗留下来的幽灵云端工作区。
+ *
+ * 历史问题：早期「添加云端项目」对话框会预填官方测试 Runner（默认 serverUrl +
+ * 默认共享 Token）。用户即便只是点开看看再保存，也会落下一条指向默认服务器的
+ * 云端工作区，导致本地项目意外显示成云端。
+ *
+ * 判定为「纯预填产物」需同时满足：
+ *   - 工作区 serverUrl 指向内置默认（或本机回环）；
+ *   - 该工作区没有自己保存过的 per-workspace Token；
+ *   - 全局连接要么没保存过，要么本身就是默认共享 Token（即用户从未改过）。
+ *
+ * 满足时删除该工作区配置/密钥/provider，并返回被删的 id 列表，便于上层
+ * 同步清理历史工作区索引中对应的 `remote://` 记录。用户真正配置过（改过 Token）
+ * 的默认 Runner 项目不会被误删。
+ *
+ * @returns 被删除的工作区 id 列表（用于同步清理历史索引）。
+ */
+export function purgeDefaultRemoteWorkspaces(): string[] {
+  const storedToken = readSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET).token ?? '';
+  const storedServerUrl = readStoredRunnerServerUrl();
+  const connectionIsPureDefault =
+    (!storedServerUrl.trim() || isDefaultRunnerServerUrl(storedServerUrl)) &&
+    (!storedToken.trim() || storedToken === DEFAULT_REMOTE_RUNNER_TOKEN);
+  if (!connectionIsPureDefault) return [];
+
+  const removed: string[] = [];
+  for (const workspace of loadRemoteWorkspaces()) {
+    const pointsAtDefault =
+      isDefaultRunnerServerUrl(workspace.serverUrl) ||
+      isLoopbackServerUrl(workspace.serverUrl);
+    if (!pointsAtDefault) continue;
+    const ownToken = readRemoteSecrets(workspace.id).token.trim();
+    if (ownToken && ownToken !== DEFAULT_REMOTE_RUNNER_TOKEN) continue;
+    deleteRemoteWorkspace(workspace.id);
+    removed.push(workspace.id);
+  }
+
+  // 连同纯默认的全局连接一起清掉，避免下次又被解析/预填。
+  if (storedServerUrl.trim() || storedToken.trim()) {
+    clearRemoteRunnerConnection();
+  }
+  return removed;
+}
+
 // ---------- Secrets (keychain) ----------
 
 function secretKey(id: string, field: (typeof SECRET_FIELDS)[number]): string {

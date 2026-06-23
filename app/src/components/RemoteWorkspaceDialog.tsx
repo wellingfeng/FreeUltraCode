@@ -49,9 +49,15 @@ export default function RemoteWorkspaceDialog({
     () => (existing ? readRemoteSecrets(existing.id) : null),
     [existing],
   );
-  const initialConnection = useMemo(() => readRemoteRunnerConnection(), []);
+  // 不预填内置默认云端 Runner：只回填用户显式保存过的连接。
+  // 否则空白「添加云端项目」会带出官方测试 Runner，误导用户保存出一个
+  // 指向默认服务器的云端工作区（本地项目随后被显示成云端的根因）。
+  const initialConnection = useMemo(
+    () => readRemoteRunnerConnection({ allowDefault: false }),
+    [],
+  );
   const initialConnectionSecrets = useMemo(
-    () => readRemoteRunnerConnectionSecrets(),
+    () => readRemoteRunnerConnectionSecrets({ allowDefault: false }),
     [],
   );
 

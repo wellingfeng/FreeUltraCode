@@ -67,6 +67,36 @@ import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
 import { loadComposer } from '@/lib/composerStorage';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { isTauri, prepareIsolatedWorkspace } from '@/lib/tauri';
+import {
+  purgeDefaultRemoteWorkspaces,
+  remoteWorkspacePath,
+} from '@/lib/remoteWorkspace';
+
+/**
+ * 一次性清理「内置默认云端 Runner 自动预填」遗留的幽灵云端工作区。
+ * 同时清掉 localStorage 配置（remoteWorkspace 内部处理）和历史工作区索引里
+ * 对应的 `remote://` 记录，避免本地项目继续被显示成云端。
+ */
+async function purgeGhostRemoteWorkspaces(): Promise<void> {
+  let removedIds: string[] = [];
+  try {
+    removedIds = purgeDefaultRemoteWorkspaces();
+  } catch {
+    return;
+  }
+  if (removedIds.length === 0) return;
+  const removedPaths = new Set(removedIds.map((id) => remoteWorkspacePath(id)));
+  try {
+    const workspaces = await historyStore.listWorkspaces();
+    for (const workspace of workspaces) {
+      if (workspace.path && removedPaths.has(workspace.path)) {
+        await historyStore.deleteWorkspace(workspace.id, false);
+      }
+    }
+  } catch {
+    /* non-fatal: localStorage config already cleared */
+  }
+}
 
 export async function setWorkflowFavoriteHistorySession(
   sessionId: string,
@@ -327,6 +357,7 @@ async function initHistoryFromDisk(): Promise<void> {
   try {
     await historyStore.ready();
     const rootPath = await historyStore.rootPath();
+    await purgeGhostRemoteWorkspaces();
     const config = await historyStore.getConfig();
     let workspaces = await historyStore.listWorkspaces();
 
