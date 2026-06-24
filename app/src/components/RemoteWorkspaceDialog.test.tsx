@@ -86,4 +86,35 @@ describe('RemoteWorkspaceDialog', () => {
     expect(container.textContent).toContain('服务器地址');
     expect(container.textContent).toContain('访问 Token');
   });
+
+  it('drops the project-level default model field', () => {
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test:8787' },
+      { token: 'runner-token' },
+    );
+    const existing = saveRemoteWorkspace({
+      label: '云端游戏项目',
+      serverUrl: 'https://runner.test:8787',
+      projectId: 'proj_game',
+      repoUrl: 'https://github.com/me/game.git',
+      adapter: 'codex',
+    });
+
+    act(() => {
+      root.render(
+        <RemoteWorkspaceDialog
+          locale="zh-CN"
+          existing={existing}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />,
+      );
+    });
+
+    // 模型不再由项目级配置，运行时跟随所选服务器账号。
+    expect(container.textContent).not.toContain('默认模型');
+    // 「默认 Agent」仍在，并给出说明。
+    expect(container.textContent).toContain('默认 Agent');
+    expect(container.textContent).toContain('模型随所选账号自动匹配');
+  });
 });

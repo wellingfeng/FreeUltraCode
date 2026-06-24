@@ -3,7 +3,7 @@ import {
   getRemoteWorkspace,
   isRemoteWorkspacePath,
   remoteWorkspaceIdFromPath,
-  resolveRemoteRunnerConnection,
+  resolveRemoteRunnerConnectionAsync,
 } from '@/lib/remoteWorkspace';
 
 export const REMOTE_WORKSPACE_STATUS_CHECK_INTERVAL_MS = 15_000;
@@ -47,7 +47,7 @@ export async function checkRemoteWorkspaceConnection(
   const config = getRemoteWorkspace(workspaceId);
   if (!config) return state('unconfigured', '云端项目配置不存在。');
 
-  const connection = resolveRemoteRunnerConnection(config);
+  const connection = await resolveRemoteRunnerConnectionAsync(config);
   if (!connection) {
     return state('unconfigured', '云端服务地址或访问 Token 未配置。');
   }

@@ -23,10 +23,12 @@ import {
 import {
   getRemoteWorkspace,
   ensureRemoteWorkspaceProject,
+  isClaudeFamilyModel,
+  isRemoteRunnerProvider,
   notifyRemoteWorkspaceFilesUpdated,
   parseRemoteProviderId,
   readRemoteSecrets,
-  resolveRemoteRunnerConnection,
+  resolveRemoteRunnerConnectionAsync,
   remoteWorkspaceIdFromPath,
   RunnerClient,
   type RemoteJob,
@@ -119,7 +121,43 @@ function remoteProviderAdapter(adapter: unknown): 'claude' | 'codex' | 'gemini' 
   return 'claude';
 }
 
-const CLAUDE_TIER_ALIASES = new Set(['haiku', 'sonnet', 'opus']);
+/** 渠道（适配器）面向用户的显示名。 */
+function adapterDisplayLabel(
+  adapter: 'claude' | 'codex' | 'gemini' | undefined,
+): string {
+  if (adapter === 'codex') return 'Codex';
+  if (adapter === 'gemini') return 'Gemini';
+  return 'Claude Code';
+}
+
+/** 选中远程账号时，取其对应 provider 的显示名（如「腾讯云 · 账号A」）。 */
+function providerDisplayName(
+  providerId: string | null | undefined,
+): string | undefined {
+  const id = providerId?.trim();
+  if (!id) return undefined;
+  return listProviders().find((item) => item.id === id)?.name?.trim() || undefined;
+}
+
+/**
+ * 远程任务信息流头部的路由标签：除「云端项目 · 名称」外，再带上具体渠道、
+ * 选中的模型账号名以及实际使用的模型，让用户清楚云端任务跑在哪个大模型上。
+ */
+export function buildRemoteRouteLabel(args: {
+  config: RemoteWorkspaceConfig | null;
+  adapter: 'claude' | 'codex' | 'gemini' | undefined;
+  providerName?: string;
+  model?: string;
+}): string {
+  const parts: string[] = [
+    args.config ? `云端项目 · ${args.config.label}` : '云端项目',
+    adapterDisplayLabel(args.adapter),
+  ];
+  if (args.providerName) parts.push(args.providerName);
+  const model = args.model?.trim();
+  if (model && model.toLowerCase() !== 'default') parts.push(model);
+  return parts.join(' · ');
+}
 
 function remoteJobModelForAdapter(
   adapter: 'claude' | 'codex' | 'gemini' | undefined,
@@ -127,11 +165,9 @@ function remoteJobModelForAdapter(
 ): string | undefined {
   const trimmed = model?.trim();
   if (!trimmed) return undefined;
-  if (
-    adapter &&
-    adapter !== 'claude' &&
-    CLAUDE_TIER_ALIASES.has(trimmed.toLowerCase())
-  ) {
+  // A non-Claude adapter must never receive a Claude-family model — neither a
+  // bare tier alias (haiku/sonnet/opus) nor a full id like claude-opus-4-8.
+  if (adapter && adapter !== 'claude' && isClaudeFamilyModel(trimmed)) {
     return undefined;
   }
   return trimmed;
@@ -577,18 +613,115 @@ function remoteJobModelForSelection(
   return known ? selected : configModel ?? providerModels[0];
 }
 
+/** 普通编程渠道的 provider.kind → 远程任务 adapter。 */
+function providerKindToRemoteAdapter(
+  kind: unknown,
+): 'claude' | 'codex' | 'gemini' {
+  if (kind === 'codex') return 'codex';
+  if (kind === 'gemini') return 'gemini';
+  return 'claude';
+}
+
+/**
+ * 远程任务的渠道/模型解析。把当前会话选中的渠道归到三类之一：
+ *   1. 绑定本工作区的 `remote-runner:` 服务端执行账号 —— 走 accountId，模型在
+ *      账号自带模型集合内校验。
+ *   2. 普通编程渠道（已随 /user-settings 同步到服务端，key 内联）—— 用该渠道的
+ *      adapter + 选中模型，并把渠道自带的 key/baseUrl 按任务下发（服务端没有对应
+ *      account，必须靠 per-job 凭证才能跑起来）。这是「设置/输入框选的渠道与模型」
+ *      真正生效的路径。
+ *   3. 系统默认 / 免费渠道 / 未选 —— 回退到项目配置的 adapter + model。
+ */
+interface ResolvedRemoteRoute {
+  adapter: 'claude' | 'codex' | 'gemini';
+  model: string | undefined;
+  accountId: string | undefined;
+  providerName: string | undefined;
+  /** 普通同步渠道按任务下发的凭证；账号/默认路径下为 undefined。 */
+  apiKey: string | undefined;
+  baseUrl: string | undefined;
+}
+
+export function resolveRemoteRoute(
+  config: RemoteWorkspaceConfig | null,
+  workspaceId: string,
+  selection: AiEditChannel['gatewaySelection'],
+): ResolvedRemoteRoute {
+  const remote = parseRemoteProviderId(selection?.providerId);
+  const selectedAccountId =
+    remote?.workspaceId === workspaceId ? remote.accountId : undefined;
+  const gatewayModel =
+    selection?.modelOverride?.trim() || selection?.modelClass?.trim();
+
+  // 1) 服务端执行账号。
+  if (selectedAccountId) {
+    const adapter = remoteProviderAdapter(selection?.adapter);
+    return {
+      adapter,
+      model: remoteJobModelForSelection(
+        config,
+        selectedAccountId,
+        selection?.providerId,
+        gatewayModel,
+        adapter,
+      ),
+      accountId: selectedAccountId,
+      providerName: providerDisplayName(selection?.providerId),
+      apiKey: undefined,
+      baseUrl: undefined,
+    };
+  }
+
+  // 2) 普通编程渠道（同步到服务端，key 内联）。
+  const provider = selection?.providerId
+    ? listProviders().find((item) => item.id === selection.providerId)
+    : undefined;
+  if (provider && !isRemoteRunnerProvider(provider)) {
+    const adapter = providerKindToRemoteAdapter(provider.kind);
+    const selected = remoteJobModelForAdapter(adapter, gatewayModel);
+    const fallback = remoteJobModelForAdapter(adapter, provider.model);
+    const apiKey = provider.apiKey.trim();
+    const baseUrl = provider.baseUrl.trim();
+    return {
+      adapter,
+      model:
+        selected ?? fallback ?? remoteJobModelForAdapter(adapter, config?.model),
+      accountId: undefined,
+      providerName: provider.name.trim() || undefined,
+      apiKey: apiKey && apiKey !== 'remote-runner' ? apiKey : undefined,
+      baseUrl: baseUrl || undefined,
+    };
+  }
+
+  // 3) 系统默认 / 免费渠道 / 未选 —— 回退项目配置。
+  const adapter = remoteProviderAdapter(config?.adapter);
+  return {
+    adapter,
+    model: remoteJobModelForAdapter(adapter, config?.model),
+    accountId: undefined,
+    providerName: undefined,
+    apiKey: undefined,
+    baseUrl: undefined,
+  };
+}
+
 export function startRemoteChatTurn(options: StartRemoteChatTurnOptions): void {
   const workspaceId = remoteWorkspaceIdFromPath(options.workspacePath);
   let config = getRemoteWorkspace(workspaceId);
   const secrets = readRemoteSecrets(workspaceId);
-  const remoteProvider = parseRemoteProviderId(options.ch.gatewaySelection?.providerId);
-  const selectedAccountId =
-    remoteProvider?.workspaceId === workspaceId ? remoteProvider.accountId : undefined;
-  const gatewayModel =
-    options.ch.gatewaySelection?.modelOverride?.trim()
-    || options.ch.gatewaySelection?.modelClass?.trim();
   const startedAt = Date.now();
-  const routeLabel = config ? `云端项目 · ${config.label}` : '云端项目';
+  // 信息流头部先按当前选择估算渠道/模型；真正提交任务后再用解析出的模型刷新。
+  const initialRoute = resolveRemoteRoute(
+    config,
+    workspaceId,
+    options.ch.gatewaySelection,
+  );
+  let routeLabel = buildRemoteRouteLabel({
+    config,
+    adapter: initialRoute.adapter,
+    providerName: initialRoute.providerName,
+    model: initialRoute.model,
+  });
   const messageId = shortId('m');
   let currentStatus: RemoteJobStatus = 'queued';
   let logText = '';
@@ -711,33 +844,39 @@ export function startRemoteChatTurn(options: StartRemoteChatTurnOptions): void {
 
   void (async () => {
     if (!config) throw new Error('云端项目不存在。');
-    const connection = resolveRemoteRunnerConnection(config);
+    const connection = await resolveRemoteRunnerConnectionAsync(config);
     if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
     const client = new RunnerClient(connection.serverUrl, connection.token);
     if (config.projectId || config.repoUrl) {
       config = await ensureRemoteWorkspaceProject(config, client);
     }
-    const jobAdapter = selectedAccountId
-      ? remoteProviderAdapter(options.ch.gatewaySelection?.adapter)
-      : config.adapter;
-    const selectedModel = remoteJobModelForSelection(
+    // config 可能在上面被 ensureRemoteWorkspaceProject 补全过，按最新 config 重解。
+    const route = resolveRemoteRoute(
       config,
-      selectedAccountId,
-      options.ch.gatewaySelection?.providerId,
-      gatewayModel,
-      jobAdapter,
+      workspaceId,
+      options.ch.gatewaySelection,
     );
+    // 用最终解析出的渠道/模型刷新头部路由标签。
+    routeLabel = buildRemoteRouteLabel({
+      config,
+      adapter: route.adapter,
+      providerName: route.providerName,
+      model: route.model,
+    });
     const job = await client.createJob({
       prompt: buildRemotePrompt(options),
       projectId: config.projectId,
       repoUrl: config.projectId ? undefined : config.repoUrl,
       branch: config.branch,
-      adapter: jobAdapter,
-      model: selectedModel === 'default' ? undefined : selectedModel,
+      adapter: route.adapter,
+      model: route.model === 'default' ? undefined : route.model,
       pushBranch: config.pushBranch,
-      accountId: selectedAccountId,
-      apiKey: config.useOwnModelKey ? secrets.apiKey : undefined,
-      baseUrl: config.useOwnModelKey ? secrets.baseUrl : undefined,
+      accountId: route.accountId,
+      // 普通同步渠道：用渠道自带的 key/baseUrl 按任务下发（服务端无对应 account）。
+      // 否则沿用项目「使用自己的模型 Key」设置。
+      apiKey: route.apiKey ?? (config.useOwnModelKey ? secrets.apiKey : undefined),
+      baseUrl:
+        route.baseUrl ?? (config.useOwnModelKey ? secrets.baseUrl : undefined),
       gitToken: config.projectId ? undefined : secrets.gitToken,
     });
     currentStatus = job.status;

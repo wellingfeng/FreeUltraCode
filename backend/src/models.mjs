@@ -14,6 +14,19 @@
 
 /** @typedef {{adapter:string, model?:string, prompt:string, apiKey?:string, baseUrl?:string, accountApiKey?:string, accountBaseUrl?:string}} JobModelSpec */
 
+/**
+ * Codex sandbox mode, read from UGS_RUNNER_CODEX_SANDBOX at call time so a test
+ * or operator can flip it without re-importing the module.
+ *
+ *   "workspace-write" (default) — codex confines writes to its workspace.
+ *   "bypass"                    — DANGEROUS: disables sandbox + approvals.
+ *                                 Single-tenant / self-host only.
+ */
+export function codexSandboxMode() {
+  const raw = String(process.env.UGS_RUNNER_CODEX_SANDBOX ?? '').trim().toLowerCase();
+  return raw === 'bypass' ? 'bypass' : 'workspace-write';
+}
+
 const ADAPTERS = {
   claude: {
     command: 'claude',
@@ -30,17 +43,21 @@ const ADAPTERS = {
     command: 'codex',
     keyEnv: 'OPENAI_API_KEY',
     baseUrlEnv: 'OPENAI_BASE_URL',
-    enforcesWorkspaceBoundary: true,
+    // Codex enforces a workspace boundary only when its own sandbox is active.
+    // In bypass mode the sandbox is off, so we must NOT claim a boundary — that
+    // keeps the runner's project-job boundary gate (runner.mjs) honest and will
+    // refuse to run an unbounded codex against a multi-tenant project workspace.
+    enforcesWorkspaceBoundary: () => codexSandboxMode() !== 'bypass',
     buildArgs: (spec) => {
-      const args = [
-        'exec',
-        '--json',
-        '--skip-git-repo-check',
-        '-c',
-        'approval_policy="never"',
-        '--sandbox',
-        'workspace-write',
-      ];
+      const args = ['exec', '--json', '--skip-git-repo-check'];
+      if (codexSandboxMode() === 'bypass') {
+        // DANGEROUS: no sandbox, no approval prompts. Single-tenant/self-host
+        // only — opt in explicitly via UGS_RUNNER_CODEX_SANDBOX=bypass.
+        args.push('--dangerously-bypass-approvals-and-sandbox');
+      } else {
+        // Default: confine writes to the workspace and never prompt.
+        args.push('-c', 'approval_policy="never"', '--sandbox', 'workspace-write');
+      }
       if (spec.model) args.push('--model', spec.model);
       args.push('-');
       return args;
@@ -86,11 +103,18 @@ export function resolveInvocation(spec) {
   if (key) env[adapter.keyEnv] = key;
   if (baseUrl) env[adapter.baseUrlEnv] = baseUrl;
 
+  // enforcesWorkspaceBoundary may be a static flag or a function (e.g. codex,
+  // whose boundary depends on the configured sandbox mode).
+  const boundary =
+    typeof adapter.enforcesWorkspaceBoundary === 'function'
+      ? adapter.enforcesWorkspaceBoundary()
+      : adapter.enforcesWorkspaceBoundary === true;
+
   return {
     command: adapter.command,
     args: adapter.buildArgs(spec),
     env,
     missingKey: !key,
-    enforcesWorkspaceBoundary: adapter.enforcesWorkspaceBoundary === true,
+    enforcesWorkspaceBoundary: boundary === true,
   };
 }

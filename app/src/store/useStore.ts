@@ -292,6 +292,7 @@ import {
   getRemoteWorkspace,
   isRemoteWorkspacePath,
   parseRemoteProviderId,
+  remoteModelForAdapter,
   remoteRunnerProviderMatchesWorkspace,
   remoteWorkspaceIdFromPath,
 } from '@/lib/remoteWorkspace';
@@ -727,21 +728,11 @@ function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapte
   return 'claude-code';
 }
 
-const REMOTE_CLAUDE_TIER_ALIASES = new Set(['haiku', 'sonnet', 'opus']);
-
 function remoteWorkspaceModelForAdapter(
   adapter: GatewaySelection['adapter'],
   model: string | null | undefined,
 ): string | undefined {
-  const trimmed = model?.trim();
-  if (!trimmed) return undefined;
-  if (
-    adapter !== 'claude-code' &&
-    REMOTE_CLAUDE_TIER_ALIASES.has(trimmed.toLowerCase())
-  ) {
-    return undefined;
-  }
-  return trimmed;
+  return remoteModelForAdapter(adapter === 'claude-code', model);
 }
 
 function remoteWorkspaceGatewaySelection(
@@ -797,18 +788,26 @@ function remoteWorkspaceGatewaySelection(
   const remoteProviders = listProviders().filter((provider) =>
     remoteRunnerProviderMatchesWorkspace(provider, workspaceId),
   );
-  const provider =
-    remoteProviders.find(
-      (item) => runtimeAdapterFromProviderKind(item.kind) === configAdapter,
-    ) ?? remoteProviders[0];
+  // Bind only to an account that matches the project's configured agent. When
+  // no such account exists on the runner, fall through to that agent's system
+  // default rather than hijacking to a mismatched account (e.g. a Codex account
+  // when the project is configured for Claude).
+  const provider = remoteProviders.find(
+    (item) => runtimeAdapterFromProviderKind(item.kind) === configAdapter,
+  );
   if (provider) {
     const adapter = runtimeAdapterFromProviderKind(provider.kind);
+    // Re-derive the project model against the bound account's adapter family so
+    // a Claude-family default (e.g. claude-opus-4-8) never lands on Codex/Gemini.
+    const adapterConfigModel = remoteWorkspaceModelForAdapter(adapter, config.model);
     const model =
-      configModel || remoteWorkspaceModelForAdapter(adapter, provider.model) || 'default';
+      adapterConfigModel ||
+      remoteWorkspaceModelForAdapter(adapter, provider.model) ||
+      'default';
     return normalizeGatewaySelection({
       adapter,
       modelClass: model,
-      ...(configModel ? { modelOverride: configModel } : {}),
+      ...(adapterConfigModel ? { modelOverride: adapterConfigModel } : {}),
       providerId: provider.id,
       channelId: 'default',
     });

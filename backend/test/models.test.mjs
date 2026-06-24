@@ -21,18 +21,47 @@ test('client-supplied key overrides server env', () => {
 
 test('falls back to server env when client omits a key', () => {
   process.env.OPENAI_API_KEY = 'srv';
+  delete process.env.UGS_RUNNER_CODEX_SANDBOX;
   const inv = resolveInvocation({ adapter: 'codex', prompt: 'hi', model: 'gpt' });
   assert.equal(inv.env.OPENAI_API_KEY, 'srv');
+  // Default codex runs inside its workspace sandbox (safe for multi-tenant).
   assert.deepEqual(inv.args, [
     'exec',
     '--json',
     '--skip-git-repo-check',
-    '--dangerously-bypass-approvals-and-sandbox',
+    '-c',
+    'approval_policy="never"',
+    '--sandbox',
+    'workspace-write',
     '--model',
     'gpt',
     '-',
   ]);
+  // Sandbox active => codex enforces a workspace boundary.
+  assert.equal(inv.enforcesWorkspaceBoundary, true);
   delete process.env.OPENAI_API_KEY;
+});
+
+test('codex bypass mode disables sandbox and drops the boundary claim', () => {
+  process.env.OPENAI_API_KEY = 'srv';
+  process.env.UGS_RUNNER_CODEX_SANDBOX = 'bypass';
+  try {
+    const inv = resolveInvocation({ adapter: 'codex', prompt: 'hi', model: 'gpt' });
+    assert.deepEqual(inv.args, [
+      'exec',
+      '--json',
+      '--skip-git-repo-check',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--model',
+      'gpt',
+      '-',
+    ]);
+    // No sandbox => no honest boundary; the runner's project gate must refuse it.
+    assert.equal(inv.enforcesWorkspaceBoundary, false);
+  } finally {
+    delete process.env.UGS_RUNNER_CODEX_SANDBOX;
+    delete process.env.OPENAI_API_KEY;
+  }
 });
 
 test('account key is used between client key and server env', () => {

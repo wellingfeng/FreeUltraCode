@@ -15,5 +15,13 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
+    "nodemailer": "^9.0.1",
+    "tencentcloud-sdk-nodejs-ses": "^4.1.247"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

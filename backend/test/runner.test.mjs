@@ -96,8 +96,77 @@ test('completed jobs write runtime and token ledger entries', async () => {
   }
 });
 
-test('project jobs use server-owned project workspace directory', async () => {
+test('project job with a non-sandboxing adapter is rejected under process isolation', async () => {
   const ctx = await makeRunner();
+  try {
+    ctx.store.upsertProject({
+      id: 'proj_claude',
+      userId: 'default',
+      label: 'Game',
+      repoUrl: null,
+      branch: 'main',
+      adapter: 'claude',
+      model: null,
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    let spawned = false;
+    ctx.runner._spawn = async () => {
+      spawned = true;
+      return { code: 0, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0, calls: 0 } };
+    };
+    const job = ctx.runner.enqueue({
+      projectId: 'proj_claude',
+      prompt: 'hi',
+      adapter: 'claude',
+      isolationLevel: 'process',
+    });
+    await waitForStatus(ctx.runner, job.id, 'error');
+    const stored = ctx.store.getJob(job.id);
+    assert.equal(stored.error, 'adapter does not enforce workspace boundary: claude');
+    assert.equal(spawned, false);
+  } finally {
+    await cleanup(ctx);
+  }
+});
+
+test('container isolation satisfies the workspace boundary for a non-sandboxing adapter', async () => {
+  const ctx = await makeRunner();
+  try {
+    ctx.store.upsertProject({
+      id: 'proj_claude_c',
+      userId: 'default',
+      label: 'Game',
+      repoUrl: null,
+      branch: 'main',
+      adapter: 'claude',
+      model: null,
+      isolationLevel: 'container',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    let spawned = false;
+    ctx.runner._spawn = async () => {
+      spawned = true;
+      return { code: 0, usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0, calls: 0 } };
+    };
+    const job = ctx.runner.enqueue({
+      projectId: 'proj_claude_c',
+      prompt: 'hi',
+      adapter: 'claude',
+      isolationLevel: 'container',
+    });
+    await waitForStatus(ctx.runner, job.id, 'done');
+    const stored = ctx.store.getJob(job.id);
+    assert.equal(stored.status, 'done');
+    assert.equal(stored.isolationLevel, 'container');
+    assert.equal(spawned, true);
+  } finally {
+    await cleanup(ctx);
+  }
+});
+
+test('project jobs use server-owned project workspace directory', async () => {  const ctx = await makeRunner();
   try {
     ctx.store.upsertProject({
       id: 'proj_game',

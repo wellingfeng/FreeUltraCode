@@ -23,6 +23,7 @@ import {
   saveUiDesignChannelSettings,
 } from "@/lib/uiDesignChannels";
 import {
+  REMOTE_WORKSPACE_SKILLS_STORAGE_KEY,
   remoteWorkspacePath,
   saveRemoteWorkspace,
 } from "@/lib/remoteWorkspace";
@@ -1737,6 +1738,20 @@ describe("AIDock slash suggestions", () => {
       model: "gpt-remote",
       useOwnModelKey: false,
     });
+    // Remote projects surface the *remote* project's synced skill catalog from
+    // the per-project cache, not the local machine scan. Seed the cache so the
+    // `/` menu has the remote CLI status commands to scope by adapter.
+    window.localStorage.setItem(
+      REMOTE_WORKSPACE_SKILLS_STORAGE_KEY,
+      JSON.stringify({
+        rw_slash_codex: {
+          scannedAtMs: Date.now(),
+          entries: slashCatalogMock.entries.filter((entry) =>
+            entry.name === "/status",
+          ),
+        },
+      }),
+    );
     useStore.setState((state) => ({
       composer: {
         ...state.composer,

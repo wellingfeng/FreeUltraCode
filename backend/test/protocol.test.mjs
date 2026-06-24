@@ -18,6 +18,8 @@ import {
 
 test('protocol route constants and matchers stay symmetric', () => {
   assert.equal(remoteRunnerApiUrl('https://runner.test/', REMOTE_RUNNER_API_PATHS.health), 'https://runner.test/health');
+  assert.equal(REMOTE_RUNNER_API_PATHS.authLogin, '/auth/login');
+  assert.equal(REMOTE_RUNNER_API_PATHS.authVerifyEmail, '/auth/verify-email');
   assert.equal(matchRemoteRunnerProjectPath('/projects/proj%201'), 'proj 1');
   assert.equal(matchRemoteRunnerProjectFilesPath('/projects/proj%201/files'), 'proj 1');
   assert.equal(
@@ -58,6 +60,51 @@ test('RunnerClient uses shared route constants', async () => {
   try {
     await new RunnerClient('https://runner.test/', 'tok').jobs();
     assert.deepEqual(calls, [{ url: 'https://runner.test/jobs', method: 'GET' }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('RunnerClient auth helpers use shared route constants', async () => {
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? 'GET',
+      body: init?.body ? JSON.parse(String(init.body)) : null,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        session: {
+          accessToken: 'access',
+          refreshToken: 'refresh',
+          user: {
+            id: 'usr_1',
+            email: 'a@example.com',
+            emailVerified: true,
+            status: 'active',
+            createdAt: 1,
+          },
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+  try {
+    const session = await new RunnerClient('https://runner.test/', '').login({
+      email: 'a@example.com',
+      password: 'password123',
+    });
+    assert.equal(session.user.id, 'usr_1');
+    assert.deepEqual(calls, [
+      {
+        url: 'https://runner.test/auth/login',
+        method: 'POST',
+        body: { email: 'a@example.com', password: 'password123' },
+      },
+    ]);
   } finally {
     globalThis.fetch = previousFetch;
   }

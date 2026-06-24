@@ -3639,6 +3639,10 @@ export default function ProjectSettingsModal({
       const stepById = new Map(
         (envInstallResult?.steps ?? []).map((step) => [step.id, step]),
       );
+      // The package-index refresh (apt-get update) runs as a synthetic
+      // "_refresh" step. When it fails it is the real cause of a later
+      // "exit code 100", so surface it instead of silently dropping it.
+      const refreshStep = envInstallResult?.steps?.find((s) => s.id === '_refresh');
       const noPackageManager =
         envReport != null && !envReport.packageManager;
       return (
@@ -3742,6 +3746,21 @@ export default function ProjectSettingsModal({
               </div>
             ) : null}
 
+            {refreshStep && !refreshStep.ok ? (
+              <details className="mt-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200" open>
+                <summary className="cursor-pointer font-semibold">
+                  {locale === 'zh-CN'
+                    ? `软件源刷新失败（apt-get update）${refreshStep.error ? `：${refreshStep.error}` : ''}。安装包失败（exit code 100）通常源于此。`
+                    : `Package index refresh failed (apt-get update)${refreshStep.error ? `: ${refreshStep.error}` : ''}. This usually causes the later install "exit code 100".`}
+                </summary>
+                {refreshStep.log ? (
+                  <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[10px] leading-relaxed text-amber-100/90">
+                    {refreshStep.log}
+                  </pre>
+                ) : null}
+              </details>
+            ) : null}
+
             <ul className="mt-3 grid gap-2">
               {tools.map((item) => {
                 const step = stepById.get(item.id);
@@ -3773,6 +3792,11 @@ export default function ProjectSettingsModal({
                           {item.version}
                         </span>
                       ) : null}
+                      {item.required === false ? (
+                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-300">
+                          {locale === 'zh-CN' ? '可选 · AI 代理' : 'Optional · AI agent'}
+                        </span>
+                      ) : null}
                       {!item.installed && item.installable ? (
                         <button
                           type="button"
@@ -3799,13 +3823,29 @@ export default function ProjectSettingsModal({
                             : 'border-red-500/30 bg-red-500/5 text-red-300',
                         )}
                       >
-                        {step.ok
-                          ? locale === 'zh-CN'
-                            ? '安装成功'
-                            : 'Install succeeded'
-                          : `${locale === 'zh-CN' ? '安装失败' : 'Install failed'}${
+                        {step.ok ? (
+                          locale === 'zh-CN' ? (
+                            '安装成功'
+                          ) : (
+                            'Install succeeded'
+                          )
+                        ) : (
+                          <>
+                            {`${locale === 'zh-CN' ? '安装失败' : 'Install failed'}${
                               step.error ? `：${step.error}` : ''
                             }`}
+                            {step.log ? (
+                              <details className="mt-1">
+                                <summary className="cursor-pointer text-red-200/80">
+                                  {locale === 'zh-CN' ? '查看安装日志' : 'View install log'}
+                                </summary>
+                                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[10px] leading-relaxed text-red-100/90">
+                                  {step.log}
+                                </pre>
+                              </details>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                     ) : null}
                   </li>

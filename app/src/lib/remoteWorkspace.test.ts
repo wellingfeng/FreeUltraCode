@@ -6,6 +6,7 @@ import {
   RunnerClient,
   deleteRemoteWorkspace,
   getRemoteWorkspace,
+  isClaudeFamilyModel,
   isRemoteWorkspacePath,
   loadRemoteWorkspaces,
   parseRemoteProviderId,
@@ -14,6 +15,11 @@ import {
   readRemoteRunnerConnectionSecrets,
   readRemoteSecrets,
   refreshRemoteWorkspaceAccounts,
+  refreshRemoteWorkspaceSkills,
+  saveRemoteRunnerAuthSession,
+  getCachedRemoteWorkspaceSkills,
+  clearCachedRemoteWorkspaceSkills,
+  remoteModelForAdapter,
   remoteProviderId,
   remoteWorkspaceIdFromPath,
   remoteWorkspacePath,
@@ -59,6 +65,35 @@ describe('remote workspace path helpers', () => {
       accountId: 'codex/main',
     });
     expect(parseRemoteProviderId('p_local')).toBeNull();
+  });
+});
+
+describe('Claude-family model guard', () => {
+  it('recognizes bare tier aliases and claude-prefixed ids', () => {
+    expect(isClaudeFamilyModel('opus')).toBe(true);
+    expect(isClaudeFamilyModel('Sonnet')).toBe(true);
+    expect(isClaudeFamilyModel('claude-opus-4-8')).toBe(true);
+    expect(isClaudeFamilyModel('CLAUDE-3-5-haiku')).toBe(true);
+  });
+
+  it('treats non-Claude model ids as not Claude-family', () => {
+    expect(isClaudeFamilyModel('gpt-5.1')).toBe(false);
+    expect(isClaudeFamilyModel('gemini-2.0')).toBe(false);
+    expect(isClaudeFamilyModel('')).toBe(false);
+    expect(isClaudeFamilyModel(null)).toBe(false);
+  });
+
+  it('drops Claude-family models for non-Claude adapters', () => {
+    // A Claude-family project default must not leak onto a Codex/Gemini account.
+    expect(remoteModelForAdapter(false, 'claude-opus-4-8')).toBeUndefined();
+    expect(remoteModelForAdapter(false, 'opus')).toBeUndefined();
+    // Non-Claude models pass through for non-Claude adapters.
+    expect(remoteModelForAdapter(false, 'gpt-5.1')).toBe('gpt-5.1');
+    // Claude adapters keep Claude-family models.
+    expect(remoteModelForAdapter(true, 'claude-opus-4-8')).toBe('claude-opus-4-8');
+    expect(remoteModelForAdapter(true, 'opus')).toBe('opus');
+    // Empty input always yields undefined.
+    expect(remoteModelForAdapter(false, '  ')).toBeUndefined();
   });
 });
 
@@ -136,6 +171,32 @@ describe('remote workspace persistence', () => {
       'ultragamestudio.remoteWorkspaces.v1',
     );
     expect(rawProjects).not.toContain('runner-token');
+  });
+
+  it('stores email auth access and refresh tokens for the cloud service connection', () => {
+    saveRemoteRunnerAuthSession(
+      { serverUrl: 'https://runner.test:8787/' },
+      {
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: {
+          id: 'usr_1',
+          email: 'a@example.com',
+          emailVerified: true,
+          status: 'active',
+          createdAt: 1,
+        },
+      },
+    );
+
+    expect(readRemoteRunnerConnection()?.serverUrl).toBe(
+      'https://runner.test:8787',
+    );
+    expect(readRemoteRunnerConnectionSecrets({ allowDefault: false })).toMatchObject({
+      token: 'access-token',
+      refreshToken: 'refresh-token',
+      userEmail: 'a@example.com',
+    });
   });
 
   it('falls back to the built-in default when nothing is saved', () => {
@@ -772,5 +833,89 @@ describe('remote workspace account sync', () => {
     await refreshRemoteWorkspaceAccounts(ws);
 
     expect(listProviders()[0].id).toBe(remoteProviderId(ws.id, 'codex-main'));
+  });
+});
+
+describe('remote workspace skill catalog cache', () => {
+  it('fetches the remote project skill catalog and caches it per workspace', async () => {
+    const ws = saveRemoteWorkspace(
+      {
+        label: '远程测试',
+        serverUrl: 'https://s.test:8787',
+        projectId: 'proj_skills',
+        adapter: 'codex',
+      },
+      { token: 'tok' },
+    );
+    const entries = [
+      {
+        id: 'skill:remote:level-builder:skills/level-builder',
+        kind: 'skill' as const,
+        name: '/level-builder',
+        label: { 'zh-CN': 'Level Builder', 'en-US': 'Level Builder' },
+        detail: { 'zh-CN': '生成关卡', 'en-US': 'Generate levels' },
+        insertText: { 'zh-CN': '按 /level-builder', 'en-US': 'Use /level-builder' },
+        source: 'skills/level-builder',
+        sourceAdapter: null,
+      },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            skills: { scannedAtMs: 123, ready: true, entries },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+
+    const result = await refreshRemoteWorkspaceSkills(ws);
+    expect(result).toEqual(entries);
+    expect(getCachedRemoteWorkspaceSkills(ws.id)).toEqual(entries);
+  });
+
+  it('leaves the cache untouched and returns [] when the fetch fails', async () => {
+    const ws = saveRemoteWorkspace(
+      {
+        label: '远程测试',
+        serverUrl: 'https://s.test:8787',
+        projectId: 'proj_skills',
+        adapter: 'codex',
+      },
+      { token: 'tok' },
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: false, error: 'boom' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+
+    const result = await refreshRemoteWorkspaceSkills(ws);
+    expect(result).toEqual([]);
+    expect(getCachedRemoteWorkspaceSkills(ws.id)).toEqual([]);
+  });
+
+  it('clears a workspace skill cache and on delete', () => {
+    const ws = saveRemoteWorkspace({
+      label: '远程测试',
+      serverUrl: 'https://s.test:8787',
+      adapter: 'codex',
+    });
+    window.localStorage.setItem(
+      'ultragamestudio.remoteWorkspaceSkills.v1',
+      JSON.stringify({
+        [ws.id]: { scannedAtMs: 1, entries: [{ id: 'x' }] },
+      }),
+    );
+    expect(getCachedRemoteWorkspaceSkills(ws.id)).toHaveLength(1);
+    clearCachedRemoteWorkspaceSkills(ws.id);
+    expect(getCachedRemoteWorkspaceSkills(ws.id)).toEqual([]);
   });
 });

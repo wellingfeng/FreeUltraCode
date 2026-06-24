@@ -43,11 +43,15 @@ import type {
   RemoteEnvironmentInstallInput,
   RemoteEnvironmentInstallResult,
   RemoteEnvironmentReport,
+  RemoteRunnerAuthSession,
+  RemoteRunnerAuthUser,
   RemoteRunnerFileUpload,
   RemoteRunnerFileUploadInput,
   RemoteRunnerFilePreview,
   RemoteRunnerAccount,
   RemoteRunnerProject,
+  RemoteSkillCatalogEntry,
+  RemoteSkillCatalogSnapshot,
   WorkspaceDirectoryListing,
   WorkspaceTreeEntry,
 } from '@ugs/protocol';
@@ -77,12 +81,16 @@ export type {
   RemoteRunnerProjectInput,
   RemoteRunnerUsage,
   RemoteRunnerUsageTotals,
+  RemoteSkillCatalogEntry,
+  RemoteSkillCatalogSnapshot,
   RunnerHealth,
   WorkspaceDirectoryListing,
   WorkspaceTreeEntry,
 } from '@ugs/protocol';
 
 export const REMOTE_WORKSPACE_STORAGE_KEY = 'ultragamestudio.remoteWorkspaces.v1';
+export const REMOTE_WORKSPACE_SKILLS_STORAGE_KEY =
+  'ultragamestudio.remoteWorkspaceSkills.v1';
 export const REMOTE_RUNNER_CONNECTION_STORAGE_KEY =
   'ultragamestudio.remoteRunnerConnection.v1';
 /**
@@ -144,11 +152,14 @@ export interface RemoteRunnerConnection {
 
 export interface RemoteRunnerConnectionSecrets {
   token: string;
+  refreshToken?: string;
+  userEmail?: string;
 }
 
 export interface ResolvedRemoteRunnerConnection {
   serverUrl: string;
   token: string;
+  userEmail?: string;
   source: 'global' | 'workspace';
 }
 
@@ -255,6 +266,36 @@ export function remoteRunnerProviderMatchesWorkspace(
 ): boolean {
   const remote = parseRemoteProviderId(provider.id);
   return !!remote && remote.workspaceId === remoteWorkspaceId;
+}
+
+/** Bare Claude tier aliases the runner only accepts on the Claude adapter. */
+const CLAUDE_TIER_ALIASES = new Set(['haiku', 'sonnet', 'opus']);
+
+/**
+ * True when `model` is a Claude-family model id — bare tier aliases
+ * (`haiku`/`sonnet`/`opus`) or any `claude*` id (e.g. `claude-opus-4-8`).
+ * Used to keep Claude-family models from leaking onto Codex/Gemini accounts.
+ */
+export function isClaudeFamilyModel(model: string | null | undefined): boolean {
+  const trimmed = model?.trim().toLowerCase();
+  if (!trimmed) return false;
+  return trimmed.startsWith('claude') || CLAUDE_TIER_ALIASES.has(trimmed);
+}
+
+/**
+ * Normalize a model id for a remote adapter: a non-Claude adapter (Codex/Gemini)
+ * must never receive a Claude-family model. Returns `undefined` so callers fall
+ * back to the account's own default model instead of forwarding a model the
+ * adapter can't run.
+ */
+export function remoteModelForAdapter(
+  isClaudeAdapter: boolean,
+  model: string | null | undefined,
+): string | undefined {
+  const trimmed = model?.trim();
+  if (!trimmed) return undefined;
+  if (!isClaudeAdapter && isClaudeFamilyModel(trimmed)) return undefined;
+  return trimmed;
 }
 
 function hasStorage(): boolean {
@@ -390,6 +431,7 @@ export function deleteRemoteWorkspace(id: string): void {
   persistAll(loadRemoteWorkspaces().filter((w) => w.id !== id));
   clearRemoteSecrets(id);
   removeRemoteWorkspaceProviders(id);
+  clearCachedRemoteWorkspaceSkills(id);
 }
 
 /** True when a serverUrl is the built-in default test runner. */
@@ -538,10 +580,16 @@ export function readRemoteRunnerConnectionSecrets(
   const allowDefault = opts.allowDefault !== false;
   const record = readSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET);
   // 若保存的连接指向回环地址，则连同其 Token 一起视为过期，回退到内置默认 Token。
-  const storedIsStale = allowDefault && isLoopbackServerUrl(readStoredRunnerServerUrl());
+  const storedServerUrl = readStoredRunnerServerUrl();
+  const storedIsStale =
+    allowDefault && storedServerUrl.trim() && isLoopbackServerUrl(storedServerUrl);
   const storedToken = storedIsStale ? '' : record.token;
   const token = storedToken || (allowDefault ? DEFAULT_REMOTE_RUNNER_TOKEN : '');
-  return { token };
+  return {
+    token,
+    refreshToken: storedIsStale ? '' : record.refreshToken,
+    userEmail: storedIsStale ? '' : record.userEmail,
+  };
 }
 
 export function saveRemoteRunnerConnection(
@@ -564,8 +612,47 @@ export function saveRemoteRunnerConnection(
   }
   writeSecureRecord(REMOTE_RUNNER_CONNECTION_SECRET, {
     token: secrets.token ?? '',
+    refreshToken: secrets.refreshToken ?? '',
+    userEmail: secrets.userEmail ?? '',
   });
   return connection;
+}
+
+export function saveRemoteRunnerAuthSession(
+  input: { serverUrl: string },
+  session: RemoteRunnerAuthSession,
+): RemoteRunnerConnection {
+  return saveRemoteRunnerConnection(input, {
+    token: session.accessToken,
+    refreshToken: session.refreshToken,
+    userEmail: session.user.email,
+  });
+}
+
+export async function refreshRemoteRunnerAuthSession(
+  serverUrl: string,
+): Promise<RemoteRunnerAuthSession | null> {
+  const secrets = readRemoteRunnerConnectionSecrets({ allowDefault: false });
+  if (!secrets.refreshToken) return null;
+  try {
+    const client = new RunnerClient(serverUrl, secrets.token);
+    const session = await client.refresh({ refreshToken: secrets.refreshToken });
+    saveRemoteRunnerAuthSession({ serverUrl }, session);
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+export async function getRemoteRunnerAuthUser(
+  serverUrl: string,
+  token: string,
+): Promise<RemoteRunnerAuthUser | null> {
+  try {
+    return await new RunnerClient(serverUrl, token).me();
+  } catch {
+    return null;
+  }
 }
 
 export function resolveRemoteRunnerConnection(
@@ -573,11 +660,13 @@ export function resolveRemoteRunnerConnection(
 ): ResolvedRemoteRunnerConnection | null {
   // 仅认用户显式保存的连接（不含内置默认），避免纯本地用户被误导向默认服务器发请求。
   const global = readRemoteRunnerConnection({ allowDefault: false });
-  const globalToken = readRemoteRunnerConnectionSecrets({ allowDefault: false }).token;
+  const globalSecrets = readRemoteRunnerConnectionSecrets({ allowDefault: false });
+  const globalToken = globalSecrets.token;
   if (global?.serverUrl && globalToken) {
     return {
       serverUrl: global.serverUrl,
       token: globalToken,
+      userEmail: globalSecrets.userEmail,
       source: 'global',
     };
   }
@@ -592,6 +681,23 @@ export function resolveRemoteRunnerConnection(
     }
   }
   return null;
+}
+
+export async function resolveRemoteRunnerConnectionAsync(
+  workspace?: RemoteWorkspaceConfig | null,
+): Promise<ResolvedRemoteRunnerConnection | null> {
+  const resolved = resolveRemoteRunnerConnection(workspace);
+  if (!resolved || resolved.source !== 'global') return resolved;
+  const secrets = readRemoteRunnerConnectionSecrets({ allowDefault: false });
+  if (!secrets.refreshToken) return resolved;
+  const session = await refreshRemoteRunnerAuthSession(resolved.serverUrl);
+  if (!session) return resolved;
+  return {
+    serverUrl: resolved.serverUrl,
+    token: session.accessToken,
+    userEmail: session.user.email,
+    source: 'global',
+  };
 }
 
 function clearRemoteSecrets(id: string): void {
@@ -615,6 +721,14 @@ export class RunnerClient extends ProtocolRunnerClient {
     const config = getRemoteWorkspace(id);
     if (!config) return null;
     const connection = resolveRemoteRunnerConnection(config);
+    if (!connection) return null;
+    return new RunnerClient(connection.serverUrl, connection.token);
+  }
+
+  static async fromWorkspaceAsync(id: string): Promise<RunnerClient | null> {
+    const config = getRemoteWorkspace(id);
+    if (!config) return null;
+    const connection = await resolveRemoteRunnerConnectionAsync(config);
     if (!connection) return null;
     return new RunnerClient(connection.serverUrl, connection.token);
   }
@@ -731,7 +845,7 @@ export async function listRemoteWorkspaceDirectory(
   const workspaceId = remoteWorkspaceIdFromPath(rootPath);
   let config = getRemoteWorkspace(workspaceId);
   if (!config) throw new Error('云端项目不存在。');
-  const connection = resolveRemoteRunnerConnection(config);
+  const connection = await resolveRemoteRunnerConnectionAsync(config);
   if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
   const client = new RunnerClient(connection.serverUrl, connection.token);
   let listing: WorkspaceDirectoryListing;
@@ -772,7 +886,7 @@ export async function uploadRemoteWorkspaceFile(
   const workspaceId = remoteWorkspaceIdFromPath(rootPath);
   let config = getRemoteWorkspace(workspaceId);
   if (!config) throw new Error('云端项目不存在。');
-  const connection = resolveRemoteRunnerConnection(config);
+  const connection = await resolveRemoteRunnerConnectionAsync(config);
   if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
   const client = new RunnerClient(connection.serverUrl, connection.token);
 
@@ -805,7 +919,7 @@ export async function previewRemoteWorkspaceFile(
   const workspaceId = remoteWorkspaceIdFromPath(rootPath);
   let config = getRemoteWorkspace(workspaceId);
   if (!config) throw new Error('云端项目不存在。');
-  const connection = resolveRemoteRunnerConnection(config);
+  const connection = await resolveRemoteRunnerConnectionAsync(config);
   if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
   const client = new RunnerClient(connection.serverUrl, connection.token);
 
@@ -843,7 +957,7 @@ async function resolveRemoteProjectClient(
   const workspaceId = remoteWorkspaceIdFromPath(rootPath);
   let config = getRemoteWorkspace(workspaceId);
   if (!config) throw new Error('云端项目不存在。');
-  const connection = resolveRemoteRunnerConnection(config);
+  const connection = await resolveRemoteRunnerConnectionAsync(config);
   if (!connection) throw new Error('云端服务未配置。请先配置服务器地址和访问 Token。');
   const client = new RunnerClient(connection.serverUrl, connection.token);
   if (!config.projectId) {
@@ -965,7 +1079,7 @@ export async function refreshRemoteWorkspaceAccounts(
 ): Promise<Provider[]> {
   const connection = token
     ? { serverUrl: workspace.serverUrl, token }
-    : resolveRemoteRunnerConnection(workspace);
+    : await resolveRemoteRunnerConnectionAsync(workspace);
   if (!connection?.token) return [];
   const client = new RunnerClient(connection.serverUrl, connection.token);
   let accounts: RemoteRunnerAccount[];
@@ -979,4 +1093,108 @@ export async function refreshRemoteWorkspaceAccounts(
     });
   }
   return syncRemoteWorkspaceAccounts(workspace, accounts, opts);
+}
+
+// ---------- Remote skill / slash command catalog (per-project cache) ----------
+
+/**
+ * Per-project cache of the remote workspace's slash command / skill catalog.
+ * Like model lists and account info, the catalog is fetched once on connect and
+ * then served from this cache; the `/` menu reads the cache so it stays cheap
+ * and offline-friendly. Keyed by workspace id.
+ */
+type RemoteWorkspaceSkillsCache = Record<
+  string,
+  { scannedAtMs: number; entries: RemoteSkillCatalogEntry[] }
+>;
+
+/** Fired after a remote workspace's skill cache is refreshed. */
+export const REMOTE_WORKSPACE_SKILLS_UPDATED_EVENT =
+  'ultragamestudio:remote-workspace-skills-updated';
+
+function readRemoteSkillsCache(): RemoteWorkspaceSkillsCache {
+  if (!hasStorage()) return {};
+  try {
+    const raw = window.localStorage.getItem(REMOTE_WORKSPACE_SKILLS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return {};
+    return parsed as RemoteWorkspaceSkillsCache;
+  } catch {
+    return {};
+  }
+}
+
+function writeRemoteSkillsCache(cache: RemoteWorkspaceSkillsCache): void {
+  if (!hasStorage()) return;
+  try {
+    window.localStorage.setItem(
+      REMOTE_WORKSPACE_SKILLS_STORAGE_KEY,
+      JSON.stringify(cache),
+    );
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/** Read the cached remote skill/command entries for a workspace ('' → none). */
+export function getCachedRemoteWorkspaceSkills(
+  workspaceId: string,
+): RemoteSkillCatalogEntry[] {
+  if (!workspaceId) return [];
+  return readRemoteSkillsCache()[workspaceId]?.entries ?? [];
+}
+
+function storeRemoteWorkspaceSkills(
+  workspaceId: string,
+  snapshot: RemoteSkillCatalogSnapshot,
+): void {
+  const cache = readRemoteSkillsCache();
+  cache[workspaceId] = {
+    scannedAtMs: snapshot.scannedAtMs || Date.now(),
+    entries: snapshot.entries ?? [],
+  };
+  writeRemoteSkillsCache(cache);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent(REMOTE_WORKSPACE_SKILLS_UPDATED_EVENT, {
+        detail: { workspaceId },
+      }),
+    );
+  }
+}
+
+/** Drop the cached remote skill catalog for a workspace. */
+export function clearCachedRemoteWorkspaceSkills(workspaceId: string): void {
+  const cache = readRemoteSkillsCache();
+  if (!(workspaceId in cache)) return;
+  delete cache[workspaceId];
+  writeRemoteSkillsCache(cache);
+}
+
+/**
+ * Fetch the remote project's slash command / skill catalog and cache it. Called
+ * once per workspace on connect (and on demand); subsequent `/` menu reads come
+ * from {@link getCachedRemoteWorkspaceSkills}. Returns the entries (empty on any
+ * failure, leaving any prior cache untouched).
+ */
+export async function refreshRemoteWorkspaceSkills(
+  workspace: RemoteWorkspaceConfig,
+  opts: { sync?: boolean } = {},
+): Promise<RemoteSkillCatalogEntry[]> {
+  const connection = await resolveRemoteRunnerConnectionAsync(workspace);
+  if (!connection?.token) return [];
+  const client = new RunnerClient(connection.serverUrl, connection.token);
+  let config = workspace;
+  if (!config.projectId) {
+    config = await ensureRemoteWorkspaceProject(config, client).catch(() => config);
+  }
+  if (!config.projectId) return [];
+  try {
+    const snapshot = await client.listProjectSkills(config.projectId, opts);
+    storeRemoteWorkspaceSkills(workspace.id, snapshot);
+    return snapshot.entries ?? [];
+  } catch {
+    return [];
+  }
 }

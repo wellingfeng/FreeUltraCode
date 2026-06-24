@@ -779,7 +779,11 @@ describe('AIDock project file drag', () => {
       });
 
       expect(input.value).toBe('src/RemoteFile.ts');
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url]) => url === 'https://runner.test/projects/proj_tree_drag/files',
+        ),
+      ).toHaveLength(1);
     } finally {
       await view.cleanup();
     }

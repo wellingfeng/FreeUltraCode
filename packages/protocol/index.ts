@@ -35,12 +35,22 @@ export const REMOTE_RUNNER_API_PATHS = {
   usageLedger: '/usage/ledger',
   accounts: '/accounts',
   userSettings: '/user-settings',
+  authRegister: '/auth/register',
+  authVerifyEmail: '/auth/verify-email',
+  authResendCode: '/auth/resend-code',
+  authLogin: '/auth/login',
+  authRefresh: '/auth/refresh',
+  authLogout: '/auth/logout',
+  authMe: '/auth/me',
+  authForgotPassword: '/auth/forgot-password',
+  authResetPassword: '/auth/reset-password',
   job: (id: string) => `/jobs/${encodeURIComponent(id)}`,
   jobArtifacts: (id: string) => `/jobs/${encodeURIComponent(id)}/artifacts`,
   jobCancel: (id: string) => `/jobs/${encodeURIComponent(id)}/cancel`,
   jobStream: (id: string) => `/jobs/${encodeURIComponent(id)}/stream`,
   project: (id: string) => `/projects/${encodeURIComponent(id)}`,
   projectFiles: (id: string) => `/projects/${encodeURIComponent(id)}/files`,
+  projectSkills: (id: string) => `/projects/${encodeURIComponent(id)}/skills`,
   projectEnvironment: (id: string) =>
     `/projects/${encodeURIComponent(id)}/environment`,
   projectEnvironmentInstall: (id: string) =>
@@ -97,6 +107,10 @@ export function matchRemoteRunnerProjectFilesPath(path: string): string | null {
   return matchRemoteRunnerNestedIdPath(path, REMOTE_RUNNER_API_PATHS.projects, 'files');
 }
 
+export function matchRemoteRunnerProjectSkillsPath(path: string): string | null {
+  return matchRemoteRunnerNestedIdPath(path, REMOTE_RUNNER_API_PATHS.projects, 'skills');
+}
+
 export function matchRemoteRunnerProjectEnvironmentPath(path: string): string | null {
   return matchRemoteRunnerNestedIdPath(
     path,
@@ -137,11 +151,24 @@ export function matchRemoteRunnerAccountPath(path: string): string | null {
 
 export type RemoteAdapter = 'claude' | 'codex' | 'gemini';
 
+/**
+ * How a remote job's agent process is isolated when it runs.
+ *   "process"   — bare child process (cwd + tenant-scoped env). Self-host.
+ *   "container" — per-job container with mounts/egress limits (multi-tenant).
+ */
+export type RemoteIsolationLevel = 'process' | 'container';
+
+export const REMOTE_ISOLATION_LEVELS: readonly RemoteIsolationLevel[] = [
+  'process',
+  'container',
+];
+
 export interface RunnerHealth {
   ok: boolean;
   service?: string;
   version?: string;
   authRequired?: boolean;
+  authMode?: 'token' | 'multiuser';
   adapters?: string[];
   maxConcurrency?: number;
   accountCount?: number;
@@ -158,6 +185,8 @@ export interface RemoteRunnerProject {
   pushBranch?: string | null;
   adapter?: RemoteAdapter | string;
   model?: string | null;
+  /** Default isolation level for jobs created in this project. */
+  isolationLevel?: RemoteIsolationLevel;
   createdAt: number;
   updatedAt: number;
   hasGitToken?: boolean;
@@ -171,6 +200,7 @@ export interface RemoteRunnerProjectInput {
   pushBranch?: string;
   adapter?: RemoteAdapter;
   model?: string;
+  isolationLevel?: RemoteIsolationLevel;
   gitToken?: string;
 }
 
@@ -281,6 +311,8 @@ export interface RemoteJob {
   branch: string | null;
   adapter: string;
   model: string | null;
+  /** How the agent process is isolated when it runs. */
+  isolationLevel?: RemoteIsolationLevel;
   prompt: string;
   pushBranch: string | null;
   logs: RemoteJobLogLine[];
@@ -326,10 +358,26 @@ export const REMOTE_ENVIRONMENT_TOOL_IDS = [
   'ffmpeg',
   'curl',
   'unzip',
+  // AI agent CLIs (installed globally via npm; Node.js must be present first).
+  // These let remote jobs run the claude/codex/gemini console binaries.
+  'claude',
+  'codex',
+  'gemini',
 ] as const;
 
 export type RemoteEnvironmentToolId =
   (typeof REMOTE_ENVIRONMENT_TOOL_IDS)[number];
+
+/**
+ * Tool ids that are AI agent CLIs. They install globally through npm rather than
+ * the host OS package manager, and they are optional (not required for project
+ * sync), so the client groups and gates them separately from git/node/python.
+ */
+export const REMOTE_ENVIRONMENT_AGENT_TOOL_IDS = [
+  'claude',
+  'codex',
+  'gemini',
+] as const;
 
 /** A single tool's detection result on the remote host. */
 export interface RemoteEnvironmentTool {
@@ -344,6 +392,13 @@ export interface RemoteEnvironmentTool {
   installable: boolean;
   /** The command the backend would run to install (for transparency). */
   installHint?: string | null;
+  /**
+   * True for tools required before a project sync can run (git/node/python…).
+   * AI agent CLIs are optional, so this is false for them.
+   */
+  required?: boolean;
+  /** Install channel: OS package manager, or npm global for agent CLIs. */
+  channel?: 'package-manager' | 'npm' | null;
 }
 
 export interface RemoteEnvironmentReport {
@@ -365,7 +420,11 @@ export interface RemoteEnvironmentInstallInput {
 }
 
 export interface RemoteEnvironmentInstallStep {
-  id: RemoteEnvironmentToolId;
+  /**
+   * The tool id, or a synthetic step id like "_refresh" for the package-index
+   * refresh that runs before installs (apt-get update etc.).
+   */
+  id: RemoteEnvironmentToolId | string;
   ok: boolean;
   /** Combined stdout/stderr tail from the install command (redacted). */
   log?: string;
@@ -408,6 +467,36 @@ export interface WorkspaceDirectoryListing {
   totalEntries: number;
 }
 
+/** Localized text bag for a remote skill/command catalog entry. */
+export interface RemoteSkillText {
+  'zh-CN'?: string;
+  'en-US'?: string;
+  [locale: string]: string | undefined;
+}
+
+/**
+ * A slash command / skill discovered in a remote project's checked-out
+ * workspace. Shaped to match the client's SlashCatalogEntry so the remote
+ * catalog folds straight into the `/` suggestion menu.
+ */
+export interface RemoteSkillCatalogEntry {
+  id: string;
+  kind: 'command' | 'skill';
+  name: string;
+  label: RemoteSkillText;
+  detail: RemoteSkillText;
+  insertText: RemoteSkillText;
+  source?: string | null;
+  sourceAdapter?: string | null;
+}
+
+export interface RemoteSkillCatalogSnapshot {
+  scannedAtMs: number;
+  ready: boolean;
+  entries: RemoteSkillCatalogEntry[];
+  error?: string | null;
+}
+
 export type RemoteRunnerFileUploadNamespace =
   | 'uploads'
   | 'clipboard-images'
@@ -446,6 +535,7 @@ export interface CreateRemoteJobInput {
   branch?: string;
   adapter?: RemoteAdapter;
   model?: string;
+  isolationLevel?: RemoteIsolationLevel;
   pushBranch?: string;
   accountId?: string;
   apiKey?: string;
@@ -498,6 +588,11 @@ export interface RemoteRunnerDirectoryListingResponse {
   listing: WorkspaceDirectoryListing;
 }
 
+export interface RemoteRunnerSkillCatalogResponse {
+  ok: true;
+  skills: RemoteSkillCatalogSnapshot;
+}
+
 export interface RemoteRunnerFileUploadResponse {
   ok: true;
   file: RemoteRunnerFileUpload;
@@ -515,6 +610,71 @@ export interface RemoteRunnerUserSettingResponse {
 
 export interface RemoteRunnerOkResponse {
   ok: true;
+}
+
+export interface RemoteRunnerAuthUser {
+  id: string;
+  email: string;
+  displayName?: string;
+  emailVerified: boolean;
+  status: string;
+  createdAt: number;
+  updatedAt?: number;
+}
+
+export interface RemoteRunnerAuthSession {
+  accessToken: string;
+  refreshToken: string;
+  user: RemoteRunnerAuthUser;
+}
+
+export interface RemoteRunnerAuthSessionResponse {
+  ok: true;
+  session: RemoteRunnerAuthSession;
+}
+
+export interface RemoteRunnerAuthMeResponse {
+  ok: true;
+  user: RemoteRunnerAuthUser;
+}
+
+export interface RemoteRunnerAuthRegisterInput {
+  email: string;
+  password: string;
+  displayName?: string;
+}
+
+export interface RemoteRunnerAuthVerifyEmailInput {
+  email: string;
+  code: string;
+}
+
+export interface RemoteRunnerAuthResendCodeInput {
+  email: string;
+}
+
+export interface RemoteRunnerAuthLoginInput {
+  email: string;
+  password: string;
+  device?: string;
+}
+
+export interface RemoteRunnerAuthRefreshInput {
+  refreshToken: string;
+}
+
+export interface RemoteRunnerAuthLogoutInput {
+  refreshToken: string;
+}
+
+export interface RemoteRunnerAuthForgotPasswordInput {
+  email: string;
+}
+
+export interface RemoteRunnerAuthResetPasswordInput {
+  email: string;
+  code: string;
+  password: string;
 }
 
 export function normalizeRemoteServerUrl(raw: string): string {
@@ -592,6 +752,147 @@ export class RunnerClient {
       throw new Error(remoteRunnerResponseError(data, res.status));
     }
     return data.job;
+  }
+
+  async register(
+    input: RemoteRunnerAuthRegisterInput,
+  ): Promise<RemoteRunnerOkResponse> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authRegister), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as RemoteRunnerOkResponse | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data;
+  }
+
+  async verifyEmail(
+    input: RemoteRunnerAuthVerifyEmailInput,
+  ): Promise<RemoteRunnerAuthSession> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authVerifyEmail), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as
+      | RemoteRunnerAuthSessionResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('session' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.session;
+  }
+
+  async resendCode(
+    input: RemoteRunnerAuthResendCodeInput,
+  ): Promise<RemoteRunnerOkResponse> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authResendCode), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as RemoteRunnerOkResponse | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data;
+  }
+
+  async login(
+    input: RemoteRunnerAuthLoginInput,
+  ): Promise<RemoteRunnerAuthSession> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authLogin), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as
+      | RemoteRunnerAuthSessionResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('session' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.session;
+  }
+
+  async refresh(
+    input: RemoteRunnerAuthRefreshInput,
+  ): Promise<RemoteRunnerAuthSession> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authRefresh), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as
+      | RemoteRunnerAuthSessionResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('session' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.session;
+  }
+
+  async logout(
+    input: RemoteRunnerAuthLogoutInput,
+  ): Promise<RemoteRunnerOkResponse> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authLogout), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as RemoteRunnerOkResponse | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data;
+  }
+
+  async me(): Promise<RemoteRunnerAuthUser> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authMe), {
+      headers: this.headers(),
+    });
+    const data = (await res.json()) as
+      | RemoteRunnerAuthMeResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('user' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.user;
+  }
+
+  async forgotPassword(
+    input: RemoteRunnerAuthForgotPasswordInput,
+  ): Promise<RemoteRunnerOkResponse> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authForgotPassword), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as RemoteRunnerOkResponse | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data;
+  }
+
+  async resetPassword(
+    input: RemoteRunnerAuthResetPasswordInput,
+  ): Promise<RemoteRunnerAuthSession> {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authResetPassword), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = (await res.json()) as
+      | RemoteRunnerAuthSessionResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('session' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.session;
   }
 
   async jobs(): Promise<RemoteJob[]> {
@@ -833,6 +1134,33 @@ export class RunnerClient {
       throw new Error(remoteRunnerResponseError(data, res.status));
     }
     return data.listing;
+  }
+
+  /**
+   * List the slash commands / skills discovered in a remote project's
+   * checked-out workspace. The catalog is scoped to the project (its `skills/`
+   * and per-agent `.claude|.codex|.gemini|.agents` dirs) — never the server
+   * host's global config — so the client `/` menu reflects what the remote
+   * agent can actually run for that project. `sync=1` git-pulls first.
+   */
+  async listProjectSkills(
+    projectId: string,
+    opts: { sync?: boolean } = {},
+  ): Promise<RemoteSkillCatalogSnapshot> {
+    const params = new URLSearchParams();
+    if (opts.sync) params.set('sync', '1');
+    const suffix = params.toString() ? `?${params}` : '';
+    const res = await fetch(
+      this.url(`${REMOTE_RUNNER_API_PATHS.projectSkills(projectId)}${suffix}`),
+      { headers: this.headers() },
+    );
+    const data = (await res.json()) as
+      | RemoteRunnerSkillCatalogResponse
+      | RemoteRunnerErrorResponse;
+    if (!res.ok || !data.ok || !('skills' in data)) {
+      throw new Error(remoteRunnerResponseError(data, res.status));
+    }
+    return data.skills;
   }
 
   /**

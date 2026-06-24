@@ -171,7 +171,7 @@ async function remoteRunnerClientForProfile(profileId: string | null) {
   const remote = await import('@/lib/remoteWorkspace');
   const config = remote.getRemoteWorkspace(workspaceId);
   if (!config) return null;
-  const connection = remote.resolveRemoteRunnerConnection(config);
+  const connection = await remote.resolveRemoteRunnerConnectionAsync(config);
   if (!connection) return null;
   return new remote.RunnerClient(connection.serverUrl, connection.token);
 }

@@ -5,6 +5,28 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeAuthorizer } from './auth.mjs';
+import { hashPassword, verifyPassword } from './password.mjs';
+import {
+  authenticateJwtHeader,
+  issueSession,
+  makeJwtSecret,
+  refreshSession,
+  revokeSession,
+} from './session.mjs';
+import {
+  createUser,
+  findUserByEmail,
+  publicUser,
+  setEmailVerified,
+  updatePassword,
+} from './users.mjs';
+import {
+  VERIFICATION_PURPOSE_EMAIL,
+  VERIFICATION_PURPOSE_PASSWORD_RESET,
+  issueVerification,
+  verifyCode,
+} from './verification.mjs';
+import { makeMailer } from './mailer.mjs';
 import { JsonStore } from './store.mjs';
 import { JobRunner } from './runner.mjs';
 import * as git from './git.mjs';
@@ -21,6 +43,7 @@ import {
   previewWorkspaceFile,
   saveWorkspaceUpload,
 } from './workspace-files.mjs';
+import { listWorkspaceSkills } from './workspace-skills.mjs';
 import {
   readUserSettingJson,
   removeUserSetting,
@@ -42,6 +65,7 @@ import {
   matchRemoteRunnerJobPath,
   matchRemoteRunnerJobStreamPath,
   matchRemoteRunnerProjectFilesPath,
+  matchRemoteRunnerProjectSkillsPath,
   matchRemoteRunnerProjectEnvironmentPath,
   matchRemoteRunnerProjectEnvironmentInstallPath,
   matchRemoteRunnerProjectPath,
@@ -78,6 +102,11 @@ const cfg = {
   host: process.env.UGS_RUNNER_HOST || process.env.FUC_RUNNER_HOST || '0.0.0.0',
   port: Number(process.env.UGS_RUNNER_PORT || process.env.FUC_RUNNER_PORT || 8787),
   token: process.env.UGS_RUNNER_TOKEN || process.env.FUC_RUNNER_TOKEN || '',
+  authMode:
+    (process.env.UGS_RUNNER_AUTH_MODE || 'token').trim().toLowerCase() === 'multiuser'
+      ? 'multiuser'
+      : 'token',
+  jwtSecret: makeJwtSecret(process.env.UGS_RUNNER_JWT_SECRET),
   workdir: resolve(process.env.UGS_RUNNER_WORKDIR || process.env.FUC_RUNNER_WORKDIR || './workspaces'),
   datadir: resolve(process.env.UGS_RUNNER_DATADIR || process.env.FUC_RUNNER_DATADIR || './data'),
   maxConcurrency: Number(process.env.UGS_RUNNER_MAX_CONCURRENCY || process.env.FUC_RUNNER_MAX_CONCURRENCY || 2),
@@ -94,6 +123,7 @@ const BODY_TOO_LARGE = Symbol('BODY_TOO_LARGE');
 
 const auth = makeAuthorizer(cfg.token);
 const store = await new JsonStore(cfg.datadir).load();
+const mailer = makeMailer(process.env, console);
 const accounts = new AccountRegistry(loadAccountsFromEnv(), process.env, store);
 const runner = new JobRunner({
   store,
@@ -154,8 +184,54 @@ function publicJob(job) {
   return rest;
 }
 
-function currentUserId(_req) {
+function currentUserId(req) {
+  if (cfg.authMode === 'multiuser' && req.auth?.type === 'user') {
+    return req.auth.user.id;
+  }
   return 'default';
+}
+
+function authorizeRequest(req) {
+  if (auth.check(req.headers.authorization)) {
+    return { ok: true, type: 'service' };
+  }
+  if (cfg.authMode === 'multiuser') {
+    const jwt = authenticateJwtHeader(store, req.headers.authorization, cfg.jwtSecret);
+    if (jwt) return { ok: true, type: 'user', user: jwt.user };
+  }
+  return { ok: false };
+}
+
+function requireJwtSecret(res) {
+  if (cfg.authMode !== 'multiuser') return true;
+  if (cfg.jwtSecret) return true;
+  send(res, 500, { ok: false, error: 'UGS_RUNNER_JWT_SECRET is not configured' });
+  return false;
+}
+
+function requestUserJobs(req) {
+  const jobs = store.listJobs();
+  if (cfg.authMode === 'multiuser' && req.auth?.type === 'user') {
+    return jobs.filter((job) => job.userId === req.auth.user.id);
+  }
+  return jobs;
+}
+
+function requestLedgerEntries(req) {
+  const entries = store.listLedgerEntries?.() ?? [];
+  if (cfg.authMode === 'multiuser' && req.auth?.type === 'user') {
+    return entries.filter((entry) => entry.userId === req.auth.user.id);
+  }
+  return entries;
+}
+
+function requestJob(req, id) {
+  const job = store.getJob(id);
+  if (!job) return null;
+  if (cfg.authMode === 'multiuser' && req.auth?.type === 'user') {
+    return job.userId === req.auth.user.id ? job : null;
+  }
+  return job;
 }
 
 function publicProject(project) {
@@ -204,6 +280,10 @@ function projectInput(body, userId, existing = null) {
       typeof body.adapter === 'string'
         ? body.adapter.trim() || existing?.adapter || 'claude'
         : existing?.adapter ?? 'claude',
+    isolationLevel:
+      typeof body.isolationLevel === 'string'
+        ? body.isolationLevel.trim() || existing?.isolationLevel || undefined
+        : existing?.isolationLevel ?? undefined,
     model:
       typeof body.model === 'string'
         ? body.model.trim() || null
@@ -217,9 +297,9 @@ function projectInput(body, userId, existing = null) {
   };
 }
 
-function usageView() {
-  const jobs = store.listJobs();
-  const ledger = store.listLedgerEntries?.() ?? [];
+function usageView(req) {
+  const jobs = requestUserJobs(req);
+  const ledger = requestLedgerEntries(req);
   return {
     ok: true,
     totals: ledger.length ? summarizeLedger(ledger) : summarizeJobs(jobs),
@@ -228,8 +308,8 @@ function usageView() {
   };
 }
 
-function ledgerView() {
-  const entries = store.listLedgerEntries?.() ?? [];
+function ledgerView(req) {
+  const entries = requestLedgerEntries(req);
   return {
     ok: true,
     totals: summarizeLedger(entries),
@@ -266,6 +346,31 @@ function artifactView(job) {
 function publicAccountById(id) {
   const account = accounts.list().find((item) => item.id === id);
   return account ? accounts.publicAccount(account, store.listJobs()) : null;
+}
+
+function authSessionResponse(user, session) {
+  return {
+    ok: true,
+    session: {
+      accessToken: session.accessToken,
+      refreshToken: session.refreshToken,
+      user: publicUser(user),
+    },
+  };
+}
+
+async function sendVerificationForUser(user, purpose, opts = {}) {
+  const issued = issueVerification(
+    store,
+    { userId: user.id, email: user.email, purpose },
+    { secret: cfg.jwtSecret, ...opts },
+  );
+  if (purpose === VERIFICATION_PURPOSE_PASSWORD_RESET) {
+    await mailer.sendPasswordResetCode(user.email, issued.code);
+  } else {
+    await mailer.sendVerificationCode(user.email, issued.code);
+  }
+  return issued;
 }
 
 function accountInput(body, existing = null) {
@@ -412,16 +517,156 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       service: REMOTE_RUNNER_SERVICE,
       version: '0.1.0',
-      authRequired: auth.configured,
+      authRequired: cfg.authMode === 'multiuser' || auth.configured,
+      authMode: cfg.authMode,
       adapters: supportedAdapters(),
       maxConcurrency: cfg.maxConcurrency,
       accountCount: accounts.accounts.length,
     });
   }
 
-  // Everything below requires a valid bearer token.
-  if (!auth.check(req.headers.authorization)) {
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authRegister && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const email = body?.email;
+    const password = body?.password;
+    if (typeof email !== 'string' || typeof password !== 'string') {
+      return send(res, 400, { ok: false, error: 'email and password are required' });
+    }
+    const existing = findUserByEmail(store, email);
+    if (existing) {
+      if (!existing.emailVerified) {
+        await sendVerificationForUser(existing, VERIFICATION_PURPOSE_EMAIL).catch(() => null);
+      }
+      return send(res, 200, { ok: true });
+    }
+    try {
+      const passwordHash = await hashPassword(password);
+      const user = await createUser(store, {
+        email,
+        passwordHash,
+        displayName: body?.displayName,
+      });
+      await sendVerificationForUser(user, VERIFICATION_PURPOSE_EMAIL);
+      return send(res, 200, { ok: true });
+    } catch (err) {
+      return send(res, 400, { ok: false, error: String(err?.message ?? err) });
+    }
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authVerifyEmail && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const user = findUserByEmail(store, body?.email);
+    if (!user) return send(res, 400, { ok: false, error: 'invalid code' });
+    const verified = verifyCode(
+      store,
+      { email: user.email, code: body?.code, purpose: VERIFICATION_PURPOSE_EMAIL },
+      { secret: cfg.jwtSecret },
+    );
+    if (!verified.ok) return send(res, 400, { ok: false, error: verified.error });
+    const updated = setEmailVerified(store, user.id, true) ?? user;
+    const session = issueSession(store, updated, {
+      jwtSecret: cfg.jwtSecret,
+      device: req.headers['user-agent'] ?? '',
+    });
+    return send(res, 200, authSessionResponse(updated, session));
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authResendCode && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const user = findUserByEmail(store, body?.email);
+    if (!user || user.emailVerified) return send(res, 200, { ok: true });
+    try {
+      await sendVerificationForUser(user, VERIFICATION_PURPOSE_EMAIL);
+      return send(res, 200, { ok: true });
+    } catch (err) {
+      const status = err?.code === 'rate_limited' ? 429 : 400;
+      return send(res, status, {
+        ok: false,
+        error: String(err?.message ?? err),
+        retryAfterMs: err?.retryAfterMs,
+      });
+    }
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authLogin && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const user = findUserByEmail(store, body?.email);
+    if (!user || !(await verifyPassword(user.passwordHash, body?.password))) {
+      return send(res, 401, { ok: false, error: 'invalid email or password' });
+    }
+    if (!user.emailVerified) {
+      return send(res, 403, { ok: false, error: 'email is not verified' });
+    }
+    const session = issueSession(store, user, {
+      jwtSecret: cfg.jwtSecret,
+      device:
+        typeof body?.device === 'string' ? body.device : req.headers['user-agent'] ?? '',
+    });
+    return send(res, 200, authSessionResponse(user, session));
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authRefresh && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const session = refreshSession(store, body?.refreshToken, { jwtSecret: cfg.jwtSecret });
+    if (!session) return send(res, 401, { ok: false, error: 'invalid refresh token' });
+    return send(res, 200, authSessionResponse(session.user, session));
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authLogout && req.method === 'POST') {
+    const body = await readJson(req);
+    if (body?.refreshToken) revokeSession(store, body.refreshToken);
+    return send(res, 200, { ok: true });
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authForgotPassword && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const user = findUserByEmail(store, body?.email);
+    if (user) {
+      await sendVerificationForUser(user, VERIFICATION_PURPOSE_PASSWORD_RESET).catch(() => null);
+    }
+    return send(res, 200, { ok: true });
+  }
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authResetPassword && req.method === 'POST') {
+    if (!requireJwtSecret(res)) return undefined;
+    const body = await readJson(req);
+    const user = findUserByEmail(store, body?.email);
+    if (!user) return send(res, 400, { ok: false, error: 'invalid code' });
+    const verified = verifyCode(
+      store,
+      { email: user.email, code: body?.code, purpose: VERIFICATION_PURPOSE_PASSWORD_RESET },
+      { secret: cfg.jwtSecret },
+    );
+    if (!verified.ok) return send(res, 400, { ok: false, error: verified.error });
+    try {
+      const updated = updatePassword(store, user.id, await hashPassword(body?.password)) ?? user;
+      updated.emailVerified = true;
+      store.upsertUser(updated);
+      const session = issueSession(store, updated, {
+        jwtSecret: cfg.jwtSecret,
+        device: req.headers['user-agent'] ?? '',
+      });
+      return send(res, 200, authSessionResponse(updated, session));
+    } catch (err) {
+      return send(res, 400, { ok: false, error: String(err?.message ?? err) });
+    }
+  }
+
+  const authorized = authorizeRequest(req);
+  if (!authorized.ok) {
     return send(res, 401, { ok: false, error: 'unauthorized' });
+  }
+  req.auth = authorized;
+
+  if (cfg.authMode === 'multiuser' && path === REMOTE_RUNNER_API_PATHS.authMe && req.method === 'GET') {
+    if (req.auth.type !== 'user') return send(res, 401, { ok: false, error: 'unauthorized' });
+    return send(res, 200, { ok: true, user: publicUser(req.auth.user) });
   }
 
   // User settings live under <workdir>/<user>/.ultragamestudio. This is the
@@ -482,6 +727,7 @@ const server = http.createServer(async (req, res) => {
         branch: body.branch,
         adapter: body.adapter,
         model: body.model,
+        isolationLevel: body.isolationLevel,
         accountId: body.accountId,
         prompt: body.prompt,
         pushBranch: body.pushBranch,
@@ -599,6 +845,29 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // GET /projects/:id/skills — scan the project's checked-out workspace for the
+  // slash commands / skills the remote agent can run, scoped to the project (its
+  // skills/ + per-agent .claude|.codex|.gemini|.agents dirs) — never the host's
+  // global config. The client caches this per project and folds it into the `/`
+  // suggestion menu so remote projects show real remote skills instead of the
+  // user's local machine skills. `sync=1` git-pulls latest before scanning.
+  const projectSkillsId = matchRemoteRunnerProjectSkillsPath(path);
+  if (projectSkillsId && req.method === 'GET') {
+    const project = store.getProject(projectSkillsId, currentUserId(req));
+    if (!project) return send(res, 404, { ok: false, error: 'not found' });
+    try {
+      const wantSync = url.searchParams.get('sync') === '1';
+      const dir = await ensureProjectWorkspaceReady(project, { sync: wantSync });
+      const skills = await listWorkspaceSkills({ dir });
+      return send(res, 200, { ok: true, skills });
+    } catch (err) {
+      return send(res, 400, {
+        ok: false,
+        error: String(err?.message ?? err),
+      });
+    }
+  }
+
   // GET /projects/:id/environment — probe the remote host for required runtime
   // tools (git, node, python). The remote backend has nothing preinstalled, so
   // the client uses this to decide whether a sync can run.
@@ -633,29 +902,32 @@ const server = http.createServer(async (req, res) => {
 
   // GET /jobs — list jobs.
   if (path === REMOTE_RUNNER_API_PATHS.jobs && req.method === 'GET') {
-    return send(res, 200, { ok: true, jobs: store.listJobs().map(publicJob) });
+    return send(res, 200, { ok: true, jobs: requestUserJobs(req).map(publicJob) });
   }
 
   // GET /usage — account + token usage summary.
   if (path === REMOTE_RUNNER_API_PATHS.usage && req.method === 'GET') {
-    return send(res, 200, usageView());
+    return send(res, 200, usageView(req));
   }
 
   // GET /usage/ledger — immutable-ish usage/runtime billing events.
   if (path === REMOTE_RUNNER_API_PATHS.usageLedger && req.method === 'GET') {
-    return send(res, 200, ledgerView());
+    return send(res, 200, ledgerView(req));
   }
 
   // GET /accounts — list server-side model accounts (redacted).
   if (path === REMOTE_RUNNER_API_PATHS.accounts && req.method === 'GET') {
     return send(res, 200, {
       ok: true,
-      accounts: accounts.listPublic(store.listJobs(), queryParam(req, 'projectId')),
+      accounts: accounts.listPublic(requestUserJobs(req), queryParam(req, 'projectId')),
     });
   }
 
   // POST /accounts — create/update a stored account.
   if (path === REMOTE_RUNNER_API_PATHS.accounts && req.method === 'POST') {
+    if (cfg.authMode === 'multiuser' && req.auth.type !== 'service') {
+      return send(res, 403, { ok: false, error: 'service token required' });
+    }
     const body = await readJson(req);
     const account = accountInput(body);
     if (!account) return send(res, 400, { ok: false, error: 'invalid account' });
@@ -668,6 +940,9 @@ const server = http.createServer(async (req, res) => {
 
   const accountId = matchRemoteRunnerAccountPath(path);
   if (accountId && req.method === 'PUT') {
+    if (cfg.authMode === 'multiuser' && req.auth.type !== 'service') {
+      return send(res, 403, { ok: false, error: 'service token required' });
+    }
     if (accounts.isEnvManaged(accountId)) {
       return send(res, 409, { ok: false, error: 'env-managed account cannot be edited' });
     }
@@ -681,6 +956,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (accountId && req.method === 'DELETE') {
+    if (cfg.authMode === 'multiuser' && req.auth.type !== 'service') {
+      return send(res, 403, { ok: false, error: 'service token required' });
+    }
     if (accounts.isEnvManaged(accountId)) {
       return send(res, 409, { ok: false, error: 'env-managed account cannot be deleted' });
     }
@@ -690,7 +968,7 @@ const server = http.createServer(async (req, res) => {
   // GET /jobs/:id — single job (includes accumulated logs + result).
   const jobId = matchRemoteRunnerJobPath(path);
   if (jobId && req.method === 'GET') {
-    const job = store.getJob(jobId);
+    const job = requestJob(req, jobId);
     if (!job) return send(res, 404, { ok: false, error: 'not found' });
     return send(res, 200, { ok: true, job: publicJob(job) });
   }
@@ -698,6 +976,8 @@ const server = http.createServer(async (req, res) => {
   // POST /jobs/:id/cancel
   const cancelJobId = matchRemoteRunnerJobCancelPath(path);
   if (cancelJobId && req.method === 'POST') {
+    const job = requestJob(req, cancelJobId);
+    if (!job) return send(res, 404, { ok: false, error: 'not found' });
     const ok = runner.cancel(cancelJobId);
     return send(res, ok ? 200 : 404, { ok });
   }
@@ -705,7 +985,7 @@ const server = http.createServer(async (req, res) => {
   // GET /jobs/:id/artifacts — review bundle for UI/backend sync.
   const artifactJobId = matchRemoteRunnerJobArtifactsPath(path);
   if (artifactJobId && req.method === 'GET') {
-    const job = store.getJob(artifactJobId);
+    const job = requestJob(req, artifactJobId);
     if (!job) return send(res, 404, { ok: false, error: 'not found' });
     return send(res, 200, { ok: true, artifacts: artifactView(job) });
   }
@@ -714,7 +994,7 @@ const server = http.createServer(async (req, res) => {
   const streamJobId = matchRemoteRunnerJobStreamPath(path);
   if (streamJobId && req.method === 'GET') {
     const id = streamJobId;
-    const job = store.getJob(id);
+    const job = requestJob(req, id);
     if (!job) return send(res, 404, { ok: false, error: 'not found' });
 
     res.writeHead(200, {

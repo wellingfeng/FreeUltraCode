@@ -1,0 +1,45 @@
+# UltraGameStudio Agent Execution Image — for per-job container isolation.
+#
+# This is NOT the runner service image (see Dockerfile). It is the sandbox the
+# runner launches one-shot via `docker run --rm` for each job when a job uses
+# isolationLevel=container. It ships the agent CLIs plus the tooling a game
+# project needs, but NO server, NO secrets, and NO default credentials — the
+# per-job key is injected by name at run time (see execution-backend.mjs).
+#
+# Build (context = backend dir):
+#   docker build -f backend/Dockerfile.agent -t ugs/agent:1 backend
+# Then point the runner at it:
+#   UGS_RUNNER_ISOLATION=container UGS_RUNNER_CONTAINER_IMAGE=ugs/agent:1
+FROM node:20-slim
+
+# China build acceleration: Debian + npm mirrors.
+RUN set -eux; \
+  if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+    sed -i 's@deb.debian.org@mirrors.tencent.com@g; s@security.debian.org@mirrors.tencent.com@g' /etc/apt/sources.list.d/debian.sources; \
+  fi; \
+  if [ -f /etc/apt/sources.list ]; then \
+    sed -i 's@deb.debian.org@mirrors.tencent.com@g; s@security.debian.org@mirrors.tencent.com@g' /etc/apt/sources.list; \
+  fi; \
+  npm config set registry https://mirrors.tencent.com/npm/
+
+# Project tooling: git(+lfs) for sync, python/ffmpeg for asset work, curl/unzip.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+     git git-lfs ca-certificates python3 python3-pip ffmpeg curl unzip \
+  && rm -rf /var/lib/apt/lists/*
+
+# AI agent CLIs the adapters spawn (claude/codex/gemini).
+RUN npm install -g \
+     @anthropic-ai/claude-code \
+     @openai/codex \
+     @google/gemini-cli \
+  && claude --version && codex --version && gemini --version
+
+# Run as a non-root user; the runner also passes --user at run time.
+RUN useradd -m -u 1000 agent || true
+USER 1000:1000
+
+# The runner mounts the job workspace here and sets -w /workspace.
+WORKDIR /workspace
+
+# No ENTRYPOINT: the runner provides the agent command + args after the image.

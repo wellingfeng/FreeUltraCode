@@ -12,7 +12,7 @@ import type { SessionComposerSettings } from './types';
 const REMOTE_PROVIDER = remoteProviderId('ws-remote-1', 'acct-1');
 
 function localComposer() {
-  return defaultSessionComposer('E:\LocalProject');
+  return defaultSessionComposer('E:\\LocalProject');
 }
 
 function leakedRemoteSnapshot(): SessionComposerSettings {

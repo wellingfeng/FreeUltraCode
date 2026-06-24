@@ -95,3 +95,55 @@ test('usage ledger entries persist idempotently', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('auth secrets are encrypted on disk and indexed by normalized email', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ugs-runner-store-auth-'));
+  process.env.UGS_RUNNER_SECRET_KEY = 'test-secret-key';
+  try {
+    const store = await new JsonStore(dir).load();
+    store.upsertUser({
+      id: 'usr_1',
+      email: 'a@example.com',
+      passwordHash: '$argon2id$secret',
+      displayName: '',
+      emailVerified: false,
+      status: 'active',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    store.upsertVerification({
+      id: 'ver_1',
+      userId: 'usr_1',
+      email: 'a@example.com',
+      purpose: 'email_verify',
+      codeHash: 'code-secret',
+      expiresAt: 2,
+      attempts: 0,
+      consumed: false,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    store.upsertSession({
+      id: 'sess_1',
+      userId: 'usr_1',
+      tokenHash: 'refresh-secret',
+      expiresAt: 2,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await store._writeChain;
+
+    const raw = await readFile(join(dir, 'runner-state.json'), 'utf8');
+    assert.equal(raw.includes('$argon2id$secret'), false);
+    assert.equal(raw.includes('code-secret'), false);
+    assert.equal(raw.includes('refresh-secret'), false);
+
+    const reloaded = await new JsonStore(dir).load();
+    assert.equal(reloaded.findUserByEmail('a@example.com').passwordHash, '$argon2id$secret');
+    assert.equal(reloaded.findLatestVerification('a@example.com', 'email_verify').codeHash, 'code-secret');
+    assert.equal(reloaded.findSessionByTokenHash('refresh-secret').id, 'sess_1');
+  } finally {
+    delete process.env.UGS_RUNNER_SECRET_KEY;
+    await rm(dir, { recursive: true, force: true });
+  }
+});

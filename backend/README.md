@@ -2,11 +2,11 @@
 
 让你在 **UltraGameStudio 桌面端输入指令，但任务实际在你自己的云服务器上执行**。
 代码同步用 Git，模型调用用已安装的 CLI（claude / codex / gemini）。密钥可放服务器，
-也可由客户端按任务下发。后端零三方依赖，只需 Node 20+ 与 git。
+也可由客户端按任务下发。Runner 支持两种身份模式：旧版共享 Token，或邮箱注册 + 验证码 + 密码登录的多用户模式。
 
 ```
 UltraGameStudio 桌面端
-  ──(HTTPS + Bearer Token)──▶  ugs-remote-runner（你的云服务器）
+  ──(HTTPS + Bearer Token / 用户 JWT)──▶  ugs-remote-runner（你的云服务器）
                                   ├─ 用户 -> 项目 -> 服务端工作区路径
                                   ├─ git clone/pull 项目仓库
                                   ├─ 调用 claude/codex/gemini CLI 改代码、跑命令
@@ -26,7 +26,7 @@ start-remote-backend.bat
 
 兼容旧入口：`start-remote-runner.bat` 仍可用。
 
-第一次运行会创建 `backend\.env`。本地启动脚本会在 `UGS_RUNNER_TOKEN` 为空时写入同机稳定 Token；公网/生产环境建议手动设置强随机 Token。把同一个 Token 填到桌面端“添加云端项目”里。
+第一次运行会创建 `backend\.env`。本地启动脚本会在 `UGS_RUNNER_TOKEN` 为空时写入同机稳定 Token；公网/生产环境建议手动设置强随机 Token。单用户模式下，把同一个 Token 填到桌面端“添加云端项目”里。
 
 ### 直接用 Node
 
@@ -39,6 +39,30 @@ npm start
 ```
 
 服务器需要安装要用的 Agent CLI（`claude` / `codex` / `gemini`），并保证它们在 `PATH` 中。
+
+## 多用户邮箱登录
+
+设置 `UGS_RUNNER_AUTH_MODE=multiuser` 后，Runner 使用邮箱注册/登录：
+
+- `POST /auth/register`：邮箱 + 密码注册，发送 6 位邮箱验证码。
+- `POST /auth/verify-email`：邮箱 + 验证码，验证成功后签发 access token + refresh token。
+- `POST /auth/login`：邮箱 + 密码登录；邮箱未验证会拒绝。
+- `POST /auth/forgot-password`、`POST /auth/reset-password`：邮箱验证码重置密码。
+- `POST /auth/refresh`、`POST /auth/logout`、`GET /auth/me`：会话刷新、退出、读取当前用户。
+
+多用户模式需要：
+
+```env
+UGS_RUNNER_AUTH_MODE=multiuser
+UGS_RUNNER_JWT_SECRET=换成长随机字符串
+UGS_MAILER=smtp
+UGS_SES_SMTP_USER=你的腾讯云 SES SMTP 用户
+UGS_SES_SMTP_PASS=你的腾讯云 SES SMTP 密码
+```
+
+开发联调用 `UGS_MAILER=console`，验证码只打印到 Runner 日志，不消耗 SES 额度。生产默认发信地址为 `noreply@mail.ultragamestudio.com`，SMTP 默认 `smtp.qcloudmail.com:465`；也可用 `UGS_MAILER=api` 配合 `UGS_SES_SECRET_ID` / `UGS_SES_SECRET_KEY`（region 默认 `ap-hongkong`）。
+
+`UGS_RUNNER_TOKEN` 在多用户模式下仍作为服务级运维 Token 使用，可访问全局任务/账户 API；普通用户 JWT 只能访问自己的项目、任务、设置和用量。
 
 ## 多账户与 Token 消费
 
@@ -70,7 +94,7 @@ UGS_RUNNER_ACCOUNTS=[{"id":"claude-main","label":"Claude 主号","adapter":"clau
 打开 UltraGameStudio → 左上角工作区切换器 → **添加云端项目**，填入：
 
 - 服务器地址：`http://服务器IP:8787`（公网建议 HTTPS 反代）
-- 访问 Token：与 `UGS_RUNNER_TOKEN` 相同
+- 访问 Token：单用户模式填 `UGS_RUNNER_TOKEN`；多用户模式选择“邮箱登录”
 - 项目名称、项目仓库、分支、Agent、模型
 - 可选：自己的模型 API Key / Base URL。不填则用服务器账户池或服务器环境变量。
 
@@ -83,6 +107,15 @@ UGS_RUNNER_ACCOUNTS=[{"id":"claude-main","label":"Claude 主号","adapter":"clau
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 无需鉴权。返回服务信息、adapter、账户数量 |
+| POST | `/auth/register` | 多用户模式。注册并发送邮箱验证码 |
+| POST | `/auth/verify-email` | 多用户模式。验证邮箱并返回登录态 |
+| POST | `/auth/resend-code` | 多用户模式。重发注册验证码 |
+| POST | `/auth/login` | 多用户模式。邮箱密码登录 |
+| POST | `/auth/refresh` | 多用户模式。刷新 access token |
+| POST | `/auth/logout` | 多用户模式。吊销 refresh token |
+| GET | `/auth/me` | 多用户模式。返回当前用户 |
+| POST | `/auth/forgot-password` | 多用户模式。发送重置密码验证码 |
+| POST | `/auth/reset-password` | 多用户模式。验证码重置密码并返回登录态 |
 | GET | `/usage` | 需要鉴权。返回账户、token 用量、最近任务 |
 | GET | `/accounts` | 需要鉴权。列出服务器模型账户（不返回 Key） |
 | POST | `/accounts` | 需要鉴权。创建/覆盖服务器模型账户 |
@@ -99,11 +132,16 @@ UGS_RUNNER_ACCOUNTS=[{"id":"claude-main","label":"Claude 主号","adapter":"clau
 | GET | `/jobs/:id/stream` | SSE 实时日志与状态、最终结果 |
 | POST | `/jobs/:id/cancel` | 取消任务 |
 
-除 `/health` 外所有接口都要求 `Authorization: Bearer <UGS_RUNNER_TOKEN>`。
+单用户模式：除 `/health` 外所有接口都要求 `Authorization: Bearer <UGS_RUNNER_TOKEN>`。
+多用户模式：用户接口使用 `Authorization: Bearer <accessToken>`；服务级运维接口可继续使用 `UGS_RUNNER_TOKEN`。
 
 ## 安全
 
 - 未配置 `UGS_RUNNER_TOKEN` 时，受保护接口一律拒绝。
+- 多用户模式必须配置 `UGS_RUNNER_JWT_SECRET`；否则认证接口拒绝签发会话。
+- 密码用 argon2id 哈希；验证码、refresh token 只存哈希并加密落盘。
+- 邮箱验证码 6 位数字，5 分钟有效，一次性使用，60 秒发送限频，错误次数有限制。
+- 普通用户 JWT 解析出的 `userId` 是项目、任务、设置、用量隔离边界；不信任请求体里的 `userId`。
 - 项目 `gitToken` 存在服务端项目记录中，加密落盘，不随每个任务下发。
 - 客户端下发的 `apiKey` / `baseUrl` 只用于当次任务，任务结束删除。旧版临时任务的 `gitToken` 也会在任务结束删除。
 - clone/push 输出中的 `token@host` 会脱敏为 `***@host`。
@@ -115,6 +153,11 @@ UGS_RUNNER_ACCOUNTS=[{"id":"claude-main","label":"Claude 主号","adapter":"clau
 见 `.env.example`。常用：
 
 - `UGS_RUNNER_TOKEN`：访问令牌。
+- `UGS_RUNNER_AUTH_MODE`：`token` 或 `multiuser`。
+- `UGS_RUNNER_JWT_SECRET`：多用户 JWT 签名密钥。
+- `UGS_MAILER`：`console` / `smtp` / `api`。
+- `UGS_SES_SMTP_USER` / `UGS_SES_SMTP_PASS`：腾讯云 SES SMTP 凭据。
+- `UGS_SES_SECRET_ID` / `UGS_SES_SECRET_KEY`：腾讯云 SES API 凭据。
 - `UGS_RUNNER_PORT`：监听端口，默认 8787。
 - `UGS_RUNNER_WORKDIR`：任务工作目录。
 - `UGS_RUNNER_DATADIR`：状态与用量文件目录。

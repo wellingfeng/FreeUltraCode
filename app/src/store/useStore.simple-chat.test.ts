@@ -1156,6 +1156,157 @@ describe('simple-workflow chat mode', () => {
     );
   });
 
+  it('does not send a claude-family model id to a codex remote runner account', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_codex_claude_full');
+    const workspace = await historyStore.resolveWorkspaceByPath(remotePath);
+    const providerId = remoteProviderId('rw_codex_claude_full', 'codex-server');
+    // 复现截图报错：云端项目默认模型是 claude-opus-4-8（Claude 家族全名），
+    // 但选中的是 codex 账号。提交 job 时绝不能把该模型发给 codex 分组，
+    // 否则后端报“分组 codex 下模型 claude-opus-4-8 无可用渠道”。
+    saveRemoteWorkspace(
+      {
+        id: 'rw_codex_claude_full',
+        label: 'Codex Runner',
+        serverUrl: 'https://runner.test',
+        projectId: 'proj_codex_claude_full',
+        repoUrl: 'https://github.com/me/game.git',
+        adapter: 'codex',
+        model: 'claude-opus-4-8',
+        useOwnModelKey: false,
+      },
+      { token: 'runner-token' },
+    );
+    upsertProviders(
+      [
+        {
+          id: providerId,
+          kind: 'codex',
+          name: 'Codex Runner · server key',
+          apiKey: 'remote-runner',
+          baseUrl: 'https://runner.test',
+          transport: 'cli',
+          model: 'gpt-5.5',
+          models: ['gpt-5.5'],
+        },
+      ],
+      { makeActiveId: providerId },
+    );
+    const workflow = simpleBlueprint('远程 Codex 全名');
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'codex',
+        modelClass: 'claude-opus-4-8',
+        modelOverride: 'claude-opus-4-8',
+        providerId,
+        channelId: 'default',
+      },
+    };
+    resetStore(workflow);
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      activeSessionId: 's_remote_codex_claude_full',
+      composer: {
+        ...useStore.getState().composer,
+        workspace: remotePath,
+      },
+      locale: 'zh-CN',
+    });
+
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://runner.test/projects/proj_codex_claude_full') {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            project: {
+              id: 'proj_codex_claude_full',
+              label: 'Codex Runner',
+              repoUrl: 'https://github.com/me/game.git',
+              branch: null,
+              pushBranch: null,
+              adapter: 'codex',
+              model: 'claude-opus-4-8',
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs') {
+        const body = JSON.parse(String(init?.body));
+        expect(body.adapter).toBe('codex');
+        expect(body.accountId).toBe('codex-server');
+        // 关键断言：codex 账号绝不能收到 claude 家族模型，应回落到账号模型。
+        expect(body.model).toBe('gpt-5.5');
+        expect(body.model).not.toBe('claude-opus-4-8');
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            job: {
+              id: 'job_codex_claude_full',
+              status: 'running',
+              createdAt: 1,
+              updatedAt: 1,
+              projectId: body.projectId,
+              repoUrl: 'https://github.com/me/game.git',
+              branch: body.branch,
+              adapter: body.adapter,
+              model: body.model,
+              prompt: body.prompt,
+              pushBranch: body.pushBranch,
+              logs: [],
+              result: null,
+              error: null,
+            },
+          }),
+          { status: 201, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (url === 'https://runner.test/jobs/job_codex_claude_full/stream') {
+        const encoder = new TextEncoder();
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  [
+                    'event: status',
+                    'data: "done"',
+                    '',
+                    'event: result',
+                    'data: {"id":"job_codex_claude_full","status":"done","createdAt":1,"updatedAt":2,"repoUrl":"https://github.com/me/game.git","branch":null,"adapter":"codex","model":"gpt-5.5","prompt":"x","pushBranch":null,"logs":[],"result":{"exitCode":0},"error":null}',
+                    '',
+                    '',
+                  ].join('\n'),
+                ),
+              );
+              controller.close();
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(useStore.getState().sendPrompt('仓库更新到最新版')).toBe(true);
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('远程任务完成')),
+      'remote runner codex claude-family model fallback',
+    );
+  });
+
   it('keeps the remote runner assistant answer when no patch is produced', async () => {
     window.localStorage.clear();
     await historyStore.ready();

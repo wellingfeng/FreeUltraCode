@@ -64,3 +64,6 @@ app/src-tauri/icons.bak.old/
 # CI artifacts / scratch
 /tmp/
 app/tmp/
+
+# Local deploy helper binaries (plink/pscp), not for VCS
+.deploy-tools/

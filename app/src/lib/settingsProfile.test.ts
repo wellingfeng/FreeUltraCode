@@ -7,11 +7,16 @@ const remoteMocks = vi.hoisted(() => ({
     serverUrl: 'http://runner',
     token: 'tok',
   })),
+  resolveRemoteRunnerConnectionAsync: vi.fn(async () => ({
+    serverUrl: 'http://runner',
+    token: 'tok',
+  })),
 }));
 
 vi.mock('@/lib/remoteWorkspace', () => ({
   getRemoteWorkspace: remoteMocks.getRemoteWorkspace,
   resolveRemoteRunnerConnection: remoteMocks.resolveRemoteRunnerConnection,
+  resolveRemoteRunnerConnectionAsync: remoteMocks.resolveRemoteRunnerConnectionAsync,
   RunnerClient: class {
     writeUserSetting(relPath: string, json: string) {
       return remoteMocks.writeUserSetting(relPath, json);

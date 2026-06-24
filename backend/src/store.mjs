@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path';
 const SECRET_PREFIX = 'enc:v1:';
 const ACCOUNT_SECRET_FIELDS = ['apiKey', 'baseUrl'];
 const PROJECT_SECRET_FIELDS = ['gitToken'];
+const USER_SECRET_FIELDS = ['passwordHash'];
+const VERIFICATION_SECRET_FIELDS = ['codeHash'];
+const SESSION_SECRET_FIELDS = ['tokenHash'];
 
 function deriveKey(secret) {
   return createHash('sha256').update(String(secret), 'utf8').digest();
@@ -24,7 +27,17 @@ export class JsonStore {
   constructor(dataDir) {
     this.file = join(dataDir, 'runner-state.json');
     this.keyFile = join(dataDir, 'runner-secret.key');
-    this.state = { jobs: {}, workspaces: {}, projects: {}, accounts: {}, ledger: {} };
+    this.state = {
+      jobs: {},
+      workspaces: {},
+      projects: {},
+      accounts: {},
+      ledger: {},
+      users: {},
+      userEmails: {},
+      verifications: {},
+      sessions: {},
+    };
     this.secretKey = null;
     this._writeChain = Promise.resolve();
     this._loaded = false;
@@ -41,9 +54,17 @@ export class JsonStore {
         projects: parsed.projects ?? {},
         accounts: parsed.accounts ?? {},
         ledger: parsed.ledger ?? {},
+        users: parsed.users ?? {},
+        userEmails: parsed.userEmails ?? {},
+        verifications: parsed.verifications ?? {},
+        sessions: parsed.sessions ?? {},
       };
       this._migrateAccountSecrets();
       this._migrateProjectSecrets();
+      this._migrateUserSecrets();
+      this._migrateVerificationSecrets();
+      this._migrateSessionSecrets();
+      this._rebuildUserEmailIndex();
     } catch (err) {
       if (err && err.code !== 'ENOENT') throw err;
       // First boot: nothing persisted yet.
@@ -141,6 +162,30 @@ export class JsonStore {
     return this._decryptFields(project, PROJECT_SECRET_FIELDS);
   }
 
+  _encryptUser(user) {
+    return this._encryptFields(user, USER_SECRET_FIELDS);
+  }
+
+  _decryptUser(user) {
+    return this._decryptFields(user, USER_SECRET_FIELDS);
+  }
+
+  _encryptVerification(verification) {
+    return this._encryptFields(verification, VERIFICATION_SECRET_FIELDS);
+  }
+
+  _decryptVerification(verification) {
+    return this._decryptFields(verification, VERIFICATION_SECRET_FIELDS);
+  }
+
+  _encryptSession(session) {
+    return this._encryptFields(session, SESSION_SECRET_FIELDS);
+  }
+
+  _decryptSession(session) {
+    return this._decryptFields(session, SESSION_SECRET_FIELDS);
+  }
+
   _migrateAccountSecrets() {
     let changed = false;
     for (const [id, account] of Object.entries(this.state.accounts ?? {})) {
@@ -163,6 +208,55 @@ export class JsonStore {
       }
     }
     if (changed) void this._persist();
+  }
+
+  _migrateUserSecrets() {
+    let changed = false;
+    for (const [id, user] of Object.entries(this.state.users ?? {})) {
+      const encrypted = this._encryptUser(user);
+      if (JSON.stringify(encrypted) !== JSON.stringify(user)) {
+        this.state.users[id] = encrypted;
+        changed = true;
+      }
+    }
+    if (changed) void this._persist();
+  }
+
+  _migrateVerificationSecrets() {
+    let changed = false;
+    for (const [id, verification] of Object.entries(this.state.verifications ?? {})) {
+      const encrypted = this._encryptVerification(verification);
+      if (JSON.stringify(encrypted) !== JSON.stringify(verification)) {
+        this.state.verifications[id] = encrypted;
+        changed = true;
+      }
+    }
+    if (changed) void this._persist();
+  }
+
+  _migrateSessionSecrets() {
+    let changed = false;
+    for (const [id, session] of Object.entries(this.state.sessions ?? {})) {
+      const encrypted = this._encryptSession(session);
+      if (JSON.stringify(encrypted) !== JSON.stringify(session)) {
+        this.state.sessions[id] = encrypted;
+        changed = true;
+      }
+    }
+    if (changed) void this._persist();
+  }
+
+  _rebuildUserEmailIndex() {
+    const next = {};
+    for (const user of Object.values(this.state.users ?? {}).map((item) =>
+      this._decryptUser(item),
+    )) {
+      if (user.email && user.id) next[user.email] = user.id;
+    }
+    if (JSON.stringify(next) !== JSON.stringify(this.state.userEmails ?? {})) {
+      this.state.userEmails = next;
+      void this._persist();
+    }
   }
 
   async _persist() {
@@ -280,5 +374,90 @@ export class JsonStore {
     return Object.values(this.state.accounts ?? {}).map((account) =>
       this._decryptAccount(account),
     );
+  }
+
+  upsertUser(user) {
+    this.state.users ??= {};
+    this.state.userEmails ??= {};
+    this.state.users[user.id] = this._encryptUser(user);
+    if (user.email) this.state.userEmails[user.email] = user.id;
+    void this._persist();
+    return user;
+  }
+
+  getUser(id) {
+    const user = this.state.users?.[id] ?? null;
+    return user ? this._decryptUser(user) : null;
+  }
+
+  findUserByEmail(email) {
+    const userId = this.state.userEmails?.[email] ?? null;
+    return userId ? this.getUser(userId) : null;
+  }
+
+  listUsers() {
+    return Object.values(this.state.users ?? {}).map((user) =>
+      this._decryptUser(user),
+    );
+  }
+
+  upsertVerification(verification) {
+    this.state.verifications ??= {};
+    this.state.verifications[verification.id] = this._encryptVerification(verification);
+    void this._persist();
+    return verification;
+  }
+
+  listVerifications(email = null, purpose = null) {
+    return Object.values(this.state.verifications ?? {})
+      .map((verification) => this._decryptVerification(verification))
+      .filter((verification) => !email || verification.email === email)
+      .filter((verification) => !purpose || verification.purpose === purpose)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  }
+
+  findLatestVerification(email, purpose) {
+    return this.listVerifications(email, purpose)[0] ?? null;
+  }
+
+  consumeVerifications(email, purpose, now = Date.now()) {
+    let changed = false;
+    for (const verification of this.listVerifications(email, purpose)) {
+      if (verification.consumed) continue;
+      verification.consumed = true;
+      verification.consumedAt = now;
+      verification.updatedAt = now;
+      this.state.verifications[verification.id] =
+        this._encryptVerification(verification);
+      changed = true;
+    }
+    if (changed) void this._persist();
+  }
+
+  upsertSession(session) {
+    this.state.sessions ??= {};
+    this.state.sessions[session.id] = this._encryptSession(session);
+    void this._persist();
+    return session;
+  }
+
+  getSession(id) {
+    const session = this.state.sessions?.[id] ?? null;
+    return session ? this._decryptSession(session) : null;
+  }
+
+  findSessionByTokenHash(tokenHash) {
+    return (
+      Object.values(this.state.sessions ?? {})
+        .map((session) => this._decryptSession(session))
+        .find((session) => session.tokenHash === tokenHash) ?? null
+    );
+  }
+
+  listSessions(userId = null) {
+    return Object.values(this.state.sessions ?? {})
+      .map((session) => this._decryptSession(session))
+      .filter((session) => !userId || session.userId === userId)
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   }
 }

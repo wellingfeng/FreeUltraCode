@@ -56,6 +56,47 @@ const REQUIRED_TOOLS = [
   },
 ];
 
+/**
+ * AI agent CLIs. These are optional (a project sync does not need them) and
+ * install globally through npm rather than the host package manager, so Node.js
+ * must be present first. Remote jobs spawn these console binaries to run the
+ * claude/codex/gemini adapters on the cloud host.
+ */
+const AGENT_TOOLS = [
+  {
+    id: 'claude',
+    label: 'Claude Code',
+    command: 'claude',
+    versionArgs: ['--version'],
+    channel: 'npm',
+    npmPackage: '@anthropic-ai/claude-code',
+  },
+  {
+    id: 'codex',
+    label: 'Codex',
+    command: 'codex',
+    versionArgs: ['--version'],
+    channel: 'npm',
+    npmPackage: '@openai/codex',
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    command: 'gemini',
+    versionArgs: ['--version'],
+    channel: 'npm',
+    npmPackage: '@google/gemini-cli',
+  },
+];
+
+/** All tools the environment panel knows about (required first, agents last). */
+const ALL_TOOLS = [...REQUIRED_TOOLS, ...AGENT_TOOLS];
+
+/** Look up a tool definition by id across required + agent tools. */
+function toolById(id) {
+  return ALL_TOOLS.find((t) => t.id === id) ?? null;
+}
+
 const INSTALL_TIMEOUT_MS = (() => {
   const raw = Number(process.env.UGS_RUNNER_ENV_INSTALL_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 600_000;
@@ -358,6 +399,11 @@ function nonInteractiveEnv(pm) {
 
 /** Human-readable install hint shown to the client (transparency, no secrets). */
 function installHintFor(toolId, pm) {
+  const tool = toolById(toolId);
+  // Agent CLIs install via npm global regardless of the host package manager.
+  if (tool?.channel === 'npm') {
+    return tool.npmPackage ? `npm install -g ${tool.npmPackage}` : null;
+  }
   const packages = packageNamesFor(toolId, pm);
   if (!pm || !packages) return null;
   const base = installInvocation(pm, packages);
@@ -365,13 +411,28 @@ function installHintFor(toolId, pm) {
   return `${base.command} ${base.args.join(' ')}`;
 }
 
+/** Whether a tool can be auto-installed given the detected package manager. */
+function isInstallable(tool, pm, nodeInstalled) {
+  if (tool.channel === 'npm') {
+    // npm globals need Node.js/npm present on the remote host.
+    return Boolean(tool.npmPackage) && nodeInstalled;
+  }
+  return Boolean(pm && packageNamesFor(tool.id, pm));
+}
+
 /** Build the full environment report for the remote host. */
 export async function detectEnvironment() {
   const pm = await detectPackageManager();
+  // Probe Node first so agent-CLI installability (npm global) can depend on it.
+  const probes = new Map();
+  for (const tool of ALL_TOOLS) {
+    probes.set(tool.id, await probeTool(tool));
+  }
+  const nodeInstalled = Boolean(probes.get('node')?.installed);
   const tools = [];
-  for (const tool of REQUIRED_TOOLS) {
-    const probe = await probeTool(tool);
-    const installable = Boolean(pm && packageNamesFor(tool.id, pm));
+  for (const tool of ALL_TOOLS) {
+    const probe = probes.get(tool.id);
+    const installable = isInstallable(tool, pm, nodeInstalled);
     tools.push({
       id: tool.id,
       label: tool.label,
@@ -379,6 +440,8 @@ export async function detectEnvironment() {
       version: probe.version,
       installable,
       installHint: installable ? installHintFor(tool.id, pm) : null,
+      required: tool.channel !== 'npm',
+      channel: tool.channel === 'npm' ? 'npm' : 'package-manager',
     });
   }
   const gitTool = tools.find((t) => t.id === 'git');
@@ -386,7 +449,8 @@ export async function detectEnvironment() {
     platform: osPlatform(),
     packageManager: pm,
     tools,
-    ready: tools.every((t) => t.installed),
+    // "ready" tracks only the required tools; optional agent CLIs do not block.
+    ready: tools.filter((t) => t.required).every((t) => t.installed),
     gitReady: Boolean(gitTool?.installed),
     checkedAt: Date.now(),
   };
@@ -399,7 +463,8 @@ function logTail(text, max = 4000) {
 }
 
 /**
- * Install the requested (or all missing required) tools on the remote host.
+ * Install the requested (or all missing) tools on the remote host. OS tools go
+ * through the host package manager; AI agent CLIs go through `npm install -g`.
  * Returns per-tool step results plus a fresh environment report.
  */
 export async function installEnvironment(input = {}) {
@@ -407,78 +472,112 @@ export async function installEnvironment(input = {}) {
   const before = await detectEnvironment();
   const requested =
     Array.isArray(input.tools) && input.tools.length
-      ? input.tools.filter((id) => REQUIRED_TOOLS.some((t) => t.id === id))
+      ? input.tools.filter((id) => ALL_TOOLS.some((t) => t.id === id))
       : before.tools.filter((t) => !t.installed).map((t) => t.id);
 
+  // Agent CLIs install via npm global; everything else via the OS package manager.
+  const npmIds = requested.filter((id) => toolById(id)?.channel === 'npm');
+  const pmIds = requested.filter((id) => toolById(id)?.channel !== 'npm');
+
   const steps = [];
-  if (!pm) {
-    for (const id of requested) {
+
+  // --- OS package-manager tools ---
+  if (pmIds.length) {
+    if (!pm) {
+      for (const id of pmIds) {
+        steps.push({
+          id,
+          ok: false,
+          error:
+            'no supported package manager found on the remote host; install git/node/python manually',
+        });
+      }
+    } else {
+      const installEnv = nonInteractiveEnv(pm);
+
+      // Refresh the package index once before installing. On freshly provisioned
+      // hosts (e.g. Tencent Cloud) the apt index is empty/stale, so a bare
+      // `apt-get install` fails with exit code 100 ("unable to locate package").
+      const refresh = refreshInvocation(pm);
+      if (refresh) {
+        const refreshCmd = withPrivilege(pm, refresh);
+        const refreshRes = await run(refreshCmd.command, refreshCmd.args, {
+          timeoutMs: INSTALL_TIMEOUT_MS,
+          env: installEnv,
+        });
+        steps.push({
+          id: '_refresh',
+          ok: refreshRes.code === 0,
+          log: logTail(`${refreshRes.stdout}\n${refreshRes.stderr}`),
+          error:
+            refreshRes.code === 0
+              ? null
+              : `index refresh failed (exit code ${refreshRes.code})`,
+        });
+      }
+
+      for (const id of pmIds) {
+        const packages = packageNamesFor(id, pm);
+        if (!packages) {
+          steps.push({ id, ok: false, error: `no install mapping for ${id} on ${pm}` });
+          continue;
+        }
+        const base = installInvocation(pm, packages);
+        if (!base) {
+          steps.push({ id, ok: false, error: `cannot build install command for ${pm}` });
+          continue;
+        }
+        const invocation = withPrivilege(pm, base);
+        const res = await run(invocation.command, invocation.args, {
+          timeoutMs: INSTALL_TIMEOUT_MS,
+          env: installEnv,
+        });
+        steps.push({
+          id,
+          ok: res.code === 0,
+          log: logTail(`${res.stdout}\n${res.stderr}`),
+          error: res.code === 0 ? null : `exit code ${res.code}`,
+        });
+      }
+    }
+  }
+
+  // --- AI agent CLIs (npm global) ---
+  if (npmIds.length) {
+    const nodeOk = before.tools.find((t) => t.id === 'node')?.installed;
+    for (const id of npmIds) {
+      const tool = toolById(id);
+      if (!tool?.npmPackage) {
+        steps.push({ id, ok: false, error: `no npm package mapping for ${id}` });
+        continue;
+      }
+      if (!nodeOk) {
+        steps.push({
+          id,
+          ok: false,
+          error: 'Node.js/npm is required first; install Node.js before this agent CLI',
+        });
+        continue;
+      }
+      const res = await run('npm', ['install', '-g', tool.npmPackage], {
+        timeoutMs: INSTALL_TIMEOUT_MS,
+        env: { npm_config_yes: 'true' },
+      });
       steps.push({
         id,
-        ok: false,
-        error:
-          'no supported package manager found on the remote host; install git/node/python manually',
+        ok: res.code === 0,
+        log: logTail(`${res.stdout}\n${res.stderr}`),
+        error: res.code === 0 ? null : `exit code ${res.code}`,
       });
     }
-    return {
-      ok: false,
-      platform: before.platform,
-      packageManager: null,
-      steps,
-      report: before,
-    };
-  }
-
-  const installEnv = nonInteractiveEnv(pm);
-
-  // Refresh the package index once before installing. On freshly provisioned
-  // hosts (e.g. Tencent Cloud) the apt index is empty/stale, so a bare
-  // `apt-get install` fails with exit code 100 ("unable to locate package").
-  const refresh = refreshInvocation(pm);
-  if (refresh) {
-    const refreshCmd = withPrivilege(pm, refresh);
-    const refreshRes = await run(refreshCmd.command, refreshCmd.args, {
-      timeoutMs: INSTALL_TIMEOUT_MS,
-      env: installEnv,
-    });
-    steps.push({
-      id: '_refresh',
-      ok: refreshRes.code === 0,
-      log: logTail(`${refreshRes.stdout}\n${refreshRes.stderr}`),
-      error:
-        refreshRes.code === 0
-          ? null
-          : `index refresh failed (exit code ${refreshRes.code})`,
-    });
-  }
-
-  for (const id of requested) {
-    const packages = packageNamesFor(id, pm);
-    if (!packages) {
-      steps.push({ id, ok: false, error: `no install mapping for ${id} on ${pm}` });
-      continue;
-    }
-    const base = installInvocation(pm, packages);
-    if (!base) {
-      steps.push({ id, ok: false, error: `cannot build install command for ${pm}` });
-      continue;
-    }
-    const invocation = withPrivilege(pm, base);
-    const res = await run(invocation.command, invocation.args, {
-      timeoutMs: INSTALL_TIMEOUT_MS,
-      env: installEnv,
-    });
-    steps.push({
-      id,
-      ok: res.code === 0,
-      log: logTail(`${res.stdout}\n${res.stderr}`),
-      error: res.code === 0 ? null : `exit code ${res.code}`,
-    });
   }
 
   const report = await detectEnvironment();
   return {
-    ok: steps.every((s) => s.ok) && report.ready,
+    // Success means every step we actually ran succeeded. Don't gate on
+    // report.ready: a single-tool install (e.g. just an agent CLI) must not
+    // report failure merely because other optional/required tools are missing.
+    ok: steps.length > 0 && steps.every((s) => s.ok),
     platform: report.platform,
     packageManager: pm,
     steps,

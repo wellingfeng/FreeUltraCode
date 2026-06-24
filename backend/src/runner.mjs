@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { EventEmitter } from 'node:events';
@@ -15,6 +14,11 @@ import {
   REMOTE_JOB_CANCELABLE_STATUSES,
 } from '../../packages/protocol/index.js';
 import { userSettingsRoot } from './user-settings.mjs';
+import { buildAgentEnv } from './agent-env.mjs';
+import {
+  createExecutionBackend,
+  resolveIsolationLevel,
+} from './execution-backend.mjs';
 import {
   assertWorkspaceBoundary,
   jobWorkspaceDir,
@@ -320,6 +324,11 @@ export class JobRunner extends EventEmitter {
       adapter: input.adapter ?? project?.adapter ?? 'claude',
       model: input.model ?? project?.model ?? null,
       accountId: input.accountId ?? null,
+      // How the agent process is isolated when it runs (process | container).
+      // Resolved now so the persisted job records the operator's intent.
+      isolationLevel: resolveIsolationLevel({
+        isolationLevel: input.isolationLevel ?? project?.isolationLevel,
+      }),
       prompt: input.prompt ?? '',
       pushBranch,
       logs: [],
@@ -547,12 +556,26 @@ export class JobRunner extends EventEmitter {
       return;
     }
 
-    if ((job.projectId || job.repoUrl) && !invocation.enforcesWorkspaceBoundary) {
+    // Workspace-boundary gate for project/repo jobs. A boundary can come from
+    // EITHER source:
+    //   1. the adapter itself (e.g. codex's own sandbox), or
+    //   2. kernel-level container isolation (isolationLevel === 'container'),
+    //      which confines the agent to the single mounted /workspace regardless
+    //      of which adapter runs inside it.
+    // Adapters like claude/gemini have no native sandbox, so the only safe way
+    // to run them against a shared project workspace is container isolation.
+    const isolation = resolveIsolationLevel(job);
+    const hasWorkspaceBoundary =
+      invocation.enforcesWorkspaceBoundary || isolation === 'container';
+    if ((job.projectId || job.repoUrl) && !hasWorkspaceBoundary) {
       job.error = `adapter does not enforce workspace boundary: ${job.adapter}`;
       this._log(job, {
         phase: 'model',
         stream: 'stderr',
-        text: job.error,
+        text:
+          `${job.error}; run this adapter with container isolation ` +
+          `(set isolationLevel="container" or UGS_RUNNER_ISOLATION=container) ` +
+          `to confine it to the project workspace`,
       });
       this._scrubSecrets(job);
       this._finalizeLedger(job, 'error');
@@ -637,17 +660,30 @@ export class JobRunner extends EventEmitter {
         if (parsed) usage = addUsage(usage, parsed);
       };
       try {
-        child = spawn(command, args, {
+        // Select the execution backend for this job's isolation level. The
+        // backend owns only the launch mechanism; tenant env scoping below and
+        // the workspace-boundary check above apply regardless. A container-level
+        // job hits the guarded stub and throws here (fail loud, never silently
+        // run unsandboxed).
+        const level = resolveIsolationLevel(job);
+        const backend = createExecutionBackend(level);
+        child = backend.spawnChild({
+          command,
+          args,
           cwd,
-          env: { ...process.env, ...(opts.env ?? {}) },
-          stdio: ['pipe', 'pipe', 'pipe'],
+          // Tenant isolation: do NOT inherit the runner's full process.env, which
+          // may hold other tenants' model keys. buildAgentEnv starts from a
+          // default-deny base (allowlisted, non-secret system vars only) and adds
+          // back exactly the per-job vars the caller injected (this job's key,
+          // UGS_HOME, …). See agent-env.mjs.
+          env: buildAgentEnv(opts.env ?? {}),
           windowsHide: true,
         });
       } catch (err) {
         this._log(job, {
           phase: 'model',
           stream: 'stderr',
-          text: `failed to spawn ${command}: ${String(err)}`,
+          text: `failed to spawn ${command}: ${String(err?.message ?? err)}`,
         });
         resolve({ code: -1, usage });
         return;

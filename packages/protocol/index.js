@@ -33,12 +33,22 @@ export const REMOTE_RUNNER_API_PATHS = Object.freeze({
   usageLedger: '/usage/ledger',
   accounts: '/accounts',
   userSettings: '/user-settings',
+  authRegister: '/auth/register',
+  authVerifyEmail: '/auth/verify-email',
+  authResendCode: '/auth/resend-code',
+  authLogin: '/auth/login',
+  authRefresh: '/auth/refresh',
+  authLogout: '/auth/logout',
+  authMe: '/auth/me',
+  authForgotPassword: '/auth/forgot-password',
+  authResetPassword: '/auth/reset-password',
   job: (id) => `/jobs/${encodeURIComponent(id)}`,
   jobArtifacts: (id) => `/jobs/${encodeURIComponent(id)}/artifacts`,
   jobCancel: (id) => `/jobs/${encodeURIComponent(id)}/cancel`,
   jobStream: (id) => `/jobs/${encodeURIComponent(id)}/stream`,
   project: (id) => `/projects/${encodeURIComponent(id)}`,
   projectFiles: (id) => `/projects/${encodeURIComponent(id)}/files`,
+  projectSkills: (id) => `/projects/${encodeURIComponent(id)}/skills`,
   projectEnvironment: (id) => `/projects/${encodeURIComponent(id)}/environment`,
   projectEnvironmentInstall: (id) =>
     `/projects/${encodeURIComponent(id)}/environment/install`,
@@ -87,6 +97,10 @@ export function matchRemoteRunnerProjectFilesPath(path) {
   return matchRemoteRunnerNestedIdPath(path, REMOTE_RUNNER_API_PATHS.projects, 'files');
 }
 
+export function matchRemoteRunnerProjectSkillsPath(path) {
+  return matchRemoteRunnerNestedIdPath(path, REMOTE_RUNNER_API_PATHS.projects, 'skills');
+}
+
 export function matchRemoteRunnerProjectEnvironmentPath(path) {
   return matchRemoteRunnerNestedIdPath(
     path,
@@ -117,6 +131,8 @@ function remoteEnvironmentEndpointError(data, status) {
   return data?.error ?? `runner returned ${status}`;
 }
 
+export const REMOTE_ISOLATION_LEVELS = Object.freeze(['process', 'container']);
+
 export const REMOTE_ENVIRONMENT_TOOL_IDS = Object.freeze([
   'git',
   'git-lfs',
@@ -125,6 +141,15 @@ export const REMOTE_ENVIRONMENT_TOOL_IDS = Object.freeze([
   'ffmpeg',
   'curl',
   'unzip',
+  'claude',
+  'codex',
+  'gemini',
+]);
+
+export const REMOTE_ENVIRONMENT_AGENT_TOOL_IDS = Object.freeze([
+  'claude',
+  'codex',
+  'gemini',
 ]);
 
 export function matchRemoteRunnerJobPath(path) {
@@ -208,6 +233,121 @@ export class RunnerClient {
       throw new Error(data.error ?? `runner returned ${res.status}`);
     }
     return data.job;
+  }
+
+  async register(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authRegister), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data;
+  }
+
+  async verifyEmail(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authVerifyEmail), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.session) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.session;
+  }
+
+  async resendCode(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authResendCode), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data;
+  }
+
+  async login(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authLogin), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.session) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.session;
+  }
+
+  async refresh(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authRefresh), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.session) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.session;
+  }
+
+  async logout(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authLogout), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data;
+  }
+
+  async me() {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authMe), {
+      headers: this.headers(),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.user) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.user;
+  }
+
+  async forgotPassword(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authForgotPassword), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data;
+  }
+
+  async resetPassword(input) {
+    const res = await fetch(this.url(REMOTE_RUNNER_API_PATHS.authResetPassword), {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.session) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.session;
   }
 
   async jobs() {
@@ -412,6 +552,21 @@ export class RunnerClient {
       throw new Error(data.error ?? `runner returned ${res.status}`);
     }
     return data.listing;
+  }
+
+  async listProjectSkills(projectId, opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.sync) params.set('sync', '1');
+    const suffix = params.toString() ? `?${params}` : '';
+    const res = await fetch(
+      this.url(`${REMOTE_RUNNER_API_PATHS.projectSkills(projectId)}${suffix}`),
+      { headers: this.headers() },
+    );
+    const data = await res.json();
+    if (!res.ok || !data.ok || !data.skills) {
+      throw new Error(data.error ?? `runner returned ${res.status}`);
+    }
+    return data.skills;
   }
 
   async uploadProjectFile(projectId, input) {

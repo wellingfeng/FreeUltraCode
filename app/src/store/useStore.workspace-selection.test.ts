@@ -446,4 +446,79 @@ describe('top workspace switcher selection (selectedWorkspaceId)', () => {
     expect(selection.modelClass).toBe('gpt-5.5');
     expect(selection.modelOverride).toBeUndefined();
   });
+
+  it('does not bind to a mismatched account when the project agent has none', async () => {
+    await historyStore.ready();
+    const remotePath = remoteWorkspacePath('rw_claude_no_account');
+    // Runner only exposes a Codex account, but the project is configured for
+    // the Claude agent with a Claude-family default model.
+    const codexProviderId = remoteProviderId('rw_claude_no_account', 'codex-main');
+    saveRemoteWorkspace({
+      id: 'rw_claude_no_account',
+      label: '远程项目',
+      serverUrl: 'https://runner.test',
+      projectId: 'proj_claude_no_account',
+      repoUrl: 'https://example.test/repo.git',
+      adapter: 'claude',
+      model: 'claude-opus-4-8',
+      useOwnModelKey: false,
+    });
+    upsertProviders([
+      {
+        id: codexProviderId,
+        kind: 'codex',
+        name: '远程项目 · Codex',
+        apiKey: 'remote-runner',
+        baseUrl: 'https://runner.test',
+        transport: 'cli',
+        model: 'gpt-5.5',
+      },
+    ]);
+    const ws = await historyStore.resolveWorkspaceByPath(remotePath);
+    const record = await historyStore.createSession({
+      workspaceId: ws.id,
+      isWorkflow: false,
+      messages: [],
+      title: '远程会话',
+    });
+
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: null,
+      selectedWorkspaceId: null,
+      activeSessionId: null,
+      workspaces: [ws],
+      sessions: [],
+      sessionTree: {
+        [ws.id]: [summaryFor(ws.id, record.id, record.title)],
+      },
+      workflow: defaultBlueprint('Local workflow'),
+      composer: { ...defaultComposer, workspace: '' },
+      composerBySession: {
+        [workflowSessionKeyId({ workspaceId: ws.id, sessionId: record.id })]: {
+          composer: { ...defaultComposer, workspace: remotePath },
+          gatewaySelection: {
+            adapter: 'claude-code',
+            modelClass: 'local-model',
+          },
+        },
+      },
+      locale: 'zh-CN',
+    });
+
+    useStore.getState().selectSession(record.id, ws.id);
+
+    await waitFor(
+      () => useStore.getState().activeSessionId === record.id,
+      'remote session activation',
+    );
+
+    const selection = workflowDefaultGatewaySelection(useStore.getState().workflow);
+    // Must stay on the Claude agent's system default, NOT hijack to Codex.
+    expect(selection.adapter).toBe('claude-code');
+    expect(selection.providerId).toBeUndefined();
+    expect(selection.systemDefault).toBe(true);
+    // The Claude-family default model is preserved for the Claude adapter.
+    expect(selection.modelClass).toBe('claude-opus-4-8');
+  });
 });

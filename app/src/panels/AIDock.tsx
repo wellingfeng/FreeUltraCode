@@ -277,14 +277,18 @@ import { shallow } from "zustand/shallow";
 import { isActiveAiEditingSession, useStore } from "@/store/useStore";
 import {
   getRemoteWorkspace,
+  getCachedRemoteWorkspaceSkills,
   isRemoteRunnerProvider,
   isRemoteWorkspacePath,
   parseRemoteProviderId,
   refreshRemoteWorkspaceAccounts,
+  refreshRemoteWorkspaceSkills,
+  remoteModelForAdapter,
   remoteRunnerProviderMatchesWorkspace,
   remoteWorkspaceIdFromPath,
   listRemoteWorkspaceDirectory,
   uploadRemoteWorkspaceFile,
+  REMOTE_WORKSPACE_SKILLS_UPDATED_EVENT,
 } from "@/lib/remoteWorkspace";
 import {
   isRemoteSettingsProfile,
@@ -1810,6 +1814,11 @@ export default function AIDock({
   const [slashCatalogEntries, setSlashCatalogEntries] = useState<
     SlashCatalogEntry[]
   >([]);
+  // Remote workspaces surface the *remote* project's slash commands / skills
+  // (synced once on connect, cached locally), not the local machine catalog.
+  const [remoteSlashCatalogEntries, setRemoteSlashCatalogEntries] = useState<
+    SlashCatalogEntry[]
+  >([]);
   const [modelStrategyOpen, setModelStrategyOpen] = useState(false);
   const [messageActionMenu, setMessageActionMenu] =
     useState<MessageActionMenu>(null);
@@ -1894,6 +1903,44 @@ export default function AIDock({
     };
   }, []);
 
+  // Load (and once-per-connect sync) the remote workspace's skill catalog. The
+  // `/` menu reads the cached entries; we only hit the network when the cache is
+  // empty for this workspace, mirroring how accounts/files sync on connect.
+  useEffect(() => {
+    if (!activeRemoteWorkspaceId) {
+      setRemoteSlashCatalogEntries([]);
+      return;
+    }
+    let cancelled = false;
+    const workspaceId = activeRemoteWorkspaceId;
+    const apply = () => {
+      if (cancelled) return;
+      setRemoteSlashCatalogEntries(
+        getCachedRemoteWorkspaceSkills(workspaceId) as SlashCatalogEntry[],
+      );
+    };
+    apply();
+
+    const onUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (!detail || detail.workspaceId === workspaceId) apply();
+    };
+    window.addEventListener(REMOTE_WORKSPACE_SKILLS_UPDATED_EVENT, onUpdated);
+
+    const config = getRemoteWorkspace(workspaceId);
+    if (config && getCachedRemoteWorkspaceSkills(workspaceId).length === 0) {
+      void refreshRemoteWorkspaceSkills(config).catch(() => undefined);
+    }
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        REMOTE_WORKSPACE_SKILLS_UPDATED_EVENT,
+        onUpdated,
+      );
+    };
+  }, [activeRemoteWorkspaceId]);
+
   useEffect(() => subscribeShortcutSettings(setShortcutSettingsState), []);
 
   const normalizedSearch = useMemo(
@@ -1936,9 +1983,16 @@ export default function AIDock({
       messageIndex,
     }));
   }, [messages]);
+  // Remote workspaces use the remote project's catalog (synced + cached); local
+  // workspaces use the desktop backend scan. Either way buildSlashSuggestions
+  // folds in the app-only static commands, so the only difference is whether the
+  // discovered skills come from the remote project or the local machine.
+  const activeSlashCatalogEntries = activeRemoteWorkspaceId
+    ? remoteSlashCatalogEntries
+    : slashCatalogEntries;
   const slashSuggestions = useMemo(
-    () => buildSlashSuggestions(slashCatalogEntries, locale),
-    [locale, slashCatalogEntries],
+    () => buildSlashSuggestions(activeSlashCatalogEntries, locale),
+    [locale, activeSlashCatalogEntries],
   );
   // Game-expert hierarchy entries (root → group → expert), surfaced in the `/`
   // menu only when experts are enabled. They route through the same explicit
@@ -2245,15 +2299,11 @@ export default function AIDock({
     const desktop = tauriAvailable();
     const sorted = listProviders()
       .filter((provider) => {
-        if (activeRemoteWorkspaceId) {
-          return (
-            isRemoteRunnerProvider(provider) &&
-            remoteRunnerProviderMatchesWorkspace(
-              provider,
-              activeRemoteWorkspaceId,
-            )
-          );
-        }
+        // 远程工作区下，listProviders() 已经在远程 profile 下返回该项目
+        // /user-settings 里的普通渠道（含 cc-switch 导入并同步过去的渠道），
+        // 外加本地缓存的 `remote-runner:` 执行账号。普通渠道要原样保留（用户
+        // 在远程项目里同样能选自己导入/同步的渠道），只对 `remote-runner:`
+        // 执行账号按工作区做归属过滤，避免别的项目的执行账号串台。
         if (!isRemoteRunnerProvider(provider)) return true;
         return remoteRunnerProviderMatchesWorkspace(
           provider,
@@ -2799,8 +2849,15 @@ export default function AIDock({
     const currentRemote = parseRemoteProviderId(runSelection.providerId);
     const config = getRemoteWorkspace(activeRemoteWorkspaceId);
     if (!config) return;
-    const projectModel = config.model?.trim();
     if (currentRemote?.workspaceId === activeRemoteWorkspaceId) {
+      // Only stamp the project's default model when it's compatible with the
+      // selected account's adapter family. A Claude-family default (e.g.
+      // claude-opus-4-8) must never be forced onto a Codex/Gemini account —
+      // doing so showed "claude-opus-4-8" under a Codex channel.
+      const projectModel = remoteModelForAdapter(
+        selectedAdapter === "claude-code",
+        config.model,
+      );
       if (!projectModel) return;
       const currentModel =
         runSelection.modelOverride?.trim() || runSelection.modelClass?.trim();
@@ -2823,14 +2880,27 @@ export default function AIDock({
     const applyRemoteSelection = (providers: Provider[]) => {
       if (disposed) return;
       const targetAdapter = remoteAdapterToRuntimeAdapter(config.adapter);
-      const provider =
-        providers.find((item) => providerKindToAdapter(item.kind) === targetAdapter) ??
-        providers[0];
+      // Bind only to an account that matches the project's configured agent.
+      // When the project agent has no account on this runner, stay on that
+      // agent's system default instead of hijacking to a mismatched account
+      // (e.g. forcing Codex when the project is configured for Claude).
+      const provider = providers.find(
+        (item) => providerKindToAdapter(item.kind) === targetAdapter,
+      );
       if (provider) {
-        setSessionRunSelection(providerSelection(provider, config.model));
+        const providerAdapter = providerKindToAdapter(provider.kind);
+        // Strip a Claude-family project model when binding a non-Claude account.
+        const model = remoteModelForAdapter(
+          providerAdapter === "claude-code",
+          config.model,
+        );
+        setSessionRunSelection(providerSelection(provider, model));
         return;
       }
-      const model = config.model?.trim();
+      const model = remoteModelForAdapter(
+        targetAdapter === "claude-code",
+        config.model,
+      );
       setSessionRunSelection({
         ...systemDefaultGatewaySelection(targetAdapter),
         ...(model ? { modelClass: model, modelOverride: model } : {}),
@@ -2857,6 +2927,7 @@ export default function AIDock({
     runSelection.modelClass,
     runSelection.modelOverride,
     runSelection.providerId,
+    selectedAdapter,
     setSessionRunSelection,
     simpleChatMode,
   ]);
