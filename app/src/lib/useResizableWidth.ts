@@ -42,8 +42,6 @@ export function useResizableWidth(opts: {
       e.preventDefault();
       const startX = e.clientX;
       const startWidth = width;
-      const prevUserSelect = document.body.style.userSelect;
-      const prevCursor = document.body.style.cursor;
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'col-resize';
 
@@ -51,11 +49,19 @@ export function useResizableWidth(opts: {
         const delta = ev.clientX - startX;
         setWidth(clamp(edge === 'right' ? startWidth + delta : startWidth - delta));
       };
-      const onUp = () => {
+      // Always clear the overrides outright rather than restoring a saved
+      // value: a saved value can itself be a stale 'col-resize' from a drag
+      // that never received its mouseup (e.g. released over a webview/iframe),
+      // which would otherwise leave the resize cursor stuck permanently.
+      const cleanup = () => {
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
-        document.body.style.userSelect = prevUserSelect;
-        document.body.style.cursor = prevCursor;
+        window.removeEventListener('blur', onUp);
+        document.body.style.removeProperty('user-select');
+        document.body.style.removeProperty('cursor');
+      };
+      const onUp = () => {
+        cleanup();
         setWidth((w) => {
           savePaneWidth(storageKey, w);
           return w;
@@ -63,6 +69,7 @@ export function useResizableWidth(opts: {
       };
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
+      window.addEventListener('blur', onUp);
     },
     [width, edge, clamp, storageKey],
   );

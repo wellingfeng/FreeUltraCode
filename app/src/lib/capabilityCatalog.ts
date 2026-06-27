@@ -41,6 +41,11 @@ const SETTINGS_COMMAND_NAMES = [
 const GAME_PROJECT_SETTINGS_COMMAND_NAMES = [
   "/game",
   "/image-to-game",
+  "/gdd-mode-start",
+  "/gdd-mode-end",
+  "/game-template-skill",
+  "/game-debug-skill",
+  "/game-verify-report",
   "/mesh-mode-start",
   "/mesh-mode-end",
   "/mesh-search",

@@ -999,6 +999,118 @@ describe("AIDock slash suggestions", () => {
     }
   });
 
+  it("toggles sticky GDD mode via /gdd-mode-start and /gdd-mode-end", async () => {
+    resetStore();
+    const generateGddPrompt = vi.fn();
+    const sendPrompt = vi.fn(() => true);
+    useStore.setState({ generateGddPrompt, sendPrompt });
+    const view = await renderDock();
+
+    const submitEnter = (input: HTMLTextAreaElement) =>
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          ctrlKey: true,
+          bubbles: true,
+        }),
+      );
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, "/gdd-mode-start");
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.gddMode).toBe(true);
+      expect(useStore.getState().composer.gddModeStartedAt).toBeGreaterThan(0);
+      expect(useStore.getState().composer.imageMode).toBe(false);
+      expect(useStore.getState().composer.uiMode).toBe(false);
+      expect(generateGddPrompt).not.toHaveBeenCalled();
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === "system" && m.text.includes("已进入 GDD 模式"),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, "把核心循环改成探索-收集-建造");
+        submitEnter(input);
+      });
+      expect(generateGddPrompt).toHaveBeenCalledWith(
+        "把核心循环改成探索-收集-建造",
+      );
+      expect(sendPrompt).not.toHaveBeenCalled();
+
+      await act(async () => {
+        typeTextarea(input, "/review 检查 GDD 风险");
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        typeTextarea(input, "/gdd-mode-end");
+        submitEnter(input);
+      });
+      expect(useStore.getState().composer.gddMode).toBe(false);
+      expect(useStore.getState().composer.gddModeStartedAt).toBeNull();
+      expect(generateGddPrompt).toHaveBeenLastCalledWith("", {
+        finalize: true,
+      });
+      expect(
+        useStore
+          .getState()
+          .messages.some(
+            (m) => m.role === "system" && m.text.includes("已退出 GDD 模式"),
+          ),
+      ).toBe(true);
+
+      await act(async () => {
+        typeTextarea(input, "加一个登录节点");
+        submitEnter(input);
+      });
+      expect(sendPrompt).toHaveBeenCalledWith(
+        expect.stringContaining("加一个登录节点"),
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it("enters GDD mode and drafts when text follows /gdd-mode-start", async () => {
+    resetStore();
+    const generateGddPrompt = vi.fn();
+    const sendPrompt = vi.fn(() => true);
+    useStore.setState({ generateGddPrompt, sendPrompt });
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, "/gdd-mode-start 做一个双摇杆肉鸽塔防");
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+
+      expect(useStore.getState().composer.gddMode).toBe(true);
+      expect(useStore.getState().composer.gddModeStartedAt).toBeGreaterThan(0);
+      expect(generateGddPrompt).toHaveBeenCalledWith("做一个双摇杆肉鸽塔防");
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(input.value).toBe("");
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it("toggles sticky UE Blueprint mode via /blueprint-mode-start and /blueprint-mode-end", async () => {
     resetStore();
     const generateBlueprintPrompt = vi.fn();

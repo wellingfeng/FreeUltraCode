@@ -240,7 +240,14 @@ describe('extractSessionFiles', () => {
     });
   });
 
-  it('adds persisted snapshot changes as edited session files', () => {
+  it('ignores snapshot changes for files the session never edited', () => {
+    // Even a trusted filesystem snapshot must not invent edited rows or promote
+    // read-only files: a dirty workspace's diff can contain the user's own
+    // changes, which would otherwise leak into the session's edited-file list.
+    const activity = extractSessionFiles([
+      assistant('a1', 10, toolBlock('r', 'Read', { args: { file_path: 'src/read-only.ts' } })),
+      assistant('a2', 20, toolBlock('e', 'Edit', { args: { file_path: 'src/app.ts' } })),
+    ]);
     const changes: WorkspaceChanges = {
       rootPath: 'E:/UltraGameStudio',
       generatedAtMs: 50,
@@ -248,15 +255,16 @@ describe('extractSessionFiles', () => {
       truncated: false,
       files: [
         { path: 'src/app.ts', oldPath: null, status: 'modified', binary: false, truncated: false, lines: [] },
-        { path: 'src/new.ts', oldPath: null, status: 'added', binary: false, truncated: false, lines: [] },
+        { path: 'src/read-only.ts', oldPath: null, status: 'modified', binary: false, truncated: false, lines: [] },
+        { path: 'src/user-edited.ts', oldPath: null, status: 'modified', binary: false, truncated: false, lines: [] },
       ],
     };
 
-    const files = mergeSessionFilesWithWorkspaceChanges([], changes);
+    const files = mergeSessionFilesWithWorkspaceChanges(activity, changes);
 
     expect(files.map((f) => [f.path, f.action, f.changeStatus])).toEqual([
       ['src/app.ts', 'edited', 'modified'],
-      ['src/new.ts', 'edited', 'added'],
+      ['src/read-only.ts', 'read', undefined],
     ]);
   });
 

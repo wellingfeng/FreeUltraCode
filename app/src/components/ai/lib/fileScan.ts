@@ -26,9 +26,30 @@ const PATH_RUN = /[\p{L}\p{N}._~$@+%\-/\\:#]+/gu;
 // after ':' — that is a line number). We only strip from the very end.
 const TRAILING = /[.,;:!?]+$/;
 
+// An absolute Windows path anchor embedded somewhere inside a run: a drive
+// letter (`E:\` / `E:/`) or a UNC prefix (`\\`). Because PATH_RUN also matches
+// Unicode letters, prose glued directly onto a pasted absolute path with no
+// separating whitespace (`看这个图片E:\…\shot.png`) is swallowed into a single
+// run whose embedded drive colon then defeats parseFileRef. When the whole run
+// fails to parse we retry from the first such anchor and treat the preceding
+// characters as plain prose. A drive letter is a single character, so the match
+// index lands exactly on the path start regardless of what prose precedes it.
+const EMBEDDED_ABS_ANCHOR = /[A-Za-z]:[\\/]|\\\\/;
+
 /** Cheap whole-string gate: does the text contain any path-ish punctuation? */
 function mightContainPath(text: string): boolean {
   return text.includes('.') || /[\\/]/.test(text);
+}
+
+/**
+ * Split trailing sentence punctuation off a candidate token, leaving a `:NN`
+ * line/column suffix intact. Returns the cleaned core plus the peeled tail.
+ */
+function stripTrailingPunctuation(token: string): { core: string; trailing: string } {
+  if (/[:#]L?\d/.test(token)) return { core: token, trailing: '' };
+  const tm = token.match(TRAILING);
+  if (!tm) return { core: token, trailing: '' };
+  return { core: token.slice(0, token.length - tm[0].length), trailing: tm[0] };
 }
 
 export function scanFileRefs(text: string): FileScanPart[] {
@@ -47,26 +68,35 @@ export function scanFileRefs(text: string): FileScanPart[] {
   PATH_RUN.lastIndex = 0;
   for (let m = PATH_RUN.exec(text); m; m = PATH_RUN.exec(text)) {
     const run = m[0];
-    const start = m.index;
+    let start = m.index;
+    let core = run;
+
+    // Prose glued onto an absolute path with no separating space lands the whole
+    // thing in one run (`看这个图片E:\…\shot.png`). An absolute anchor — a drive
+    // letter (`E:\`/`E:/`) or UNC prefix (`\\`) — marks a path start that can't
+    // have valid path content before it. When one appears mid-run AND the
+    // remainder parses as a file, split there and emit the prefix as plain text.
+    // Gating on a successful parse keeps URLs (`https://…`, whose `s://` also
+    // matches the drive shape) and other non-paths from being fragmented.
+    const anchor = core.search(EMBEDDED_ABS_ANCHOR);
+    if (anchor > 0 && parseFileRef(stripTrailingPunctuation(core.slice(anchor)).core)) {
+      pushText(text.slice(cursor, start + anchor));
+      cursor = start + anchor;
+      start += anchor;
+      core = run.slice(anchor);
+    }
 
     // Peel trailing sentence punctuation, but never strip a `:NN` line suffix.
-    let core = run;
-    let trailing = '';
-    const hasLineSuffix = /[:#]L?\d/.test(core);
-    if (!hasLineSuffix) {
-      const tm = core.match(TRAILING);
-      if (tm) {
-        trailing = tm[0];
-        core = core.slice(0, core.length - trailing.length);
-      }
-    }
+    const peeled = stripTrailingPunctuation(core);
+    core = peeled.core;
+    const trailing = peeled.trailing;
 
     const ref = core.length > 1 ? parseFileRef(core) : null;
     if (ref) {
       pushText(text.slice(cursor, start));
       out.push(ref);
       if (trailing) pushText(trailing);
-      cursor = start + run.length;
+      cursor = start + core.length + trailing.length;
     }
     // No match: leave the run in the pending plain-text span (flushed below).
   }

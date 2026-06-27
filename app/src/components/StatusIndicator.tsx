@@ -6,6 +6,7 @@ export type StatusTone =
   | 'unrun'
   | 'running'
   | 'waiting'
+  | 'draft'
   | 'success'
   | 'failed';
 
@@ -24,6 +25,7 @@ const TONE_STYLE: Record<StatusTone, CSSProperties> = {
   unrun: statusColorStyle('var(--status-ai-edit)'),
   running: statusColorStyle('var(--status-success)'),
   waiting: statusColorStyle('var(--status-running)'),
+  draft: statusColorStyle('var(--status-draft)'),
   success: statusColorStyle('var(--status-success)'),
   failed: statusColorStyle('var(--status-error)'),
 };

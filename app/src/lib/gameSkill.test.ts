@@ -99,11 +99,16 @@ describe('GAME_SKILLS registry', () => {
     }
   });
 
-  it('covers the 34 app-introduced commands and excludes generic shortcuts', () => {
+  it('covers the 39 app-introduced commands and excludes generic shortcuts', () => {
     const names = GAME_SKILLS.map((s) => s.name);
-    expect(names).toHaveLength(34);
+    expect(names).toHaveLength(39);
     // Sample of each category is present.
     expect(names).toContain('/game');
+    expect(names).toContain('/gdd-mode-start');
+    expect(names).toContain('/gdd-mode-end');
+    expect(names).toContain('/game-template-skill');
+    expect(names).toContain('/game-debug-skill');
+    expect(names).toContain('/game-verify-report');
     expect(names).toContain('/image-mode-start');
     expect(names).toContain('/image-mode-end');
     expect(names).toContain('/video-to-frames');

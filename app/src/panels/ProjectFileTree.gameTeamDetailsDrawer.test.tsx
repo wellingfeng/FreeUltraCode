@@ -105,6 +105,14 @@ async function renderProjectFileTree(): Promise<{
   };
 }
 
+async function flushAsyncSessionFiles(): Promise<void> {
+  for (let i = 0; i < 2; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+}
+
 afterEach(() => {
   window.localStorage.clear();
   document.body.innerHTML = '';
@@ -112,6 +120,27 @@ afterEach(() => {
 });
 
 describe('ProjectFileTree game team details vs file preview drawer', () => {
+  it('defers session-file derivation until after the panel can paint', async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
+    resetStore();
+    const view = await renderProjectFileTree();
+
+    try {
+      expect(view.container.textContent).toContain('读取会话文件');
+      expect(view.container.textContent).not.toContain('App.tsx');
+
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      expect(view.container.textContent).toContain('App.tsx');
+    } finally {
+      await view.cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it('handles global file preview requests inside the existing project panel', async () => {
     resetStore();
     const view = await renderProjectFileTree();
@@ -161,6 +190,7 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       await act(async () => {
         sessionTab!.click();
       });
+      await flushAsyncSessionFiles();
 
       const fileButton = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button'),
@@ -217,6 +247,7 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       await act(async () => {
         sessionTab!.click();
       });
+      await flushAsyncSessionFiles();
 
       const fileButton = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button'),
@@ -265,6 +296,7 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       await act(async () => {
         sessionTab!.click();
       });
+      await flushAsyncSessionFiles();
 
       const fileButton = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button'),

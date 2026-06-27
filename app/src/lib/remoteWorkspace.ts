@@ -72,6 +72,8 @@ export type {
   RemoteJobStatus,
   RemoteRunnerAccount,
   RemoteRunnerAccountInput,
+  RemoteRunnerAuthSession,
+  RemoteRunnerAuthUser,
   RemoteRunnerFileUpload,
   RemoteRunnerFileUploadInput,
   RemoteRunnerFileUploadNamespace,
@@ -129,6 +131,14 @@ export interface RemoteWorkspaceConfig {
   pushBranch?: string;
   /** Whether to send the client's own model key (vs. using the server's). */
   useOwnModelKey: boolean;
+  /**
+   * True only when the user explicitly created/saved this workspace via the
+   * "添加云端项目" dialog. Auto-binding (ensureRemoteWorkspaceProject) must NOT
+   * set this — it only fills projectId/repoUrl on whatever workspace is in use,
+   * including ghost prefills. Startup purge relies on this provenance flag (not
+   * on the presence of projectId/repoUrl) to decide what is a genuine project.
+   */
+  userCreated?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -414,6 +424,9 @@ export function saveRemoteWorkspace(
     model: input.model?.trim() || undefined,
     pushBranch: input.pushBranch?.trim() || undefined,
     useOwnModelKey: input.useOwnModelKey ?? existing?.useOwnModelKey ?? false,
+    // Provenance: stays true once the user created it; auto-binding leaves
+    // `input.userCreated` undefined and must never demote an existing flag.
+    userCreated: input.userCreated ?? existing?.userCreated ?? false,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -462,15 +475,19 @@ function clearRemoteRunnerConnection(): void {
  * 默认共享 Token）。用户即便只是点开看看再保存，也会落下一条指向默认服务器的
  * 云端工作区，导致本地项目意外显示成云端。
  *
- * 判定为「纯预填产物」需同时满足：
+ * 旧实现用「是否绑定了 projectId/repoUrl」当作真实项目的判据，但这是错的：
+ * 幽灵空壳一旦被使用，`ensureRemoteWorkspaceProject` 会自动给它补上 projectId，
+ * 于是它永远满足「有内容」而免于清理 → 本地项目反复被顶成云端。
+ *
+ * 现以「显式来源」判定。判定为「纯预填产物」需同时满足：
  *   - 工作区 serverUrl 指向内置默认（或本机回环）；
- *   - 工作区没有项目内容（既无 repoUrl 也无 projectId，即从未绑定真实项目）；
+ *   - 工作区不是用户通过对话框显式创建的（userCreated 非 true）；
  *   - 该工作区没有自己保存过的非默认 per-workspace Token；
  *   - 全局连接要么没保存过，要么本身就是默认共享 Token（即用户从未改过）。
  *
  * 满足时删除该工作区配置/密钥/provider，并返回被删的 id 列表，便于上层
  * 同步清理历史工作区索引中对应的 `remote://` 记录。用户真正配置过的默认
- * Runner 项目（已绑定仓库/项目 id，或改过 Token）不会被误删。
+ * Runner 项目（userCreated 或改过 Token）不会被误删。
  *
  * @returns 被删除的工作区 id 列表（用于同步清理历史索引）。
  */
@@ -489,16 +506,17 @@ export function purgeDefaultRemoteWorkspaces(): string[] {
       isDefaultRunnerServerUrl(workspace.serverUrl) ||
       isLoopbackServerUrl(workspace.serverUrl);
     if (!pointsAtDefault) continue;
-    // 有项目内容（已绑定仓库或服务端项目 id）的不是纯预填空壳，保留——
-    // 即便它用的是内置默认 Token，也属于用户有意保存的真实云端项目。
-    const hasProjectContent =
-      Boolean(workspace.repoUrl?.trim()) || Boolean(workspace.projectId?.trim());
-    if (hasProjectContent) {
+    // 用户通过对话框显式创建的，是有意保存的真实云端项目，保留——
+    // 即便它用的是内置默认 Token、且 projectId 是后来自动绑定的。
+    if (workspace.userCreated) {
       keptRealDefaultProject = true;
       continue;
     }
     const ownToken = readRemoteSecrets(workspace.id).token.trim();
-    if (ownToken && ownToken !== DEFAULT_REMOTE_RUNNER_TOKEN) continue;
+    if (ownToken && ownToken !== DEFAULT_REMOTE_RUNNER_TOKEN) {
+      keptRealDefaultProject = true;
+      continue;
+    }
     deleteRemoteWorkspace(workspace.id);
     removed.push(workspace.id);
   }
@@ -789,6 +807,8 @@ function bindRemoteWorkspaceProject(
     adapter: (project.adapter as RemoteAdapter | undefined) ?? config.adapter,
     model: project.model ?? config.model,
     useOwnModelKey: config.useOwnModelKey,
+    // Preserve provenance: auto-binding never promotes a ghost to user-created.
+    userCreated: config.userCreated,
   };
   if (
     config.projectId === next.projectId &&

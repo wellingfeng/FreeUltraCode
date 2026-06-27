@@ -24,6 +24,9 @@ RUN npm install -g @openai/codex@0.141.0 \
 
 WORKDIR /app
 COPY backend/package.json ./
+# Install runtime deps (argon2 password hashing, nodemailer SMTP, Tencent SES SDK)
+# required by the multi-user email auth backend.
+RUN npm install --omit=dev --no-audit --no-fund
 COPY backend/src ./src
 # Codex gateway config + api key (packyapi). Lives at CODEX_HOME.
 COPY backend/deploy/codex ./.codex

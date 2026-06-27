@@ -342,6 +342,15 @@ export interface StoreState {
     options?: { providerId?: ImageProviderId; model?: string },
   ) => void;
   /**
+   * GDD mode turn: route the request through the selected coding model with
+   * instructions to update/freeze the game design document contract instead of
+   * editing an UltraGameStudio workflow blueprint.
+   */
+  generateGddPrompt: (
+    text: string,
+    options?: { finalize?: boolean },
+  ) => void;
+  /**
    * ComfyUI mode turn: ask the selected coding model to author a ComfyUI prompt
    * graph and emit it as a ```comfyui fenced block, which the chat stream then
    * renders as an embedded, expandable node graph. Wired to the

@@ -627,7 +627,13 @@ export default function FilePreviewDrawer({
           {file && canOpenExternally && (
             <button
               type="button"
-              onClick={() => void openLocalPath(file.path)}
+              onClick={() => {
+                void openLocalPath(file.path).then((opened) => {
+                  if (!opened && typeof window !== 'undefined') {
+                    window.alert(`无法用系统默认程序打开该文件：\n${file.path}`);
+                  }
+                });
+              }}
               title="用系统默认程序打开"
               aria-label="用系统默认程序打开"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-panel-2 text-fg-dim transition-colors hover:border-accent hover:text-fg"

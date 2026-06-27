@@ -21,6 +21,7 @@ import { HL_LANGUAGES, HL_ALIASES } from './lib/highlight';
 import { repairMarkdown, repairFences } from './lib/repairMarkdown';
 import { normalizeMath } from './lib/normalizeMath';
 import { protectWindowsPaths } from './lib/protectWindowsPaths';
+import { convertInlineHtml } from './lib/htmlInline';
 import { scanFileRefs } from './lib/fileScan';
 import { parseToolLine } from './lib/toolLine';
 import CodeBlock from './CodeBlock';
@@ -88,7 +89,7 @@ function MarkdownImpl({
   cwd?: string;
 }) {
   const normalized = useMemo(
-    () => protectWindowsPaths(normalizeMath(text)),
+    () => protectWindowsPaths(convertInlineHtml(normalizeMath(text))),
     [text],
   );
   // An unbalanced ``` fence must be closed even on the final render: otherwise

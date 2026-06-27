@@ -80,6 +80,102 @@ export interface ToolSentinelSplit {
   parts: Array<{ text: string } | { patch: ToolEventPatch }>;
 }
 
+export interface ExtractToolSentinelsOptions {
+  /**
+   * While the live bubble is streaming, a trailing sentinel can be *half*
+   * arrived — `<<UGS_TOOL>>{…` with no `<<UGS_TOOL_END>>` yet (common when a
+   * tool's args carry a large `new_string`/`content` body that spans many
+   * stdout chunks). With this flag the incomplete tail is rendered as an
+   * in-progress tool card (best-effort name + subject from the fields that have
+   * arrived) instead of leaking the raw JSON fragment as prose.
+   */
+  streamingTail?: boolean;
+}
+
+/** Stable id for the placeholder card when the streamed sentinel has no id yet. */
+const STREAMING_TOOL_ID = 'streaming-tool-tail';
+
+/**
+ * Decode one fully-closed `"key":"value"` pair from a (possibly truncated) JSON
+ * fragment. The currently-streaming field is unterminated, so it simply won't
+ * match — we only read fields that already finished arriving. Matches the first
+ * occurrence, which for our payloads is the real key (real keys precede any
+ * mention inside a long value body).
+ */
+function extractStringField(fragment: string, key: string): string | undefined {
+  const re = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`);
+  const m = re.exec(fragment);
+  if (!m) return undefined;
+  try {
+    return JSON.parse(`"${m[1]}"`);
+  } catch {
+    return m[1];
+  }
+}
+
+/** Best-effort tool name from the arg keys that have streamed so far. */
+function inferToolName(fragment: string): string {
+  if (/"command"\s*:/.test(fragment)) return 'Bash';
+  if (/"new_string"\s*:/.test(fragment) || /"old_string"\s*:/.test(fragment)) return 'Edit';
+  if (/"content"\s*:/.test(fragment) && /"file_path"\s*:/.test(fragment)) return 'Write';
+  if (/"pattern"\s*:/.test(fragment)) return 'Grep';
+  if (/"file_path"\s*:/.test(fragment) || /"path"\s*:/.test(fragment)) return 'Read';
+  return 'tool';
+}
+
+/** Pick a one-line subject (command/path/pattern) from the streamed fields. */
+function pickStreamingSubject(fragment: string): string | undefined {
+  const raw =
+    extractStringField(fragment, 'subject') ??
+    extractStringField(fragment, 'command') ??
+    extractStringField(fragment, 'pattern') ??
+    extractStringField(fragment, 'file_path') ??
+    extractStringField(fragment, 'path') ??
+    extractStringField(fragment, 'query') ??
+    extractStringField(fragment, 'url') ??
+    extractStringField(fragment, 'description');
+  if (!raw) return undefined;
+  return raw.replace(/[\r\n]+/g, ' ').trim().slice(0, 200) || undefined;
+}
+
+/**
+ * Cut a streamed JSON fragment right after the opening quote of the first "big
+ * body" value (`new_string` / `old_string` / `content` / `result`). That value
+ * is the one still arriving, so it is unterminated and its (escaped) contents
+ * must not be scanned for fields — a `"name": …` inside a file body is not the
+ * tool's name. The body *key* is kept (so name inference still sees it), but the
+ * value is dropped. Everything before it (id, name, subject, file_path, …) has
+ * finished arriving.
+ */
+function safeFieldPrefix(fragment: string): string {
+  let cut = fragment.length;
+  for (const key of ['new_string', 'old_string', 'content', 'result']) {
+    const re = new RegExp(`"${key}"\\s*:\\s*"`);
+    const m = re.exec(fragment);
+    if (m) {
+      const end = m.index + m[0].length;
+      if (end < cut) cut = end;
+    }
+  }
+  return fragment.slice(0, cut);
+}
+
+/**
+ * Turn a half-streamed sentinel body (`{…` with no closing brace yet) into an
+ * in-progress patch. Returns null when the fragment doesn't look like our JSON
+ * payload (so a literal `<<UGS_TOOL>>` the model typed in prose is left alone).
+ */
+function parsePartialToolPatch(fragment: string): ToolEventPatch | null {
+  if (!/^\s*\{/.test(fragment)) return null;
+  const safe = safeFieldPrefix(fragment);
+  const id = extractStringField(safe, 'id') ?? STREAMING_TOOL_ID;
+  const name = extractStringField(safe, 'name') ?? inferToolName(safe);
+  const subject = pickStreamingSubject(safe);
+  const patch: ToolEventPatch = { id, name, status: 'running' };
+  if (subject) patch.subject = subject;
+  return patch;
+}
+
 /**
  * Pull every `<<UGS_TOOL>>…<<UGS_TOOL_END>>` block out of `text`, returning the
  * cleaned text, the decoded patches, and an ordered parts list that preserves
@@ -87,11 +183,15 @@ export interface ToolSentinelSplit {
  * incomplete blocks (e.g. a half-streamed sentinel with no close yet) are left
  * in place so they resolve on the next chunk rather than leaking as garbage.
  */
-export function extractToolSentinels(text: string): ToolSentinelSplit {
+export function extractToolSentinels(
+  text: string,
+  options: ExtractToolSentinelsOptions = {},
+): ToolSentinelSplit {
   if (!text.includes(TOOL_OPEN)) {
     return { text, patches: [], parts: text ? [{ text }] : [] };
   }
 
+  const { streamingTail = false } = options;
   const patches: ToolEventPatch[] = [];
   const parts: Array<{ text: string } | { patch: ToolEventPatch }> = [];
   let out = '';
@@ -115,11 +215,28 @@ export function extractToolSentinels(text: string): ToolSentinelSplit {
     }
     const close = text.indexOf(TOOL_CLOSE, open + TOOL_OPEN.length);
     if (close === -1) {
-      // Incomplete trailing sentinel — keep everything from `open` verbatim so
-      // it can complete on the next streamed chunk.
-      const tail = text.slice(cursor);
-      out += tail;
-      pendingText += tail;
+      // Incomplete trailing sentinel — `<<UGS_TOOL>>{…` with no close yet.
+      const fragment = text.slice(open + TOOL_OPEN.length);
+      const partial = streamingTail ? parsePartialToolPatch(fragment) : null;
+      if (partial) {
+        // Render the still-arriving call as an in-progress card instead of
+        // leaking the raw JSON fragment as prose. Emit the prose before the
+        // marker, then a fresh `running` patch; the unfinished body is dropped
+        // from the text projection (it isn't real prose).
+        const before = text.slice(cursor, open);
+        out += before;
+        pendingText += before;
+        flushText();
+        patches.push(partial);
+        parts.push({ patch: partial });
+      } else {
+        // Not streaming, or the fragment is a literal marker the model typed in
+        // prose — keep everything from `open` verbatim so it can complete on the
+        // next chunk (or survive as the literal text it is).
+        const tail = text.slice(cursor);
+        out += tail;
+        pendingText += tail;
+      }
       break;
     }
     const before = text.slice(cursor, open);

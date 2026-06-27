@@ -63,4 +63,51 @@ describe('useResizableWidth', () => {
       await cleanup(root, container);
     }
   });
+
+  it('clears the resize cursor after a drag, even when it was already stale', async () => {
+    // Simulate a previous drag that never cleaned up (e.g. mouseup was lost
+    // over a webview), leaving the body stuck on the resize cursor.
+    document.body.style.cursor = 'col-resize';
+    const { container, root } = await renderProbe();
+
+    try {
+      const button = container.querySelector('button')!;
+      await act(async () => {
+        button.dispatchEvent(
+          new MouseEvent('mousedown', { bubbles: true, clientX: 200 }),
+        );
+      });
+      expect(document.body.style.cursor).toBe('col-resize');
+
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('mouseup'));
+      });
+      // Must be cleared outright, not restored to the stale 'col-resize'.
+      expect(document.body.style.cursor).toBe('');
+      expect(document.body.style.userSelect).toBe('');
+    } finally {
+      await cleanup(root, container);
+    }
+  });
+
+  it('clears the resize cursor when the window loses focus mid-drag', async () => {
+    const { container, root } = await renderProbe();
+
+    try {
+      const button = container.querySelector('button')!;
+      await act(async () => {
+        button.dispatchEvent(
+          new MouseEvent('mousedown', { bubbles: true, clientX: 200 }),
+        );
+      });
+      expect(document.body.style.cursor).toBe('col-resize');
+
+      await act(async () => {
+        window.dispatchEvent(new Event('blur'));
+      });
+      expect(document.body.style.cursor).toBe('');
+    } finally {
+      await cleanup(root, container);
+    }
+  });
 });

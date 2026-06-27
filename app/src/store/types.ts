@@ -225,6 +225,13 @@ export interface ComposerSettings {
   /** AI 改图时为每个节点自动选模型的策略 */
   modelStrategy: ModelStrategy;
   /**
+   * 粘性 GDD 草稿模式。true 时裸文本走“反复修改 GDD/资产清单/实现计划”
+   * 流程；由 /gdd-mode-start 开启、/gdd-mode-end 冻结并退出。
+   */
+  gddMode: boolean;
+  /** Epoch ms when sticky GDD mode started. */
+  gddModeStartedAt?: number | null;
+  /**
    * 粘性生图模式。true 时输入框里的裸文本(无 slash 命令)走图片生成而非
    * AI 编程;由 /image-mode-start 开启、/image-mode-end 关闭。
    */

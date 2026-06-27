@@ -12,6 +12,7 @@ import {
 import {
   Bone,
   Box,
+  Brain,
   Boxes,
   Check,
   Copy,
@@ -343,6 +344,7 @@ import {
   TextField,
 } from '@/panels/settings/controls';
 import CommandsSettings from '@/panels/settings/CommandsSettings';
+import MemorySettings from '@/panels/settings/MemorySettings';
 import {
   UI_DESIGN_CHANNELS,
   loadUiDesignChannelSettings,
@@ -381,6 +383,7 @@ import {
   type SettingsTab =
   | 'general'
   | 'personalization'
+  | 'memory'
   | 'models'
   | 'imageGeneration'
   | 'musicGeneration'
@@ -412,6 +415,7 @@ type TranslationProviderOption = {
 const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = [
   { id: 'general', labelKey: 'settings.tabs.general', Icon: SlidersHorizontal },
   { id: 'personalization', labelKey: 'settings.tabs.personalization', Icon: FileText },
+  { id: 'memory', labelKey: 'settings.tabs.memory', Icon: Brain },
   { id: 'models', labelKey: 'settings.tabs.models', Icon: Cpu },
   { id: 'imageGeneration', labelKey: 'settings.tabs.imageGeneration', Icon: Sparkles },
   { id: 'musicGeneration', labelKey: 'settings.tabs.musicGeneration', Icon: Music },
@@ -871,6 +875,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                 <ConsensusSettings locale={locale} />
               ) : tab === 'commands' ? (
                 <CommandsSettings locale={locale} />
+              ) : tab === 'memory' ? (
+                <ErrorBoundary label={t(locale, 'settings.tabs.memory')}>
+                  <MemorySettings locale={locale} workspaceId={activeWorkspaceId} />
+                </ErrorBoundary>
               ) : tab === 'mcp' || tab === 'lsp' || tab === 'skills' ? (
                 <ErrorBoundary label={t(locale, `settings.tabs.${tab}`)}>
                   <ProjectToolsSettings locale={locale} embedTab={tab} />

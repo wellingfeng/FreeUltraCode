@@ -22,9 +22,8 @@ import type { OpenFileFn } from './FileChip';
  * they scroll near the viewport (IntersectionObserver). Once upgraded a message
  * stays upgraded, so scrolling back never re-pays the cost or flickers.
  *
- * `eager` forces the rich renderer from the first paint — used for the tail of
- * the list (what's visible at the bottom on switch) and the live streaming
- * bubble, so the initial view is correct and scroll-to-bottom lands precisely.
+ * `eager` promotes the rich renderer after the first paint for historical
+ * messages. The live streaming bubble still renders rich immediately.
  *
  * `scrollRootRef` is the scroll container; passing it makes the observer measure
  * intersection relative to the message stream rather than the whole window, and
@@ -50,7 +49,7 @@ function LazyMessageContentImpl({
   eager?: boolean;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }) {
-  const [rich, setRich] = useState(eager);
+  const [rich, setRich] = useState(eager && streaming);
   const holderRef = useRef<HTMLDivElement>(null);
 
   // Promote to the rich renderer if this message becomes eager later (e.g. it

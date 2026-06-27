@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveWorkspaceId } from './paths';
-import { historyStore } from './store';
+import {
+  __resetHistorySessionCacheForTests,
+  historyStore,
+} from './store';
 import type {
   HistoryConfig,
   SessionRecord,
@@ -64,6 +67,8 @@ function workspaceSummary(record: WorkspaceRecord): WorkspaceSummary {
 }
 
 afterEach(() => {
+  __resetHistorySessionCacheForTests();
+  vi.useRealTimers();
   window.localStorage.clear();
 });
 
@@ -130,6 +135,122 @@ describe('historyStore lone surrogate sanitization', () => {
 
     const stored = await historyStore.getSession(workspaceId, created.id);
     expect(stored?.messages[0]?.text).toBe('rocket 🚀 ok');
+  });
+});
+
+describe('historyStore session record memory cache', () => {
+  it('prewarms the five newest sessions per workspace after listing sessions', async () => {
+    vi.useFakeTimers();
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
+    const records = Array.from({ length: 6 }, (_, index) =>
+      sessionRecord(
+        workspaceId,
+        `s_${index + 1}`,
+        `session ${index + 1}`,
+        index + 1,
+      ),
+    );
+    writeHistoryJson(
+      `workspaces/${workspaceId}/sessions/index.json`,
+      records.map(sessionSummary),
+    );
+    for (const record of records) {
+      writeHistoryJson(
+        `workspaces/${workspaceId}/sessions/${record.id}.json`,
+        record,
+      );
+    }
+
+    await historyStore.listSessions(workspaceId);
+    await vi.runOnlyPendingTimersAsync();
+
+    const newest = records[5];
+    const oldest = records[0];
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/${newest.id}.json`, {
+      ...newest,
+      title: 'changed newest',
+    });
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/${oldest.id}.json`, {
+      ...oldest,
+      title: 'changed oldest',
+    });
+
+    await expect(
+      historyStore.getSession(workspaceId, newest.id),
+    ).resolves.toMatchObject({ title: newest.title });
+    await expect(
+      historyStore.getSession(workspaceId, oldest.id),
+    ).resolves.toMatchObject({ title: 'changed oldest' });
+  });
+
+  it('keeps only the five most recently used session records', async () => {
+    const workspaceId = await deriveWorkspaceId('E:\\MoonGame\\Client\\Game');
+    const records = Array.from({ length: 6 }, (_, index) =>
+      sessionRecord(
+        workspaceId,
+        `lru_${index + 1}`,
+        `lru ${index + 1}`,
+        index + 1,
+      ),
+    );
+    for (const record of records) {
+      writeHistoryJson(
+        `workspaces/${workspaceId}/sessions/${record.id}.json`,
+        record,
+      );
+      await historyStore.getSession(workspaceId, record.id);
+    }
+
+    const evicted = records[0];
+    const cached = records[5];
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/${evicted.id}.json`, {
+      ...evicted,
+      title: 'changed evicted',
+    });
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/${cached.id}.json`, {
+      ...cached,
+      title: 'changed cached',
+    });
+
+    await expect(
+      historyStore.getSession(workspaceId, evicted.id),
+    ).resolves.toMatchObject({ title: 'changed evicted' });
+    await expect(
+      historyStore.getSession(workspaceId, cached.id),
+    ).resolves.toMatchObject({ title: cached.title });
+  });
+
+  it('forgets deleted sessions even when they were cached', async () => {
+    const workspaceId = await deriveWorkspaceId('E:\\DeleteCache');
+    const workspace: WorkspaceRecord = {
+      id: workspaceId,
+      path: 'E:\\DeleteCache',
+      name: 'DeleteCache',
+      createdAt: 1,
+      updatedAt: 1,
+      sessionCount: 1,
+      lastActiveSessionId: 's_delete',
+    };
+    const record = sessionRecord(workspaceId, 's_delete', 'delete me', 2);
+    writeHistoryJson('workspaces/index.json', [workspaceSummary(workspace)]);
+    writeHistoryJson(`workspaces/${workspaceId}/meta.json`, workspace);
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/index.json`, [
+      sessionSummary(record),
+    ]);
+    writeHistoryJson(
+      `workspaces/${workspaceId}/sessions/${record.id}.json`,
+      record,
+    );
+
+    await expect(
+      historyStore.getSession(workspaceId, record.id),
+    ).resolves.toMatchObject({ title: record.title });
+
+    await historyStore.deleteSession(workspaceId, record.id);
+
+    await expect(historyStore.getSession(workspaceId, record.id)).resolves.toBe(
+      null,
+    );
   });
 });
 

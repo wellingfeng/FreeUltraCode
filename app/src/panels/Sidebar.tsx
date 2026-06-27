@@ -146,16 +146,35 @@ function sessionLiveRank(
   return 2;
 }
 
+/**
+ * 0 when the session's composer still holds unsent text, 1 otherwise. Applied
+ * as a secondary sort key after live status so a drafted-but-idle session never
+ * jumps above a running one, but does float above idle sessions with no draft.
+ */
+function sessionDraftRank(
+  session: Session,
+  workspaceId: string | null,
+  draftKeys: ReadonlySet<string>,
+): number {
+  const key = workflowSessionKeyId({ workspaceId, sessionId: session.id });
+  return draftKeys.has(key) ? 0 : 1;
+}
+
 function sortHistorySessions(
   sessions: Session[],
   workspaceId: string | null,
   liveState: SidebarLiveState,
+  draftKeys: ReadonlySet<string>,
 ): Session[] {
   return [...sessions].sort((a, b) => {
     const liveDiff =
       sessionLiveRank(a, workspaceId, liveState) -
       sessionLiveRank(b, workspaceId, liveState);
     if (liveDiff !== 0) return liveDiff;
+    const draftDiff =
+      sessionDraftRank(a, workspaceId, draftKeys) -
+      sessionDraftRank(b, workspaceId, draftKeys);
+    if (draftDiff !== 0) return draftDiff;
     return sessionSortTimestamp(b) - sessionSortTimestamp(a);
   });
 }
@@ -170,6 +189,19 @@ function workspaceLiveRank(
       Math.min(best, sessionLiveRank(session, workspaceId, liveState)),
     2,
   );
+}
+
+/** 0 when any session in the workspace has an unsent composer draft, else 1. */
+function workspaceDraftRank(
+  sessions: Session[],
+  workspaceId: string,
+  draftKeys: ReadonlySet<string>,
+): number {
+  return sessions.some(
+    (session) => sessionDraftRank(session, workspaceId, draftKeys) === 0,
+  )
+    ? 0
+    : 1;
 }
 
 function clampPercent(percent: number | null | undefined): number | null {
@@ -202,6 +234,7 @@ function historyStatusLabel(
   if (status === 'waiting') return t(locale, 'sidebar.waitingInput');
   if (status === 'thinking') return t(locale, 'sidebar.thinking');
   if (status === 'unrun') return t(locale, 'sidebar.unrun');
+  if (status === 'draft') return t(locale, 'sidebar.hasDraft');
   if (status === 'success') return t(locale, 'sidebar.completed');
   return t(locale, 'sidebar.failed');
 }
@@ -209,10 +242,14 @@ function historyStatusLabel(
 function historyStatusTone(
   session: Pick<Session, 'isWorkflow' | 'simple' | 'runStatus'>,
   liveStatus: ReturnType<typeof sessionLiveStatus>,
+  hasDraft = false,
 ): StatusTone | null {
   if (liveStatus === 'running') return 'running';
   if (liveStatus === 'waiting') return 'waiting';
   if (liveStatus === 'aiEditing') return 'thinking';
+  // An unsent composer draft outranks the static run-result dot so the user can
+  // spot sessions still holding text they have not sent.
+  if (hasDraft) return 'draft';
   if (session.runStatus === 'success') return 'success';
   if (
     session.runStatus === 'error' ||
@@ -350,6 +387,8 @@ export default function Sidebar({
   const selectedWorkspaceId = selectedWorkspaceIdRaw ?? activeWorkspaceId;
   const scopedWorkspaceId = projectScoped ? selectedWorkspaceId : null;
   const activeSessionId = useStore((s) => s.activeSessionId);
+  const composerDraft = useStore((s) => s.composerDraft);
+  const composerDrafts = useStore((s) => s.composerDrafts);
   const runningSessions = useStore((s) => s.runningSessions);
   const runningSessionProgress = useStore((s) => s.runningSessionProgress);
   const aiEditingSessions = useStore((s) => s.aiEditingSessions);
@@ -1033,6 +1072,23 @@ export default function Sidebar({
     [aiEditingSessions, chattingSessions, runningSessions, waitingInputSessions],
   );
 
+  // Session keys whose composer still holds unsent text. The active session's
+  // draft lives in `composerDraft` (only flushed into `composerDrafts` on
+  // switch), so override its key with the live value to stay current.
+  const draftSessionKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const [key, value] of Object.entries(composerDrafts ?? {})) {
+      if (typeof value === 'string' && value.trim().length > 0) keys.add(key);
+    }
+    const activeKey = workflowSessionKeyId({
+      workspaceId: activeWorkspaceId ?? null,
+      sessionId: activeSessionId ?? null,
+    });
+    if ((composerDraft ?? '').trim().length > 0) keys.add(activeKey);
+    else keys.delete(activeKey);
+    return keys;
+  }, [composerDraft, composerDrafts, activeWorkspaceId, activeSessionId]);
+
   const scopedWorkspaces = useMemo(
     () =>
       scopedWorkspaceId
@@ -1069,8 +1125,9 @@ export default function Sidebar({
         sessions.filter((session) => sessionVisibleInTab(session, activeTab)),
         null,
         sidebarLiveState,
+        draftSessionKeys,
       ),
-    [activeTab, sessions, sidebarLiveState],
+    [activeTab, sessions, sidebarLiveState, draftSessionKeys],
   );
 
   const hasHistory =
@@ -1105,6 +1162,7 @@ export default function Sidebar({
             ),
             workspace.id,
             sidebarLiveState,
+            draftSessionKeys,
           );
           return {
             workspace,
@@ -1130,6 +1188,10 @@ export default function Sidebar({
             workspaceLiveRank(a.sessions, a.workspace.id, sidebarLiveState) -
             workspaceLiveRank(b.sessions, b.workspace.id, sidebarLiveState);
           if (liveDiff !== 0) return liveDiff;
+          const draftDiff =
+            workspaceDraftRank(a.sessions, a.workspace.id, draftSessionKeys) -
+            workspaceDraftRank(b.sessions, b.workspace.id, draftSessionKeys);
+          if (draftDiff !== 0) return draftDiff;
           return b.workspace.updatedAt - a.workspace.updatedAt;
         }),
     [
@@ -1139,6 +1201,7 @@ export default function Sidebar({
       scopedWorkspaces,
       sessionTree,
       sidebarLiveState,
+      draftSessionKeys,
     ],
   );
 
@@ -1562,7 +1625,13 @@ export default function Sidebar({
                             sessionKey,
                             sidebarLiveState,
                           );
-                          const status = historyStatusTone(session, liveStatus);
+                          const status = historyStatusTone(
+                            session,
+                            liveStatus,
+                            draftSessionKeys.has(
+                              workflowSessionKeyId(sessionKey),
+                            ),
+                          );
                           const runProgress =
                             runningSessionProgress[workflowSessionKeyId(sessionKey)];
                           const statusLabel = historyStatusLabel(
@@ -1751,7 +1820,11 @@ export default function Sidebar({
                     sessionKey,
                     sidebarLiveState,
                   );
-                  const status = historyStatusTone(session, liveStatus);
+                  const status = historyStatusTone(
+                    session,
+                    liveStatus,
+                    draftSessionKeys.has(workflowSessionKeyId(sessionKey)),
+                  );
                   const runProgress =
                     runningSessionProgress[workflowSessionKeyId(sessionKey)];
                   const statusLabel = historyStatusLabel(

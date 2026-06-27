@@ -439,7 +439,7 @@ describe('AIDock stream scroll state', () => {
       const stream = streamElement(view.container);
       const rows = stream.querySelectorAll('[data-ugs-message-row="true"]');
 
-      expect(rows.length).toBe(80);
+      expect(rows.length).toBe(5);
       expect(stream.textContent).toContain('long message 219');
       expect(stream.textContent).not.toContain('long message 0');
       expect(
@@ -455,16 +455,42 @@ describe('AIDock stream scroll state', () => {
       });
       expect(
         stream.querySelectorAll('[data-ugs-message-row="true"]').length,
-      ).toBe(160);
+      ).toBe(85);
 
       await switchSession('s_other_long', longChatMessages('other', 220));
       expect(
         stream.querySelectorAll('[data-ugs-message-row="true"]').length,
-      ).toBe(80);
+      ).toBe(5);
       expect(stream.textContent).toContain('other message 219');
       expect(stream.textContent).not.toContain('other message 0');
     } finally {
       await view.cleanup();
+    }
+  });
+
+  it('fills the initial message window in background batches', async () => {
+    vi.useFakeTimers();
+    resetChatSession('s_background_long', longChatMessages('background', 220));
+    const view = await renderChatDock();
+
+    try {
+      const stream = streamElement(view.container);
+
+      expect(
+        stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+      ).toBe(5);
+
+      for (const expected of [20, 35, 50, 65, 80]) {
+        await act(async () => {
+          vi.advanceTimersByTime(80);
+        });
+        expect(
+          stream.querySelectorAll('[data-ugs-message-row="true"]').length,
+        ).toBe(expected);
+      }
+    } finally {
+      await view.cleanup();
+      vi.useRealTimers();
     }
   });
 
@@ -506,7 +532,7 @@ describe('AIDock stream scroll state', () => {
       const stream = streamElement(view.container);
       expect(
         stream.querySelectorAll('[data-ugs-message-row="true"]').length,
-      ).toBe(80);
+      ).toBe(5);
 
       const firstMarker = view.container.querySelector<HTMLButtonElement>(
         '[data-ugs-timeline-marker="true"]',

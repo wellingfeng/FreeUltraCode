@@ -806,6 +806,7 @@ describe('workflow read-only guard', () => {
         workspace: '',
         workspaceFolders: [],
         modelStrategy: 'inherit',
+        gddMode: false,
         imageMode: false,
         musicMode: false,
         threeDMode: false,

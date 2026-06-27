@@ -95,6 +95,23 @@ type ProjectPanelTab = 'files' | 'session';
 type ProjectTreeViewMode = 'tree' | 'preview';
 type ProjectEngine = 'unreal' | 'unity' | 'godot' | 'cocos' | 'generic';
 
+type SessionFilesStatus = 'idle' | 'loading' | 'ready';
+type SessionFileChangeCounts = ReturnType<typeof countSessionFileChanges>;
+type SessionFilesViewState = {
+  key: string;
+  status: SessionFilesStatus;
+  files: SessionFileEntry[];
+  counts: SessionFileChangeCounts;
+  tree: SessionFileTreeNode[];
+};
+type SessionPanelWorkWindow = Window & {
+  requestIdleCallback?: (
+    callback: () => void,
+    options?: { timeout?: number },
+  ) => number;
+  cancelIdleCallback?: (handle: number) => void;
+};
+
 type ThumbnailState =
   | { status: 'loading'; lastAccessed: number }
   | { status: 'ready'; dataUrl: string; lastAccessed: number }
@@ -109,6 +126,53 @@ type ProjectEntryContextMenuState =
       y: number;
       entry: WorkspaceTreeEntry;
     };
+
+const EMPTY_SESSION_FILE_COUNTS: SessionFileChangeCounts = {
+  added: 0,
+  modified: 0,
+  deleted: 0,
+  renamed: 0,
+};
+
+function emptySessionFilesViewState(
+  key = '',
+  status: SessionFilesStatus = 'idle',
+): SessionFilesViewState {
+  return {
+    key,
+    status,
+    files: [],
+    counts: EMPTY_SESSION_FILE_COUNTS,
+    tree: [],
+  };
+}
+
+function scheduleSessionPanelWork(callback: () => void): () => void {
+  if (typeof window === 'undefined') {
+    const timer = globalThis.setTimeout(callback, 0);
+    return () => globalThis.clearTimeout(timer);
+  }
+
+  const panelWindow = window as SessionPanelWorkWindow;
+  let idleHandle: number | null = null;
+  const timer = window.setTimeout(() => {
+    if (typeof panelWindow.requestIdleCallback === 'function') {
+      idleHandle = panelWindow.requestIdleCallback(callback, { timeout: 250 });
+      return;
+    }
+    callback();
+  }, 0);
+
+  return () => {
+    window.clearTimeout(timer);
+    if (
+      idleHandle !== null &&
+      typeof panelWindow.cancelIdleCallback === 'function'
+    ) {
+      panelWindow.cancelIdleCallback(idleHandle);
+    }
+  };
+}
 
 type DirectoryState =
   | {
@@ -744,8 +808,15 @@ export default function ProjectFileTree() {
       ),
     [activeWorkspaceId, activeSessionId, sessionChangesRootPath],
   );
-  const [sessionChangesSnapshot, setSessionChangesSnapshot] =
-    useState<WorkspaceChanges | null>(null);
+  const [sessionChangesSnapshotState, setSessionChangesSnapshotState] =
+    useState<{
+      cacheKey: string;
+      snapshot: WorkspaceChanges | null;
+    } | null>(null);
+  const sessionChangesSnapshot =
+    sessionChangesSnapshotState?.cacheKey === activeSessionChangesCacheKey
+      ? sessionChangesSnapshotState.snapshot
+      : null;
   const [sessionChangesVersion, setSessionChangesVersion] = useState(0);
 
   useEffect(() => {
@@ -764,33 +835,39 @@ export default function ProjectFileTree() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!sessionChangesRootPath || !activeSessionChangesCacheKey) {
-      setSessionChangesSnapshot(null);
+    if (
+      panelTab !== 'session' ||
+      !sessionChangesRootPath ||
+      !activeSessionChangesCacheKey
+    ) {
       return;
     }
     if (isRemoteWorkspacePath(sessionChangesRootPath)) {
-      setSessionChangesSnapshot(null);
       return;
     }
-    void readPersistedSessionChanges(
-      sessionChangesRootPath,
-      activeSessionChangesCacheKey,
-    )
-      .then((snapshot) => {
-        if (!cancelled) setSessionChangesSnapshot(snapshot);
-      })
-      .catch(() => {
-        if (!cancelled) setSessionChangesSnapshot(null);
-      });
+    const rootPath = sessionChangesRootPath;
+    const cacheKey = activeSessionChangesCacheKey;
+    const cancelWork = scheduleSessionPanelWork(() => {
+      void readPersistedSessionChanges(rootPath, cacheKey)
+        .then((snapshot) => {
+          if (!cancelled) setSessionChangesSnapshotState({ cacheKey, snapshot });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setSessionChangesSnapshotState({ cacheKey, snapshot: null });
+          }
+        });
+    });
     return () => {
       cancelled = true;
+      cancelWork();
     };
   }, [
+    panelTab,
     sessionChangesRootPath,
     activeSessionChangesCacheKey,
     sessionChangesVersion,
     sessionActivityVersion,
-    sessionMessages.length,
   ]);
 
   // 会话文件过滤：读取每个根目录下的 .gitignore/.p4ignore/.svnignore（纯文本读取，
@@ -836,25 +913,68 @@ export default function ProjectFileTree() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootFoldersKey]);
 
-  // 当前会话修改文件：从消息流里的 AI 工具调用事件解析，并合并运行结束时
-  // 已持久化的会话改动快照；读取行为不进入右侧“会话文件”列表。
-  const sessionFiles = useMemo(() => {
-    const isIgnored = buildSessionIgnorePredicate(ignoreRoots);
-    const activityFiles = extractSessionFiles(sessionMessages, { isIgnored });
-    return mergeSessionFilesWithWorkspaceChanges(
-      activityFiles,
-      sessionChangesSnapshot,
-      { isIgnored },
-    ).filter((entry) => entry.action === 'edited' || entry.changeStatus);
-  }, [sessionMessages, ignoreRoots, sessionChangesSnapshot]);
-  const sessionFileChangeCounts = useMemo(
-    () => countSessionFileChanges(sessionFiles),
-    [sessionFiles],
-  );
-  const sessionFileTree = useMemo(
-    () => buildSessionFileTree(sessionFiles),
-    [sessionFiles],
-  );
+  const sessionFilesViewKey = `${activeWorkspaceId ?? ''}:${
+    activeSessionId ?? ''
+  }:${activeSessionChangesCacheKey ?? ''}`;
+  const [sessionFilesState, setSessionFilesState] =
+    useState<SessionFilesViewState>(() => emptySessionFilesViewState());
+  // 当前会话修改文件：解析消息流和合并持久快照都可能很重。切换会话时先让
+  // 信息流完成首帧渲染，再异步填充右侧“会话文件”。
+  useEffect(() => {
+    if (panelTab !== 'session') return;
+
+    let cancelled = false;
+    const key = sessionFilesViewKey;
+    // 信息流流式刷新时 sessionMessages 会高频变化导致本 effect 频繁重跑。若当前
+    // 会话已经有文件列表，就保持原内容、保留 ready 状态（返回同一引用不触发重渲染），
+    // 在后台静默重算后再整体替换；只有切换会话/首次加载（无文件）时才显示加载态。
+    // 否则每来一行 token 都会把整棵会话文件树替换成居中转圈，造成右侧面板闪烁。
+    setSessionFilesState((current) =>
+      current.key === key && current.files.length > 0
+        ? current
+        : emptySessionFilesViewState(key, 'loading'),
+    );
+    const cancelWork = scheduleSessionPanelWork(() => {
+      if (cancelled) return;
+      const isIgnored = buildSessionIgnorePredicate(ignoreRoots);
+      const activityFiles = extractSessionFiles(sessionMessages, { isIgnored });
+      const files = mergeSessionFilesWithWorkspaceChanges(
+        activityFiles,
+        sessionChangesSnapshot,
+        { isIgnored },
+      ).filter((entry) => entry.action === 'edited' || entry.changeStatus);
+      if (cancelled) return;
+      setSessionFilesState({
+        key,
+        status: 'ready',
+        files,
+        counts: countSessionFileChanges(files),
+        tree: buildSessionFileTree(files),
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelWork();
+    };
+  }, [
+    panelTab,
+    sessionFilesViewKey,
+    sessionMessages,
+    ignoreRoots,
+    sessionChangesSnapshot,
+  ]);
+  const sessionFilesReady = sessionFilesState.key === sessionFilesViewKey;
+  const sessionFiles = sessionFilesReady ? sessionFilesState.files : [];
+  const sessionFileChangeCounts = sessionFilesReady
+    ? sessionFilesState.counts
+    : EMPTY_SESSION_FILE_COUNTS;
+  const sessionFileTree = sessionFilesReady ? sessionFilesState.tree : [];
+  const sessionFilesStatus: SessionFilesStatus = sessionFilesReady
+    ? sessionFilesState.status
+    : panelTab === 'session'
+      ? 'loading'
+      : 'idle';
   const [selectedRootKey, setSelectedRootKey] = useState<string>('');
   const selectedRootPath = useMemo(() => {
     if (rootFolders.length === 0) return '';
@@ -1641,6 +1761,17 @@ export default function ProjectFileTree() {
   ]);
 
   const renderSessionFiles = useCallback((): ReactNode => {
+    // 只有在还没有任何文件时才显示整树加载转圈；已有内容时即便后台在静默重算
+    // 也保持原列表，避免流式刷新期间右侧面板反复闪烁。
+    if (sessionFilesStatus === 'loading' && sessionFiles.length === 0) {
+      return (
+        <div className="flex h-16 items-center justify-center gap-2 px-3 text-xs text-fg-faint">
+          <Loader2 size={14} className="animate-spin text-accent" />
+          <span>{t(locale, 'sessionFiles.loading')}</span>
+        </div>
+      );
+    }
+
     if (sessionFiles.length === 0) {
       return (
         <div className="space-y-2 px-3 py-6 text-center">
@@ -1768,6 +1899,7 @@ export default function ProjectFileTree() {
     locale,
     sessionFileTree,
     sessionFiles,
+    sessionFilesStatus,
     startEntryDrag,
     trackEntryDrag,
     finishEntryDrag,

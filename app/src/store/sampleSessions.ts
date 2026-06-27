@@ -999,6 +999,8 @@ export const defaultComposer: ComposerSettings = {
   workspace: '',
   workspaceFolders: [],
   modelStrategy: 'inherit',
+  gddMode: false,
+  gddModeStartedAt: null,
   imageMode: false,
   imageModeStartedAt: null,
   musicMode: false,

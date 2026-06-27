@@ -26,6 +26,62 @@ describe('toolEvent sentinel codec', () => {
     expect(text).toContain('<<UGS_TOOL>>');
   });
 
+  it('renders a half-streamed trailing sentinel as an in-progress patch', () => {
+    // Mirrors the real bug: a tool whose args carry a large body streams the
+    // opening `<<UGS_TOOL>>{…` long before its `<<UGS_TOOL_END>>` arrives. With
+    // streamingTail it must surface as a running tool card, not raw JSON prose.
+    const partial =
+      'Writing the file.\n<<UGS_TOOL>>{"id":"t1","name":"Edit","subject":"SKILL.md","status":"running","args":{"file_path":"SKILL.md","new_string":"# Title\\nlots of stream';
+    const { text, patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toEqual([
+      { id: 't1', name: 'Edit', status: 'running', subject: 'SKILL.md' },
+    ]);
+    expect(text).not.toContain('UGS_TOOL');
+    expect(text).not.toContain('new_string');
+    expect(text).toContain('Writing the file.');
+  });
+
+  it('infers name/subject for a half-streamed sentinel that lacks them yet', () => {
+    // Some emitters put `args` first; before `name`/`subject` arrive we still
+    // want a sensible card from whatever streamed.
+    const partial =
+      '<<UGS_TOOL>>{"args":{"file_path":"Config/Skills/SKILL.md","new_string":"big body that never closes';
+    const { patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toMatchObject({
+      name: 'Edit',
+      status: 'running',
+      subject: 'Config/Skills/SKILL.md',
+    });
+  });
+
+  it('ignores a field name that only appears inside the streaming body', () => {
+    // A `"name"` substring inside the unterminated new_string body must not be
+    // mistaken for the tool name.
+    const partial =
+      '<<UGS_TOOL>>{"id":"t2","new_string":"const \\"name\\": \\"trap\\" still streaming';
+    const { patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches[0]).toMatchObject({ id: 't2', name: 'Edit', status: 'running' });
+  });
+
+  it('does not treat a literal prose marker as a streaming tool card', () => {
+    // The model explaining the protocol writes `<<UGS_TOOL>>` followed by prose,
+    // not a JSON object — keep it verbatim even under streamingTail.
+    const partial = 'The marker is <<UGS_TOOL>> and it opens a block.';
+    const { text, patches } = extractToolSentinels(partial, { streamingTail: true });
+    expect(patches).toEqual([]);
+    expect(text).toContain('<<UGS_TOOL>>');
+  });
+
+  it('keeps the incomplete sentinel verbatim when not streaming', () => {
+    // A final (non-streaming) render has no more chunks coming, so the old
+    // verbatim behaviour stands — we don't fabricate a card that never closed.
+    const partial = 'text <<UGS_TOOL>>{"id":"x","name":"Edit"';
+    const { text, patches } = extractToolSentinels(partial);
+    expect(patches).toEqual([]);
+    expect(text).toContain('<<UGS_TOOL>>');
+  });
+
   it('keeps a literal UGS_TOOL marker in prose instead of dropping it', () => {
     // The model wrote the token itself (e.g. explaining the protocol). Its body
     // isn't a valid patch, so it must survive as prose rather than be dropped.
@@ -249,6 +305,32 @@ describe('segmentMessage tool segments', () => {
 
   it('leaves plain text untouched (no tools)', () => {
     expect(segmentMessage('just prose')).toEqual([{ type: 'answer', text: 'just prose' }]);
+  });
+
+  it('shows a half-streamed trailing tool sentinel as a running card while live', () => {
+    const text =
+      'Writing the skill file.\n' +
+      '<<UGS_TOOL>>{"id":"t9","name":"Edit","subject":"SKILL.md","status":"running","args":{"file_path":"SKILL.md","new_string":"# MoonCodeReview\\nlong body still streaming and never closed';
+    const segs = segmentMessage(text, true);
+    expect(segs.map((s) => s.type)).toEqual(['answer', 'tools']);
+    const tools = segs.find((s) => s.type === 'tools');
+    expect(tools && tools.type === 'tools' && tools.events[0]).toMatchObject({
+      id: 't9',
+      name: 'Edit',
+      status: 'running',
+      subject: 'SKILL.md',
+    });
+    for (const s of segs) {
+      if (s.type === 'answer') expect(s.text).not.toContain('UGS_TOOL');
+    }
+  });
+
+  it('does not fabricate a running card for a half sentinel on the final render', () => {
+    const text =
+      'done\n<<UGS_TOOL>>{"id":"t9","name":"Edit","args":{"new_string":"unterminated';
+    const segs = segmentMessage(text, false);
+    // Non-streaming: the incomplete marker stays as prose (no tools segment).
+    expect(segs.some((s) => s.type === 'tools')).toBe(false);
   });
 
   it('does not leak prose when a tool result embeds sentinel markers', () => {

@@ -4,6 +4,7 @@ import CopyButton from './CopyButton';
 import RawCodeBlock from './RawCodeBlock';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
+import { sanitizeMermaid } from './lib/sanitizeMermaid';
 
 type MermaidRenderResult = {
   svg: string;
@@ -46,7 +47,7 @@ export default function MermaidBlock({ code }: { code: string }) {
           mermaidReady = true;
         }
 
-        const result = await mermaid.render(renderId, code);
+        const result = await mermaid.render(renderId, sanitizeMermaid(code));
         if (!cancelled) setSvg(result.svg);
       } catch (err) {
         if (!cancelled) {

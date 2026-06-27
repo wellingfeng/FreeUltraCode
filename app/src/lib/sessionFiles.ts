@@ -406,9 +406,12 @@ export function extractSessionFiles(
 
 /**
  * Merge the persisted workspace-change cache into activity derived from tool
- * events. Trusted snapshot caches represent this session's filesystem baseline,
- * so they can add missing edited files. VCS caches only decorate files already
- * proven by tool activity, because dirty workspaces can contain unrelated edits.
+ * events. A filesystem/VCS diff cannot tell an agent's edit apart from an
+ * unrelated edit the user made in a dirty workspace, so the diff is used ONLY
+ * to DECORATE files this session already proved it edited via a mutate tool
+ * (Edit/Write/patch/…). It never adds brand-new rows and never promotes a
+ * read-only file to `edited` — that would leak the user's own changes (or files
+ * the agent merely opened) into the session's edited-file list.
  */
 export function mergeSessionFilesWithWorkspaceChanges(
   activityFiles: SessionFileEntry[],
@@ -431,40 +434,25 @@ export function mergeSessionFilesWithWorkspaceChanges(
     if (!key) continue;
     if (options.isIgnored?.(path)) continue;
 
+    // Only decorate files this session proved it edited via a mutate tool.
+    // A diff entry that doesn't match an edited path is either the user's own
+    // change or a file the agent merely read — neither belongs here.
     const oldKey = file.oldPath ? dedupeKey(file.oldPath) : '';
-    const trustSnapshot = changes?.source === 'snapshot';
     const matchKey = editedKeys.has(key)
       ? key
       : editedKeys.has(oldKey)
         ? oldKey
-        : trustSnapshot && byKey.has(key)
-          ? key
-          : trustSnapshot && byKey.has(oldKey)
-            ? oldKey
-            : trustSnapshot
-              ? key
-              : '';
+        : '';
     if (!matchKey) continue;
 
     const existing = byKey.get(matchKey);
-    if (existing) {
-      existing.action = 'edited';
-      existing.changeStatus = strongerStatus(existing.changeStatus, file.status);
-      if ((changes?.generatedAtMs ?? 0) >= existing.lastTouchedAt) {
-        existing.path = path;
-        existing.basename = basenameOf(path);
-        existing.lastTouchedAt = changes?.generatedAtMs ?? existing.lastTouchedAt;
-      }
-    } else if (trustSnapshot) {
-      byKey.set(key, {
-        path,
-        basename: basenameOf(path),
-        action: 'edited',
-        changeStatus: file.status,
-        touchCount: 1,
-        lastTouchedAt: changes?.generatedAtMs ?? 0,
-        seq: seq++,
-      });
+    if (!existing) continue;
+    existing.action = 'edited';
+    existing.changeStatus = strongerStatus(existing.changeStatus, file.status);
+    if ((changes?.generatedAtMs ?? 0) >= existing.lastTouchedAt) {
+      existing.path = path;
+      existing.basename = basenameOf(path);
+      existing.lastTouchedAt = changes?.generatedAtMs ?? existing.lastTouchedAt;
     }
   }
 

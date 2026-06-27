@@ -25,6 +25,8 @@
   --ugs-status-success-contrast: #06231d;
   --ugs-status-error: #f778ba;
   --ugs-status-error-contrast: #2a0a1a;
+  --ugs-status-draft: #c084fc;
+  --ugs-status-draft-contrast: #1a0a2a;
   --ugs-status-interrupted: #d995a6;
   --ugs-status-interrupted-contrast: #2a0a1a;
   --ugs-font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -65,6 +67,9 @@
   --status-error: var(--ugs-status-error);
   --status-error-contrast: var(--ugs-status-error-contrast);
   --status-error-border: var(--status-error);
+  --status-draft: var(--ugs-status-draft);
+  --status-draft-contrast: var(--ugs-status-draft-contrast);
+  --status-draft-border: var(--status-draft);
   --status-interrupted: var(--ugs-status-interrupted);
   --status-interrupted-contrast: var(--ugs-status-interrupted-contrast);
   --status-interrupted-border: #9b6a05;
@@ -230,6 +235,8 @@ html.ugs-style-daylight {
   --ugs-status-success-contrast: #ffffff;
   --ugs-status-error: #df3b4e;
   --ugs-status-error-contrast: #ffffff;
+  --ugs-status-draft: #9333ea;
+  --ugs-status-draft-contrast: #ffffff;
   --ugs-status-interrupted: #9aa3b2;
   --ugs-status-interrupted-contrast: #1a1f28;
 
@@ -469,6 +476,15 @@ pre,
 .ugs-ai-input--drop {
   background: color-mix(in oklab, var(--accent) 5%, var(--bg));
   border-color: var(--accent);
+}
+
+.ugs-ai-input--gdd {
+  background: color-mix(in oklab, var(--status-success) 6%, var(--bg));
+  border-color: color-mix(in oklab, var(--status-success) 44%, var(--border));
+}
+
+.ugs-ai-input--gdd:focus-within {
+  border-color: var(--status-success);
 }
 
 /* Sticky image-generation mode: tint the composer with the data accent so it

@@ -68,7 +68,10 @@ import { loadComposer } from '@/lib/composerStorage';
 import { maybeRunCcSwitchAutoImportOnFirstRun } from '@/lib/ccSwitchAutoImport';
 import { isTauri, prepareIsolatedWorkspace } from '@/lib/tauri';
 import {
+  getRemoteWorkspace,
+  isRemoteWorkspacePath,
   purgeDefaultRemoteWorkspaces,
+  remoteWorkspaceIdFromPath,
   remoteWorkspacePath,
 } from '@/lib/remoteWorkspace';
 
@@ -362,7 +365,17 @@ async function initHistoryFromDisk(): Promise<void> {
     let workspaces = await historyStore.listWorkspaces();
 
     const persisted = loadComposer();
-    const persistedPath = persisted?.composer.workspace?.trim();
+    const rawPersistedPath = persisted?.composer.workspace?.trim();
+    // After purge, a stale `remote://<purged-id>` persisted path must NOT be
+    // resolved — resolveWorkspaceByPath would recreate the deleted ghost entry
+    // and the local project would show up as cloud again. Only keep a remote
+    // persisted path when its config still exists.
+    const persistedPath =
+      rawPersistedPath &&
+      isRemoteWorkspacePath(rawPersistedPath) &&
+      !getRemoteWorkspace(remoteWorkspaceIdFromPath(rawPersistedPath))
+        ? undefined
+        : rawPersistedPath;
     const configuredWorkspace = config.lastActiveWorkspaceId
       ? await historyStore.getWorkspace(config.lastActiveWorkspaceId)
       : null;

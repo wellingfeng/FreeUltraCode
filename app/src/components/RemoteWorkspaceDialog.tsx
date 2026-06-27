@@ -18,6 +18,7 @@ import {
   saveRemoteRunnerConnection,
   syncRemoteWorkspaceAccounts,
   type RemoteAdapter,
+  type RemoteRunnerAuthSession,
   type RemoteRunnerUsage,
   type RemoteWorkspaceConfig,
 } from '@/lib/remoteWorkspace';
@@ -87,6 +88,8 @@ export default function RemoteWorkspaceDialog({
   const [authUserLabel, setAuthUserLabel] = useState(
     initialConnectionSecrets.userEmail ?? '',
   );
+  // 后端分配的账号名（displayName）。门禁验证通过后展示给用户。
+  const [authUserName, setAuthUserName] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [repoUrl, setRepoUrl] = useState(existing?.repoUrl ?? '');
   const [branch, setBranch] = useState(existing?.branch ?? '');
@@ -114,6 +117,18 @@ export default function RemoteWorkspaceDialog({
   const [editingConnection, setEditingConnection] = useState(false);
   const [editingGitCredential, setEditingGitCredential] = useState(false);
   const testAbort = useRef<AbortController | null>(null);
+
+  // 身份门禁：新建云端项目时，必须先通过邮箱验证、由后端分配账号后，
+  // 才展示云端项目配置表单。以下情况视为已通过门禁，直接放行：
+  //  1) 正在编辑一个已存在的云端项目（existing）；
+  //  2) 本地已保存可用的邮箱登录态（有 refreshToken + 已验证邮箱）。
+  // 纯 Token 模式不强制门禁（无邮箱体系），但新建项目仍鼓励先登录。
+  const hasExistingEmailSession = Boolean(
+    initialConnectionSecrets.userEmail && initialConnectionSecrets.refreshToken,
+  );
+  const [gatePassed, setGatePassed] = useState<boolean>(
+    Boolean(existing) || hasExistingEmailSession,
+  );
 
   const connectionReady = Boolean(serverUrl.trim() && token.trim());
   const required = Boolean(label.trim() && connectionReady && repoUrl.trim());
@@ -223,6 +238,16 @@ export default function RemoteWorkspaceDialog({
     }
   };
 
+  // 验证/登录成功后统一落地会话：保存登录态、记录后端分配的账号名，并放行门禁。
+  const applyAuthSession = (session: RemoteRunnerAuthSession) => {
+    saveRemoteRunnerAuthSession({ serverUrl }, session);
+    setToken(session.accessToken);
+    setAuthUserLabel(session.user.email);
+    setAuthUserName(session.user.displayName?.trim() || session.user.email);
+    setTestState('ok');
+    setGatePassed(true);
+  };
+
   const handleEmailAuth = async () => {
     if (!serverUrl.trim() || !authEmail.trim()) return;
     setAuthBusy(true);
@@ -230,18 +255,34 @@ export default function RemoteWorkspaceDialog({
     try {
       const currentToken = await runnerTokenForAction();
       const client = new RunnerClient(serverUrl, currentToken);
+      // 先探测后端是否启用了多用户邮箱认证。未启用时，/auth/* 路由不存在，
+      // 直接发注册/登录会撞后端兜底的 404「not found」，对用户毫无意义。
+      // 这里提前判断并给出可操作提示（需要后端以 multiuser 模式部署）。
+      const health = await client.health();
+      if (!health.ok) {
+        setError(t(locale, 'remoteWorkspace.gateServerUnreachable'));
+        return;
+      }
+      if (health.authMode !== 'multiuser') {
+        setError(t(locale, 'remoteWorkspace.gateMultiuserDisabled'));
+        return;
+      }
       if (authStep === 'register') {
-        await client.register({ email: authEmail, password: authPassword });
+        // 提交一个由邮箱派生的默认账号名，后端据此分配用户名；
+        // 后端在缺省时也会自动分配，这里只是给出更友好的默认值。
+        const suggested = authEmail.split('@')[0]?.trim() || undefined;
+        await client.register({
+          email: authEmail,
+          password: authPassword,
+          displayName: suggested,
+        });
         setAuthStep('verify');
         setError(t(locale, 'remoteWorkspace.emailCodeSent'));
         return;
       }
       if (authStep === 'verify') {
         const session = await client.verifyEmail({ email: authEmail, code: authCode });
-        saveRemoteRunnerAuthSession({ serverUrl }, session);
-        setToken(session.accessToken);
-        setAuthUserLabel(session.user.email);
-        setTestState('ok');
+        applyAuthSession(session);
         setError(t(locale, 'remoteWorkspace.emailVerified'));
         return;
       }
@@ -256,18 +297,12 @@ export default function RemoteWorkspaceDialog({
           code: authCode,
           password: authPassword,
         });
-        saveRemoteRunnerAuthSession({ serverUrl }, session);
-        setToken(session.accessToken);
-        setAuthUserLabel(session.user.email);
+        applyAuthSession(session);
         setAuthStep('login');
-        setTestState('ok');
         return;
       }
       const session = await client.login({ email: authEmail, password: authPassword });
-      saveRemoteRunnerAuthSession({ serverUrl }, session);
-      setToken(session.accessToken);
-      setAuthUserLabel(session.user.email);
-      setTestState('ok');
+      applyAuthSession(session);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('email is not verified')) setAuthStep('verify');
@@ -314,6 +349,9 @@ export default function RemoteWorkspaceDialog({
           // 模型不再由项目级配置，运行时跟随所选服务器账号。
           model: undefined,
           useOwnModelKey,
+          // 用户在对话框里显式保存的云端项目，标记来源，避免启动期清理误删
+          // （以及避免被当成「内置默认预填幽灵」处理）。
+          userCreated: true,
         },
         {
           token: undefined,
@@ -425,7 +463,175 @@ export default function RemoteWorkspaceDialog({
           </button>
         </div>
 
+        {!gatePassed ? (
+          <>
+            <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
+              <div className="rounded-md border border-border-soft bg-bg/60 px-3 py-3">
+                <div className="text-sm font-semibold text-fg">
+                  {t(locale, 'remoteWorkspace.gateTitle')}
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-fg-faint">
+                  {t(locale, 'remoteWorkspace.gateSubtitle')}
+                </p>
+              </div>
+
+              <div>
+                <label className={labelClass}>
+                  {t(locale, 'remoteWorkspace.gateServerLabel')}
+                </label>
+                <input
+                  className={fieldClass}
+                  value={serverUrl}
+                  onChange={(e) => {
+                    setServerUrl(e.target.value);
+                    setTestState('idle');
+                  }}
+                  placeholder="http://150.158.47.232:8787"
+                />
+                <p className="mt-1 text-[10px] text-fg-faint">
+                  {t(locale, 'remoteWorkspace.serverUrlHint')}
+                </p>
+              </div>
+
+              <div className="space-y-2 rounded-md border border-border-soft bg-bg/70 p-2.5">
+                {authUserName && token ? (
+                  <div className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-300">
+                    {t(locale, 'remoteWorkspace.gateAssignedUser')}: {authUserName}
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    className={fieldClass}
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    placeholder={t(locale, 'remoteWorkspace.email')}
+                  />
+                  {(authStep === 'verify' || authStep === 'reset') && (
+                    <input
+                      className={fieldClass}
+                      value={authCode}
+                      onChange={(e) =>
+                        setAuthCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                      }
+                      placeholder={t(locale, 'remoteWorkspace.emailCode')}
+                    />
+                  )}
+                  {authStep !== 'verify' && (
+                    <input
+                      type="password"
+                      className={fieldClass}
+                      value={authPassword}
+                      onChange={(e) => setAuthPassword(e.target.value)}
+                      placeholder={t(locale, 'remoteWorkspace.password')}
+                      autoComplete="off"
+                    />
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!serverUrl.trim()) {
+                        setError(t(locale, 'remoteWorkspace.gateNeedServer'));
+                        return;
+                      }
+                      setAuthMode('email');
+                      void handleEmailAuth();
+                    }}
+                    disabled={authBusy || !authEmail.trim()}
+                    className="rounded-md bg-accent px-3 py-1.5 text-[11px] font-medium text-white hover:bg-accent/90 disabled:opacity-40"
+                  >
+                    {authBusy
+                      ? t(locale, 'remoteWorkspace.saving')
+                      : authStep === 'register'
+                        ? t(locale, 'remoteWorkspace.register')
+                        : authStep === 'verify'
+                          ? t(locale, 'remoteWorkspace.verifyEmail')
+                          : authStep === 'reset'
+                            ? t(locale, 'remoteWorkspace.resetPassword')
+                            : t(locale, 'remoteWorkspace.login')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthStep(authStep === 'register' ? 'login' : 'register');
+                      setAuthCode('');
+                    }}
+                    className="rounded px-2 py-1 text-[11px] text-fg-faint hover:text-fg"
+                  >
+                    {authStep === 'register'
+                      ? t(locale, 'remoteWorkspace.login')
+                      : t(locale, 'remoteWorkspace.register')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthStep(authStep === 'reset' ? 'login' : 'reset');
+                      setAuthCode('');
+                    }}
+                    className="rounded px-2 py-1 text-[11px] text-fg-faint hover:text-fg"
+                  >
+                    {authStep === 'reset'
+                      ? t(locale, 'remoteWorkspace.login')
+                      : t(locale, 'remoteWorkspace.forgotPassword')}
+                  </button>
+                  {authStep !== 'verify' ? null : (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await new RunnerClient(serverUrl, authToken).resendCode({
+                            email: authEmail,
+                          });
+                          setError(t(locale, 'remoteWorkspace.emailCodeSent'));
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : String(err));
+                        }
+                      }}
+                      className="rounded px-2 py-1 text-[11px] text-fg-faint hover:text-fg"
+                    >
+                      {t(locale, 'remoteWorkspace.resendCode')}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {error && <p className="text-[11px] text-rose-400">{error}</p>}
+            </div>
+
+            <div className="flex items-center gap-2 border-t border-border-soft px-4 py-3">
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-border px-3 py-1.5 text-xs text-fg-dim hover:text-fg"
+              >
+                {t(locale, 'remoteWorkspace.cancel')}
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          {authUserName ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[11px] text-emerald-300">
+              <span className="truncate">
+                {t(locale, 'remoteWorkspace.signedInAs')}: {authUserName}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setGatePassed(false);
+                  setAuthStep('login');
+                  setAuthPassword('');
+                  setAuthCode('');
+                }}
+                className="shrink-0 rounded px-2 py-0.5 text-emerald-200/80 hover:text-emerald-100"
+              >
+                {t(locale, 'remoteWorkspace.switchAccount')}
+              </button>
+            </div>
+          ) : null}
           <div>
             <label className={labelClass}>
               {t(locale, 'remoteWorkspace.label')}
@@ -928,6 +1134,8 @@ export default function RemoteWorkspaceDialog({
               : t(locale, 'remoteWorkspace.save')}
           </button>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

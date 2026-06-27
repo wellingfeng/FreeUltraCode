@@ -14,6 +14,7 @@ import {
 import {
   guardSlashCommandChannel,
   guardSlashCommandText,
+  slashGuardChannelForText,
 } from '@/lib/slashCommandGuards';
 
 const blankComposer = {
@@ -75,6 +76,19 @@ describe('slash command guards', () => {
 
   it('does not guard unrelated slash commands', () => {
     expect(guardSlashCommandText('/plan 修 bug', blankComposer)).toBeNull();
+  });
+
+  it('exposes the channel without loading settings', () => {
+    expect(slashGuardChannelForText('/image 画一张猫', blankComposer)).toBe(
+      'image',
+    );
+    expect(
+      slashGuardChannelForText('一段赛博朋克 BGM', {
+        ...blankComposer,
+        musicMode: true,
+      }),
+    ).toBe('music');
+    expect(slashGuardChannelForText('/plan 修 bug', blankComposer)).toBeNull();
   });
 
   it('uses channel guards directly for mode start commands', () => {

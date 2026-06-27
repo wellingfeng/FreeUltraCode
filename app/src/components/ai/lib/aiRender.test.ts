@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { segmentMessage, hasReasoning } from './segmenter';
 import { parseFileRef, looksLikePath, displayFileRefPath } from './filePath';
+import { scanFileRefs } from './fileScan';
 import {
   fenceLooseDiffBlocks,
   repairMarkdown,
@@ -197,6 +198,53 @@ describe('parseFileRef', () => {
 
   it('accepts relative path with separator and no extension', () => {
     expect(parseFileRef('./src/config')?.path).toBe('./src/config');
+  });
+});
+
+describe('scanFileRefs (glued absolute paths)', () => {
+  const BS = String.fromCharCode(92);
+  const WIN = `E:${BS}UltraGameStudio${BS}.ultragamestudio${BS}clipboard-images${BS}shot.png`;
+
+  // Pasting a clipboard image inserts a bare absolute path; when it lands right
+  // after CJK prose with no separating space, the Unicode-aware run regex used
+  // to swallow the prose into the path token, so the chip pointed at a bogus
+  // `看图片E:\…` path (or vanished). The drive-letter anchor must split them.
+  it('splits CJK prose glued onto a Windows absolute path', () => {
+    const parts = scanFileRefs(`看这个图片${WIN}`);
+    expect(parts[0]).toBe('看这个图片');
+    expect(typeof parts[1] === 'object' && parts[1].path).toBe(WIN);
+  });
+
+  it('splits ascii prose glued onto a Windows absolute path', () => {
+    const parts = scanFileRefs(`image${WIN}`);
+    expect(parts[0]).toBe('image');
+    expect(typeof parts[1] === 'object' && parts[1].basename).toBe('shot.png');
+  });
+
+  it('keeps a trailing :line suffix on a glued path', () => {
+    const parts = scanFileRefs(`打开${WIN}:12 看看`);
+    const ref = parts.find((p) => typeof p === 'object');
+    expect(ref && typeof ref === 'object' && ref.startLine).toBe(12);
+  });
+
+  it('splits prose glued onto a UNC path', () => {
+    const unc = `${BS}${BS}server${BS}share${BS}a.png`;
+    const parts = scanFileRefs(`看${unc}`);
+    expect(parts[0]).toBe('看');
+    expect(typeof parts[1] === 'object' && parts[1].path).toBe(unc);
+  });
+
+  it('does not fragment urls whose scheme resembles a drive prefix', () => {
+    expect(scanFileRefs('链接https://example.com/a.png')).toEqual([
+      '链接https://example.com/a.png',
+    ]);
+    expect(scanFileRefs('the C: drive is full')).toEqual(['the C: drive is full']);
+  });
+
+  it('leaves a space-separated absolute path untouched', () => {
+    const parts = scanFileRefs(`看这个图片 ${WIN}`);
+    expect(parts[0]).toBe('看这个图片 ');
+    expect(typeof parts[1] === 'object' && parts[1].path).toBe(WIN);
   });
 });
 

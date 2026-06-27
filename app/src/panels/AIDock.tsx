@@ -74,6 +74,7 @@ import {
 } from "@/lib/freeChannels";
 import LocalModelSetupDialog from "@/components/LocalModelSetupDialog";
 import {
+  DEFAULT_IMAGE_GENERATION_SETTINGS,
   imageProviders,
   imageProviderModel,
   imageProviderReady,
@@ -83,6 +84,7 @@ import {
   type ImageProviderId,
 } from "@/lib/imageGeneration";
 import {
+  DEFAULT_MUSIC_GENERATION_SETTINGS,
   MUSIC_PROVIDERS,
   loadMusicGenerationSettings,
   musicProviderModel,
@@ -92,6 +94,7 @@ import {
   type MusicProviderId,
 } from "@/lib/musicGeneration";
 import {
+  DEFAULT_THREE_D_GENERATION_SETTINGS,
   THREE_D_PROVIDERS,
   loadThreeDGenerationSettings,
   saveThreeDGenerationSettings,
@@ -101,6 +104,7 @@ import {
   type ThreeDProviderId,
 } from "@/lib/threeDGeneration";
 import {
+  DEFAULT_VIDEO_GENERATION_SETTINGS,
   VIDEO_PROVIDERS,
   loadVideoGenerationSettings,
   saveVideoGenerationSettings,
@@ -110,6 +114,7 @@ import {
   type VideoProviderId,
 } from "@/lib/videoGeneration";
 import {
+  DEFAULT_SPEECH_GENERATION_SETTINGS,
   SPEECH_PROVIDERS,
   loadSpeechGenerationSettings,
   saveSpeechGenerationSettings,
@@ -134,6 +139,8 @@ import {
 } from "@/lib/slashCommands";
 import {
   guardSlashCommandText,
+  slashGuardChannelForText,
+  type SlashGuardChannel,
   type SlashCommandGuardSettings,
 } from "@/lib/slashCommandGuards";
 import {
@@ -302,10 +309,12 @@ const MIN_DOCK_HEIGHT = 120;
 /**
  * How many trailing messages render rich markdown eagerly on (re)mount. The rest
  * start as cheap plain text and upgrade lazily on scroll — see LazyMessageContent.
- * Sized to comfortably cover the visible bottom of the stream after auto-scroll.
+ * Keep the first mount tiny; older rows are added after paint.
  */
-const EAGER_MESSAGE_TAIL = 6;
-const INITIAL_MESSAGE_WINDOW = 80;
+const EAGER_MESSAGE_TAIL = 5;
+const INITIAL_MESSAGE_WINDOW = 5;
+const BACKGROUND_MESSAGE_WINDOW_TARGET = 80;
+const BACKGROUND_MESSAGE_WINDOW_PAGE = 15;
 const MESSAGE_WINDOW_PAGE = 80;
 const TIMELINE_SUMMARY_LIMIT = 40;
 /** Fixed height of the bottom input area in 'chat' layout (return fills the rest). */
@@ -325,6 +334,103 @@ const MIN_CHAT_INPUT_HEIGHT = 180;
 const MIN_CHAT_RETURN_HEIGHT = 160; // keep the chat return area usable
 const MIN_CHAT_VISIBLE_WIDTH = 320;
 const MAX_CHAT_TITLE_LENGTH = 80;
+
+type AIDockGenerationMode =
+  | "image"
+  | "music"
+  | "threeD"
+  | "video"
+  | "sprite"
+  | "speech"
+  | null;
+
+type AIDockGenerationSettingsState = {
+  profileId: string | null;
+  loaded: boolean;
+  image: ImageGenerationSettings;
+  music: MusicGenerationSettings;
+  threeD: ThreeDGenerationSettings;
+  video: VideoGenerationSettings;
+  speech: SpeechGenerationSettings;
+};
+
+const AIDOCK_GENERATION_SETTINGS_EVENTS = [
+  "ugs:image-generation-settings-changed",
+  "ugs:music-generation-settings-changed",
+  "ugs:three-d-generation-settings-changed",
+  "ugs:video-generation-settings-changed",
+  "ugs:speech-generation-settings-changed",
+] as const;
+
+function composerGenerationMode(composer: {
+  imageMode?: boolean;
+  musicMode?: boolean;
+  threeDMode?: boolean;
+  videoMode?: boolean;
+  spriteMode?: boolean;
+  speechMode?: boolean;
+}): AIDockGenerationMode {
+  if (composer.imageMode) return "image";
+  if (composer.musicMode) return "music";
+  if (composer.threeDMode) return "threeD";
+  if (composer.videoMode) return "video";
+  if (composer.spriteMode) return "sprite";
+  if (composer.speechMode) return "speech";
+  return null;
+}
+
+function defaultAIDockGenerationSettings(
+  profileId: string | null,
+): AIDockGenerationSettingsState {
+  return {
+    profileId,
+    loaded: false,
+    image: DEFAULT_IMAGE_GENERATION_SETTINGS,
+    music: DEFAULT_MUSIC_GENERATION_SETTINGS,
+    threeD: DEFAULT_THREE_D_GENERATION_SETTINGS,
+    video: DEFAULT_VIDEO_GENERATION_SETTINGS,
+    speech: DEFAULT_SPEECH_GENERATION_SETTINGS,
+  };
+}
+
+function loadAIDockGenerationSettings(
+  profileId: string | null,
+  settingsProfile: SettingsProfileOptions,
+): AIDockGenerationSettingsState {
+  return {
+    profileId,
+    loaded: true,
+    image: loadImageGenerationSettings(settingsProfile),
+    music: loadMusicGenerationSettings(settingsProfile),
+    threeD: loadThreeDGenerationSettings(settingsProfile),
+    video: loadVideoGenerationSettings(settingsProfile),
+    speech: loadSpeechGenerationSettings(settingsProfile),
+  };
+}
+
+function slashChannelNeedsAIDockGenerationSettings(
+  channel: SlashGuardChannel | null,
+): boolean {
+  return (
+    channel === "image" ||
+    channel === "music" ||
+    channel === "threeD" ||
+    channel === "video" ||
+    channel === "speech" ||
+    channel === "sprite" ||
+    channel === "comfyui"
+  );
+}
+
+function aidockGenerationSettingsNeeded(
+  generationMode: AIDockGenerationMode,
+  slashChannel: SlashGuardChannel | null,
+): boolean {
+  return (
+    generationMode !== null ||
+    slashChannelNeedsAIDockGenerationSettings(slashChannel)
+  );
+}
 
 /** Clamp the chat input-area height so neither it nor the return area collapses. */
 function clampChatInputHeight(h: number): number {
@@ -368,6 +474,28 @@ type MessageActionMenu = {
   messageId: string;
   kind: "model" | "translate";
 } | null;
+
+type IdleWindow = Window &
+  typeof globalThis & {
+    requestIdleCallback?: (
+      callback: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+      options?: { timeout?: number },
+    ) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+
+function scheduleIdleMessageWindow(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const idleWindow = window as IdleWindow;
+  if (idleWindow.requestIdleCallback) {
+    const handle = idleWindow.requestIdleCallback(() => callback(), {
+      timeout: 200,
+    });
+    return () => idleWindow.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(callback, 80);
+  return () => window.clearTimeout(handle);
+}
 
 // Row variants for the inline `$组织架构` tree menu.
 type OrgMentionOption =
@@ -1544,6 +1672,7 @@ export default function AIDock({
   const generateVideoPrompt = useStore((s) => s.generateVideoPrompt);
   const generateSpeechPrompt = useStore((s) => s.generateSpeechPrompt);
   const generateSpritePrompt = useStore((s) => s.generateSpritePrompt);
+  const generateGddPrompt = useStore((s) => s.generateGddPrompt);
   const generateComfyPrompt = useStore((s) => s.generateComfyPrompt);
   const generateWorldPrompt = useStore((s) => s.generateWorldPrompt);
   const generateUiPrompt = useStore((s) => s.generateUiPrompt);
@@ -1571,6 +1700,7 @@ export default function AIDock({
   const setSessionRunSelection = useStore((s) => s.setSessionRunSelection);
   const composer = useStore((s) => s.composer);
   const draft = useStore((s) => s.composerDraft);
+  const generationMode = composerGenerationMode(composer);
   const composerFocusVersion = useStore((s) => s.composerFocusVersion);
   const locale = useStore((s) => s.locale);
   const [shortcutSettings, setShortcutSettingsState] =
@@ -1608,9 +1738,14 @@ export default function AIDock({
   const remoteGenerationSettings = isRemoteSettingsProfile(
     generationSettingsProfileId,
   );
-  useEffect(() => {
-    void preloadSettingsProfile(generationSettingsProfileId);
-  }, [generationSettingsProfileId]);
+  const slashGuardChannel = useMemo(
+    () => slashGuardChannelForText(draft, composer),
+    [composer, draft],
+  );
+  const generationSettingsNeeded = aidockGenerationSettingsNeeded(
+    generationMode,
+    slashGuardChannel,
+  );
   const activeSlashAdapter = activeRemoteWorkspaceConfig
     ? remoteAdapterToRuntimeAdapter(activeRemoteWorkspaceConfig.adapter)
     : selectedAdapter;
@@ -2346,24 +2481,65 @@ export default function AIDock({
       return true;
     });
   }, [activeRemoteWorkspaceId, freeChannelRevision]);
-  // Image-generation settings power the bottom channel/model selectors while
-  // the composer is in image mode. They live in their own store (separate from
-  // the AI-editing runSelection), so flipping image mode never disturbs the
-  // coding channel/model — leaving image mode just reads runSelection again.
-  const [imageSettings, setImageSettings] = useState<ImageGenerationSettings>(
-    () => loadImageGenerationSettings(generationSettingsProfile),
+  // Generation settings only affect generation-mode channel/model selectors and
+  // related slash-command guards. Keep normal session switches on cheap defaults;
+  // load the real profile after paint only when those controls are needed.
+  const [generationSettingsState, setGenerationSettingsState] =
+    useState<AIDockGenerationSettingsState>(() =>
+      defaultAIDockGenerationSettings(generationSettingsProfileId),
+    );
+  const fallbackGenerationSettingsState = useMemo(
+    () => defaultAIDockGenerationSettings(generationSettingsProfileId),
+    [generationSettingsProfileId],
   );
+  const activeGenerationSettingsState =
+    generationSettingsState.profileId === generationSettingsProfileId
+      ? generationSettingsState
+      : fallbackGenerationSettingsState;
+  const generationSettingsReady =
+    activeGenerationSettingsState.loaded &&
+    activeGenerationSettingsState.profileId === generationSettingsProfileId;
+  const imageSettings = activeGenerationSettingsState.image;
+  const musicSettings = activeGenerationSettingsState.music;
+  const threeDSettings = activeGenerationSettingsState.threeD;
+  const videoSettings = activeGenerationSettingsState.video;
+  const speechSettings = activeGenerationSettingsState.speech;
+
   useEffect(() => {
-    const refresh = () =>
-      setImageSettings(loadImageGenerationSettings(generationSettingsProfile));
-    refresh();
-    window.addEventListener("ugs:image-generation-settings-changed", refresh);
-    return () =>
-      window.removeEventListener(
-        "ugs:image-generation-settings-changed",
-        refresh,
-      );
-  }, [generationSettingsProfile]);
+    if (!generationSettingsNeeded) return;
+    let cancelled = false;
+    let timer: number | null = null;
+    const refresh = () => {
+      void (async () => {
+        await preloadSettingsProfile(generationSettingsProfileId);
+        if (cancelled) return;
+        setGenerationSettingsState(
+          loadAIDockGenerationSettings(
+            generationSettingsProfileId,
+            generationSettingsProfile,
+          ),
+        );
+      })();
+    };
+    timer = window.setTimeout(() => {
+      timer = null;
+      refresh();
+    }, 0);
+    for (const eventName of AIDOCK_GENERATION_SETTINGS_EVENTS) {
+      window.addEventListener(eventName, refresh);
+    }
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+      for (const eventName of AIDOCK_GENERATION_SETTINGS_EVENTS) {
+        window.removeEventListener(eventName, refresh);
+      }
+    };
+  }, [
+    generationSettingsNeeded,
+    generationSettingsProfile,
+    generationSettingsProfileId,
+  ]);
   const imageChannelOptions = useMemo<SelectOption[]>(
     () =>
       imageProviders(imageSettings)
@@ -2427,20 +2603,6 @@ export default function AIDock({
       providerModels: { ...current.providerModels, [providerId]: selected },
     }, generationSettingsProfile);
   }, [generationSettingsProfile]);
-  const [musicSettings, setMusicSettings] = useState<MusicGenerationSettings>(
-    () => loadMusicGenerationSettings(generationSettingsProfile),
-  );
-  useEffect(() => {
-    const refresh = () =>
-      setMusicSettings(loadMusicGenerationSettings(generationSettingsProfile));
-    refresh();
-    window.addEventListener("ugs:music-generation-settings-changed", refresh);
-    return () =>
-      window.removeEventListener(
-        "ugs:music-generation-settings-changed",
-        refresh,
-      );
-  }, [generationSettingsProfile]);
   const musicChannelOptions = useMemo<SelectOption[]>(
     () =>
       MUSIC_PROVIDERS.filter(
@@ -2499,21 +2661,6 @@ export default function AIDock({
       ...current,
       providerModels: { ...current.providerModels, [providerId]: selected },
     }, generationSettingsProfile);
-  }, [generationSettingsProfile]);
-  const [threeDSettings, setThreeDSettings] =
-    useState<ThreeDGenerationSettings>(() =>
-      loadThreeDGenerationSettings(generationSettingsProfile),
-    );
-  useEffect(() => {
-    const refresh = () =>
-      setThreeDSettings(loadThreeDGenerationSettings(generationSettingsProfile));
-    refresh();
-    window.addEventListener("ugs:three-d-generation-settings-changed", refresh);
-    return () =>
-      window.removeEventListener(
-        "ugs:three-d-generation-settings-changed",
-        refresh,
-      );
   }, [generationSettingsProfile]);
   const threeDChannelOptions = useMemo<SelectOption[]>(
     () =>
@@ -2574,20 +2721,6 @@ export default function AIDock({
       providerModels: { ...current.providerModels, [providerId]: selected },
     }, generationSettingsProfile);
   }, [generationSettingsProfile]);
-  const [videoSettings, setVideoSettings] = useState<VideoGenerationSettings>(
-    () => loadVideoGenerationSettings(generationSettingsProfile),
-  );
-  useEffect(() => {
-    const refresh = () =>
-      setVideoSettings(loadVideoGenerationSettings(generationSettingsProfile));
-    refresh();
-    window.addEventListener("ugs:video-generation-settings-changed", refresh);
-    return () =>
-      window.removeEventListener(
-        "ugs:video-generation-settings-changed",
-        refresh,
-      );
-  }, [generationSettingsProfile]);
   const videoChannelOptions = useMemo<SelectOption[]>(
     () =>
       VIDEO_PROVIDERS.filter(
@@ -2646,21 +2779,6 @@ export default function AIDock({
       ...current,
       providerModels: { ...current.providerModels, [providerId]: selected },
     }, generationSettingsProfile);
-  }, [generationSettingsProfile]);
-  const [speechSettings, setSpeechSettings] =
-    useState<SpeechGenerationSettings>(() =>
-      loadSpeechGenerationSettings(generationSettingsProfile),
-    );
-  useEffect(() => {
-    const refresh = () =>
-      setSpeechSettings(loadSpeechGenerationSettings(generationSettingsProfile));
-    refresh();
-    window.addEventListener("ugs:speech-generation-settings-changed", refresh);
-    return () =>
-      window.removeEventListener(
-        "ugs:speech-generation-settings-changed",
-        refresh,
-      );
   }, [generationSettingsProfile]);
   const speechChannelOptions = useMemo<SelectOption[]>(
     () =>
@@ -2737,10 +2855,34 @@ export default function AIDock({
       videoSettings,
     ],
   );
-  const currentSlashGuard = useMemo(
-    () => guardSlashCommandText(draft, composer, slashGuardSettings),
-    [composer, draft, slashGuardSettings],
-  );
+  const currentSlashGuard = useMemo(() => {
+    let currentSlashGuardSettings = slashGuardSettings;
+    if (
+      slashChannelNeedsAIDockGenerationSettings(slashGuardChannel) &&
+      !generationSettingsReady
+    ) {
+      const loaded = loadAIDockGenerationSettings(
+        generationSettingsProfileId,
+        generationSettingsProfile,
+      );
+      currentSlashGuardSettings = {
+        image: loaded.image,
+        music: loaded.music,
+        threeD: loaded.threeD,
+        video: loaded.video,
+        speech: loaded.speech,
+      };
+    }
+    return guardSlashCommandText(draft, composer, currentSlashGuardSettings);
+  }, [
+    composer,
+    draft,
+    generationSettingsProfile,
+    generationSettingsProfileId,
+    generationSettingsReady,
+    slashGuardChannel,
+    slashGuardSettings,
+  ]);
   const slashGuardTipText =
     currentSlashGuard && !currentSlashGuard.ok
       ? (currentSlashGuard.message ?? "")
@@ -3373,6 +3515,8 @@ export default function AIDock({
         ? (currentComposer.blueprintModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -4220,38 +4364,78 @@ export default function AIDock({
     stickToBottomRef.current = snapshot.atBottom;
   }, []);
 
-  const revealEarlierMessages = useCallback(() => {
-    const stream = streamRef.current;
-    const previousScrollHeight = stream?.scrollHeight ?? null;
-    setMessageWindow((current) => {
-      const currentSize =
-        current.key === activeStreamScrollKey
-          ? current.size
-          : effectiveMessageWindowSize;
-      const next = Math.min(
-        messages.length,
-        Math.max(INITIAL_MESSAGE_WINDOW, currentSize) + MESSAGE_WINDOW_PAGE,
-      );
-      messageWindowSizesRef.current.set(activeStreamScrollKey, next);
-      return current.key === activeStreamScrollKey && current.size === next
-        ? current
-        : { key: activeStreamScrollKey, size: next };
-    });
-    window.requestAnimationFrame(() => {
-      const nextStream = streamRef.current;
-      if (!nextStream || previousScrollHeight == null) return;
-      const delta = nextStream.scrollHeight - previousScrollHeight;
-      if (Number.isFinite(delta) && delta > 0) {
-        nextStream.scrollTop += delta;
-        rememberStreamScrollSnapshot();
-      }
+  const growMessageWindow = useCallback(
+    ({
+      targetSize,
+      pageSize,
+      persist,
+    }: {
+      targetSize: number;
+      pageSize: number;
+      persist: boolean;
+    }) => {
+      const stream = streamRef.current;
+      const previousScrollHeight = stream?.scrollHeight ?? null;
+      setMessageWindow((current) => {
+        const currentSize =
+          current.key === activeStreamScrollKey
+            ? current.size
+            : effectiveMessageWindowSize;
+        const next = Math.min(
+          messages.length,
+          targetSize,
+          Math.max(INITIAL_MESSAGE_WINDOW, currentSize) + pageSize,
+        );
+        if (persist) {
+          messageWindowSizesRef.current.set(activeStreamScrollKey, next);
+        }
+        return current.key === activeStreamScrollKey && current.size === next
+          ? current
+          : { key: activeStreamScrollKey, size: next };
+      });
+      window.requestAnimationFrame(() => {
+        const nextStream = streamRef.current;
+        if (!nextStream || previousScrollHeight == null) return;
+        const delta = nextStream.scrollHeight - previousScrollHeight;
+        if (Number.isFinite(delta) && delta > 0) {
+          nextStream.scrollTop += delta;
+          rememberStreamScrollSnapshot();
+        }
+      });
+    },
+    [
+      activeStreamScrollKey,
+      effectiveMessageWindowSize,
+      messages.length,
+      rememberStreamScrollSnapshot,
+    ],
+  );
+
+  useEffect(() => {
+    if (renderFullMessageList) return undefined;
+    const targetSize = Math.min(messages.length, BACKGROUND_MESSAGE_WINDOW_TARGET);
+    if (effectiveMessageWindowSize >= targetSize) return undefined;
+    return scheduleIdleMessageWindow(() => {
+      growMessageWindow({
+        targetSize,
+        pageSize: BACKGROUND_MESSAGE_WINDOW_PAGE,
+        persist: false,
+      });
     });
   }, [
-    activeStreamScrollKey,
     effectiveMessageWindowSize,
+    growMessageWindow,
     messages.length,
-    rememberStreamScrollSnapshot,
+    renderFullMessageList,
   ]);
+
+  const revealEarlierMessages = useCallback(() => {
+    growMessageWindow({
+      targetSize: messages.length,
+      pageSize: MESSAGE_WINDOW_PAGE,
+      persist: true,
+    });
+  }, [growMessageWindow, messages.length]);
 
   const restoreStreamScrollSnapshotForKey = useCallback(
     (key: string): boolean => {
@@ -5398,8 +5582,6 @@ export default function AIDock({
       e.preventDefault();
       const startY = e.clientY;
       const startHeight = height;
-      const prevUserSelect = document.body.style.userSelect;
-      const prevCursor = document.body.style.cursor;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "row-resize";
 
@@ -5409,8 +5591,9 @@ export default function AIDock({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
-        document.body.style.userSelect = prevUserSelect;
-        document.body.style.cursor = prevCursor;
+        window.removeEventListener("blur", onUp);
+        document.body.style.removeProperty("user-select");
+        document.body.style.removeProperty("cursor");
         setHeight((h) => {
           saveDockHeight(h);
           return h;
@@ -5418,6 +5601,7 @@ export default function AIDock({
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
+      window.addEventListener("blur", onUp);
     },
     [height],
   );
@@ -5429,8 +5613,6 @@ export default function AIDock({
       e.preventDefault();
       const startX = e.clientX;
       const startWidth = renderedInputWidth;
-      const prevUserSelect = document.body.style.userSelect;
-      const prevCursor = document.body.style.cursor;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
 
@@ -5442,8 +5624,9 @@ export default function AIDock({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
-        document.body.style.userSelect = prevUserSelect;
-        document.body.style.cursor = prevCursor;
+        window.removeEventListener("blur", onUp);
+        document.body.style.removeProperty("user-select");
+        document.body.style.removeProperty("cursor");
         setInputWidth((w) => {
           savePaneWidth(INPUT_WIDTH_KEY, w);
           return w;
@@ -5451,6 +5634,7 @@ export default function AIDock({
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
+      window.addEventListener("blur", onUp);
     },
     [renderedInputWidth, clampInputWidth],
   );
@@ -5463,8 +5647,6 @@ export default function AIDock({
       e.preventDefault();
       const startY = e.clientY;
       const startHeight = chatInputHeight;
-      const prevUserSelect = document.body.style.userSelect;
-      const prevCursor = document.body.style.cursor;
       document.body.style.userSelect = "none";
       document.body.style.cursor = "row-resize";
 
@@ -5476,8 +5658,9 @@ export default function AIDock({
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
-        document.body.style.userSelect = prevUserSelect;
-        document.body.style.cursor = prevCursor;
+        window.removeEventListener("blur", onUp);
+        document.body.style.removeProperty("user-select");
+        document.body.style.removeProperty("cursor");
         setChatInputHeight((h) => {
           savePaneWidth(CHAT_INPUT_HEIGHT_KEY, h);
           return h;
@@ -5485,6 +5668,7 @@ export default function AIDock({
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
+      window.addEventListener("blur", onUp);
     },
     [chatInputHeight],
   );
@@ -5700,7 +5884,30 @@ export default function AIDock({
     const text = (overrideText ?? draft).trim();
     if (!text) return;
     closeComposerSuggestions();
-    const sendGuard = guardSlashCommandText(text, composer, slashGuardSettings);
+    const submitSlashGuardChannel = slashGuardChannelForText(text, composer);
+    let submitSlashGuardSettings = slashGuardSettings;
+    if (
+      slashChannelNeedsAIDockGenerationSettings(submitSlashGuardChannel) &&
+      !generationSettingsReady
+    ) {
+      const loaded = loadAIDockGenerationSettings(
+        generationSettingsProfileId,
+        generationSettingsProfile,
+      );
+      setGenerationSettingsState(loaded);
+      submitSlashGuardSettings = {
+        image: loaded.image,
+        music: loaded.music,
+        threeD: loaded.threeD,
+        video: loaded.video,
+        speech: loaded.speech,
+      };
+    }
+    const sendGuard = guardSlashCommandText(
+      text,
+      composer,
+      submitSlashGuardSettings,
+    );
     if (sendGuard && !sendGuard.ok) {
       useStore.setState({
         blockedSendTip: {
@@ -5736,6 +5943,59 @@ export default function AIDock({
       return;
     }
     if (isReadOnly || activeAiEditing) return;
+    const gddModeStart = /^\/gdd-mode-start(?:\s+([\s\S]*))?$/i.exec(text);
+    if (gddModeStart) {
+      const wasGddMode = composer.gddMode;
+      const startedAt = wasGddMode
+        ? (composer.gddModeStartedAt ?? Date.now())
+        : Date.now();
+      setComposer({
+        gddMode: true,
+        gddModeStartedAt: startedAt,
+        imageMode: false,
+        imageModeStartedAt: null,
+        musicMode: false,
+        musicModeStartedAt: null,
+        threeDMode: false,
+        threeDModeStartedAt: null,
+        comfyMode: false,
+        comfyModeStartedAt: null,
+        videoMode: false,
+        videoModeStartedAt: null,
+        spriteMode: false,
+        spriteModeStartedAt: null,
+        speechMode: false,
+        speechModeStartedAt: null,
+        uiMode: false,
+        uiModeStartedAt: null,
+        metahumanMode: false,
+        metahumanModeStartedAt: null,
+        worldMode: false,
+        worldModeStartedAt: null,
+        blueprintMode: false,
+        blueprintModeStartedAt: null,
+        blueprintModeArgs: null,
+      });
+      clearDraftIfNeeded();
+      if (!wasGddMode) {
+        appendChatNote(t(locale, "dock.gddModeEntered"), "system");
+      }
+      const prompt = (gddModeStart[1] ?? "").trim();
+      if (prompt) generateGddPrompt(prompt);
+      return;
+    }
+    const gddModeEnd = /^\/gdd-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    if (gddModeEnd) {
+      const wasGddMode = composer.gddMode;
+      setComposer({ gddMode: false, gddModeStartedAt: null });
+      clearDraftIfNeeded();
+      if (wasGddMode) {
+        appendChatNote(t(locale, "dock.gddModeExited"), "system");
+      }
+      const prompt = (gddModeEnd[1] ?? "").trim();
+      if (wasGddMode || prompt) generateGddPrompt(prompt, { finalize: true });
+      return;
+    }
     // Sticky image mode toggles. The command enters/leaves image mode; the input
     // background + placeholder reflect the mode. Any text typed after the command
     // on the same line is treated as a first image prompt (so picking the command
@@ -5747,6 +6007,8 @@ export default function AIDock({
         ? (composer.imageModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: true,
         imageModeStartedAt: startedAt,
         musicMode: false,
@@ -5802,6 +6064,8 @@ export default function AIDock({
         ? (composer.musicModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: true,
@@ -5857,6 +6121,8 @@ export default function AIDock({
         ? (composer.videoModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -5916,6 +6182,8 @@ export default function AIDock({
         ? (composer.speechModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -5975,6 +6243,8 @@ export default function AIDock({
         ? (composer.spriteModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6032,6 +6302,8 @@ export default function AIDock({
         ? (composer.threeDModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6078,6 +6350,8 @@ export default function AIDock({
         ? (composer.comfyModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6125,6 +6399,8 @@ export default function AIDock({
         ? (composer.worldModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6181,6 +6457,8 @@ export default function AIDock({
         ? (composer.uiModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6228,6 +6506,8 @@ export default function AIDock({
         ? (composer.metahumanModeStartedAt ?? Date.now())
         : Date.now();
       setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
         imageMode: false,
         imageModeStartedAt: null,
         musicMode: false,
@@ -6355,6 +6635,11 @@ export default function AIDock({
     // Sticky image mode: bare text (no slash command matched above) generates an
     // image instead of editing the workflow. Slash commands still win so the user
     // can drop a /studio or /plan without leaving image mode.
+    if (composer.gddMode && !text.startsWith("/")) {
+      generateGddPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
     if (composer.imageMode && !text.startsWith("/")) {
       generateImagePrompt(text);
       clearDraftIfNeeded();
@@ -6640,26 +6925,6 @@ export default function AIDock({
       })}
     </div>
   );
-  const generationMode:
-    | "image"
-    | "music"
-    | "threeD"
-    | "video"
-    | "sprite"
-    | "speech"
-    | null = composer.imageMode
-    ? "image"
-    : composer.musicMode
-      ? "music"
-      : composer.threeDMode
-        ? "threeD"
-        : composer.videoMode
-          ? "video"
-          : composer.spriteMode
-            ? "sprite"
-            : composer.speechMode
-              ? "speech"
-              : null;
   const channelOptions =
     generationMode === "image"
       ? imageChannelOptions
@@ -6761,7 +7026,9 @@ export default function AIDock({
                   ? t(locale, "dock.modelVersionLoading")
                   : t(locale, "dock.modelVersionTitle");
   const composerModeClass =
-    composer.imageMode && !dropActive
+    composer.gddMode && !dropActive
+      ? "ugs-ai-input--gdd "
+      : composer.imageMode && !dropActive
       ? "ugs-ai-input--image "
       : composer.musicMode && !dropActive
         ? "ugs-ai-input--music "
@@ -7956,7 +8223,9 @@ export default function AIDock({
             placeholder={
               isReadOnly
                 ? t(locale, "dock.runningPlaceholder")
-                : composer.imageMode
+                : composer.gddMode
+                  ? t(locale, "dock.gddModePlaceholder")
+                  : composer.imageMode
                   ? t(locale, "dock.imageModePlaceholder")
                   : composer.musicMode
                     ? t(locale, "dock.musicModePlaceholder")

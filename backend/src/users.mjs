@@ -9,6 +9,18 @@ export function normalizeEmail(value) {
   return email;
 }
 
+// Derive a friendly display name when the client doesn't supply one. We keep the
+// sanitized email local-part and append a short random suffix so every account
+// gets an assigned username, distinct from other users that share a local-part.
+export function assignDisplayName(email) {
+  const local = String(email ?? '')
+    .split('@')[0]
+    .replace(/[^a-zA-Z0-9_.-]/g, '')
+    .slice(0, 24);
+  const base = local.length >= 2 ? local : 'user';
+  return `${base}_${randomUUID().slice(0, 4)}`;
+}
+
 export function publicUser(user) {
   if (!user) return null;
   return {
@@ -32,9 +44,9 @@ export async function createUser(store, input) {
     email,
     passwordHash: String(input?.passwordHash ?? ''),
     displayName:
-      typeof input?.displayName === 'string'
+      typeof input?.displayName === 'string' && input.displayName.trim()
         ? input.displayName.trim().slice(0, 80)
-        : '',
+        : assignDisplayName(email),
     emailVerified: input?.emailVerified === true,
     status: USER_STATUS_ACTIVE,
     createdAt: now,

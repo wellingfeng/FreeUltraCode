@@ -66,6 +66,12 @@ test('multiuser email auth verifies users and isolates projects', async () => {
     assert.match(verifyCode, /^\d{6}$/);
     const sessionA = await anon.verifyEmail({ email: 'a@example.com', code: verifyCode });
     assert.equal(sessionA.user.email, 'a@example.com');
+    // 注册时未给定用户名，后端必须自动分配一个非空账号名。
+    assert.ok(
+      typeof sessionA.user.displayName === 'string' &&
+        sessionA.user.displayName.length > 0,
+      'expected an assigned displayName',
+    );
     const clientA = new RunnerClient(base, sessionA.accessToken);
 
     const project = await clientA.saveProject({

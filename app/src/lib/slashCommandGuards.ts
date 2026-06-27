@@ -301,8 +301,14 @@ export function guardSlashCommandText(
   composer: Parameters<typeof modeChannelFromComposer>[0],
   settings: SlashCommandGuardSettings = {},
 ): SlashCommandGuardResult | null {
-  const commandChannel = commandChannelFromText(text);
-  const channel =
-    commandChannel ?? (text.trim().startsWith('/') ? null : modeChannelFromComposer(composer));
+  const channel = slashGuardChannelForText(text, composer);
   return channel ? guardSlashCommandChannel(channel, settings) : null;
+}
+
+export function slashGuardChannelForText(
+  text: string,
+  composer: Parameters<typeof modeChannelFromComposer>[0],
+): SlashGuardChannel | null {
+  const commandChannel = commandChannelFromText(text);
+  return commandChannel ?? (text.trim().startsWith('/') ? null : modeChannelFromComposer(composer));
 }

@@ -46,6 +46,8 @@ const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: stri
   ['settings/freeProxyPort.v1.json', 'ugs_free_proxy_port_v1'],
   ['settings/modelListCache.v1.json', 'ugs_model_list_cache_v1'],
   ['settings/modelListHidden.v1.json', 'ugs_model_list_hidden_v1'],
+  ['settings/memoryConfig.v1.json', 'ultragamestudio.memoryConfig.v1'],
+  ['settings/memoryReviewState.v1.json', 'ultragamestudio.memoryReviewState.v1'],
 ];
 
 // relPath -> serialized JSON. Authoritative in-memory view once `diskReady`.

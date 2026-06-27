@@ -73,17 +73,31 @@ export function makeMailer(env = process.env, logger = console) {
       region: env.UGS_SES_REGION || 'ap-hongkong',
       profile: { signMethod: 'TC3-HMAC-SHA256' },
     });
-    await client.SendEmail({
+    // Tencent SES blocks raw HTML ("Simple") sends for individually-verified
+    // (personal) accounts — they must use an approved template. When a template
+    // id is configured we send via Template; the template variable name defaults
+    // to "code" and is overridable via UGS_SES_TEMPLATE_CODE_FIELD.
+    const templateId = Number(env.UGS_SES_TEMPLATE_ID || 0);
+    const params = {
       FromEmailAddress: from,
       Destination: [email],
       Subject: message.subject,
-      Simple: {
+      TriggerType: 1,
+    };
+    if (templateId > 0) {
+      const field = env.UGS_SES_TEMPLATE_CODE_FIELD || 'code';
+      params.Template = {
+        TemplateID: templateId,
+        TemplateData: JSON.stringify({ [field]: String(code) }),
+      };
+    } else {
+      params.Simple = {
         Html: Buffer.from(message.html).toString('base64'),
         Text: Buffer.from(message.text).toString('base64'),
-      },
-      TriggerType: 1,
-    });
-    return { ok: true, mode: 'api' };
+      };
+    }
+    await client.SendEmail(params);
+    return { ok: true, mode: templateId > 0 ? 'api-template' : 'api' };
   }
 
   async function send(email, code, purpose) {

@@ -2854,6 +2854,7 @@ describe('simple-workflow chat mode', () => {
     expect(isWorkflowReadOnly(state)).toBe(false);
     expect(isActiveAiEditingSession(state)).toBe(false);
 
+    await waitFor(() => typeof resolveReply === 'function', 'gateway call to start');
     resolveReply('回答一');
     await waitFor(
       () => !useStore.getState().aiStreaming,

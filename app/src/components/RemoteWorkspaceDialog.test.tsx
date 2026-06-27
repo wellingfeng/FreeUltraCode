@@ -62,7 +62,7 @@ describe('RemoteWorkspaceDialog', () => {
     expect(container.textContent).not.toContain('访问 Token');
   });
 
-  it('shows server connection fields only after the user opens cloud service config', () => {
+  it('gates a new cloud project behind email identity verification', () => {
     act(() => {
       root.render(
         <RemoteWorkspaceDialog
@@ -73,18 +73,45 @@ describe('RemoteWorkspaceDialog', () => {
       );
     });
 
-    expect(container.textContent).not.toContain('服务器地址');
-    const button = [...container.querySelectorAll('button')].find(
-      (node) => node.textContent === '配置云端服务',
+    // 新建云端项目时先显示身份门禁，而不是项目表单。
+    expect(container.textContent).toContain('验证身份');
+    expect(container.textContent).toContain('云端服务地址');
+    // 项目表单（仓库地址、保存）此时不应出现。
+    expect(container.textContent).not.toContain('项目仓库地址');
+    const saveButton = [...container.querySelectorAll('button')].find(
+      (node) => node.textContent === '保存',
     );
-    expect(button).toBeTruthy();
+    expect(saveButton).toBeFalsy();
+    // 门禁阶段提供邮箱登录/注册入口。
+    const loginButton = [...container.querySelectorAll('button')].find(
+      (node) => node.textContent === '登录',
+    );
+    expect(loginButton).toBeTruthy();
+  });
+
+  it('shows the project form with the assigned account once an email session exists', () => {
+    saveRemoteRunnerConnection(
+      { serverUrl: 'https://runner.test:8787' },
+      {
+        token: 'runner-token',
+        refreshToken: 'refresh-token',
+        userEmail: 'player@example.com',
+      },
+    );
 
     act(() => {
-      button?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      root.render(
+        <RemoteWorkspaceDialog
+          locale="zh-CN"
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />,
+      );
     });
 
-    expect(container.textContent).toContain('服务器地址');
-    expect(container.textContent).toContain('访问 Token');
+    // 已有邮箱登录态时直接进入项目表单。
+    expect(container.textContent).toContain('项目仓库地址');
+    expect(container.textContent).not.toContain('验证身份');
   });
 
   it('drops the project-level default model field', () => {

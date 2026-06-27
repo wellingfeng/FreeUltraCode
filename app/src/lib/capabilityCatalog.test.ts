@@ -31,8 +31,13 @@ describe("capability catalog", () => {
     const gameSkillNames = GAME_SKILL_CAPABILITY_MANIFESTS.map(
       (manifest) => manifest.command.name,
     );
-    expect(gameSkillNames).toHaveLength(33);
+    expect(gameSkillNames).toHaveLength(38);
     expect(gameSkillNames).toContain("/game");
+    expect(gameSkillNames).toContain("/gdd-mode-start");
+    expect(gameSkillNames).toContain("/gdd-mode-end");
+    expect(gameSkillNames).toContain("/game-template-skill");
+    expect(gameSkillNames).toContain("/game-debug-skill");
+    expect(gameSkillNames).toContain("/game-verify-report");
     expect(gameSkillNames).not.toContain("/deep-research");
     expect(gameSkillNames).not.toContain("/studio");
     expect(gameSkillNames).not.toContain("/help");

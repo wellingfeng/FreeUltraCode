@@ -22,6 +22,9 @@
  * helpers.
  */
 
+import { MEMORY_OPEN } from './memoryProtocol';
+import { RECALL_OPEN } from './recallProtocol';
+
 /** The kinds of user interaction a node can request. */
 export type InteractionKind = 'select' | 'input' | 'confirm';
 
@@ -200,6 +203,10 @@ export function liveProse(text: string): string {
   if (ask !== -1) cuts.push(ask);
   const fence = text.indexOf('```');
   if (fence !== -1) cuts.push(fence);
+  const mem = text.indexOf(MEMORY_OPEN);
+  if (mem !== -1) cuts.push(mem);
+  const recall = text.indexOf(RECALL_OPEN);
+  if (recall !== -1) cuts.push(recall);
   const visible = cuts.length === 0 ? text : text.slice(0, Math.min(...cuts)).trimEnd();
   return compactRuntimeHeartbeatLines(visible);
 }

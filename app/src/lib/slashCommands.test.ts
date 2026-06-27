@@ -81,6 +81,11 @@ describe("withAppOnlyStaticEntries", () => {
     // narrower surface, not the only surface.
     expect(names).toContain("/image-mode-start");
     expect(names).toContain("/image-to-game");
+    expect(names).toContain("/gdd-mode-start");
+    expect(names).toContain("/gdd-mode-end");
+    expect(names).toContain("/game-template-skill");
+    expect(names).toContain("/game-debug-skill");
+    expect(names).toContain("/game-verify-report");
     expect(names).toContain("/video-to-frames");
     expect(names).toContain("/sprite-mode-start");
     expect(names).toContain("/blueprint-mode-start");
@@ -172,6 +177,11 @@ describe("project command allowlist", () => {
     expect(isGameProjectCommandName("  /BLUEPRINT-MODE-END ")).toBe(true);
     expect(isGameProjectCommandName("  /SPRITE ")).toBe(true);
     expect(isGameProjectCommandName("  /IMAGE-TO-GAME ")).toBe(true);
+    expect(isGameProjectCommandName("  /GDD-MODE-START ")).toBe(true);
+    expect(isGameProjectCommandName("  /GDD-MODE-END ")).toBe(true);
+    expect(isGameProjectCommandName("  /GAME-TEMPLATE-SKILL ")).toBe(true);
+    expect(isGameProjectCommandName("  /GAME-DEBUG-SKILL ")).toBe(true);
+    expect(isGameProjectCommandName("  /GAME-VERIFY-REPORT ")).toBe(true);
     expect(isProjectCommandName("/sprite-mode-start")).toBe(false);
     expect(isGameProjectCommandName("/game")).toBe(true);
     expect(isGameProjectCommandName("  /MESH-MODE-START ")).toBe(true);
@@ -222,6 +232,31 @@ describe("project command allowlist", () => {
     );
   });
 
+  it("keeps OpenGame-inspired game workflow commands browser-first", () => {
+    const suggestions = buildGameSkillSuggestions("zh-CN");
+    for (const name of [
+      "/game-template-skill",
+      "/game-debug-skill",
+      "/game-verify-report",
+    ]) {
+      const command = suggestions.find((item) => item.name === name);
+      expect(command?.insertText).toContain("浏览器");
+      expect(command?.insertText).toContain("不要生成 workflow 蓝图或 IRGraph");
+    }
+    expect(
+      suggestions.find((item) => item.name === "/game-verify-report")
+        ?.insertText,
+    ).toContain("浏览器检查是硬验收");
+    expect(
+      suggestions.find((item) => item.name === "/game-template-skill")
+        ?.insertText,
+    ).toContain("30 个主流模板");
+    expect(
+      suggestions.find((item) => item.name === "/game-template-skill")
+        ?.insertText,
+    ).toContain("fps");
+  });
+
   it("groups sprite, mesh, and ui commands under the game project list", () => {
     const gameOnly = buildGameSkillSuggestions("en-US").filter((item) =>
       isGameProjectCommandName(item.name),
@@ -229,6 +264,11 @@ describe("project command allowlist", () => {
     const names = gameOnly.map((item) => item.name);
     expect(names).toContain("/game");
     expect(names).toContain("/image-to-game");
+    expect(names).toContain("/gdd-mode-start");
+    expect(names).toContain("/gdd-mode-end");
+    expect(names).toContain("/game-template-skill");
+    expect(names).toContain("/game-debug-skill");
+    expect(names).toContain("/game-verify-report");
     expect(names).toContain("/mesh-mode-start");
     expect(names).toContain("/mesh-search");
     expect(names).toContain("/sprite");

@@ -172,6 +172,9 @@ import {
 } from '@/lib/downloadRegistry';
 import {
   COMFY_PROMPT_SYSTEM,
+  stripGddModeCommand,
+  gddModePromptSystem,
+  gddModeFinalizePromptSystem,
   stripUiModeCommand,
   uiDesignPromptSystem,
   stripBlueprintModeCommand,
@@ -230,6 +233,33 @@ import {
   buildAssetCapabilityBlock,
   shouldUseAssetCapabilityBlockForPrompt,
 } from '@/lib/anthropic';
+import { renderMemorySnapshot, applyMemoryWrites } from '@/lib/memoryStore';
+import {
+  MEMORY_WRITE_INSTRUCTION,
+  parseMemoryWrites,
+  stripMemoryWrites,
+} from '@/core/memoryProtocol';
+import {
+  RECALL_INSTRUCTION,
+  parseRecall,
+  stripRecall,
+} from '@/core/recallProtocol';
+import {
+  searchSessions,
+  formatRecallHits,
+  type SessionReader,
+} from '@/lib/sessionSearch';
+import {
+  loadMemoryConfig,
+  getLastReviewAt,
+  setLastReviewAt,
+} from '@/lib/memoryConfig';
+import {
+  shouldRunReview,
+  buildReviewTranscript,
+  buildReviewUserPrompt,
+  REVIEW_SYSTEM,
+} from '@/core/memoryReview';
 import {
   INTERACTION_PROTOCOL,
   formatAnswerForPrompt,
@@ -962,6 +992,9 @@ export function normalizeComposerSettings(value: Partial<ComposerSettings> | und
       workspace,
     ),
     modelStrategy: source.modelStrategy ?? defaultComposer.modelStrategy,
+    gddMode: source.gddMode ?? defaultComposer.gddMode,
+    gddModeStartedAt:
+      source.gddModeStartedAt ?? defaultComposer.gddModeStartedAt,
     imageMode: source.imageMode ?? defaultComposer.imageMode,
     imageModeStartedAt:
       source.imageModeStartedAt ?? defaultComposer.imageModeStartedAt,
@@ -4117,6 +4150,20 @@ export const useStore = create<StoreState>((set, get) => ({
     startSpriteGenerationTurn(text, options);
   },
 
+  generateGddPrompt: (text, options = {}) => {
+    const prompt = stripGddModeCommand(text);
+    const userPrompt =
+      prompt ||
+      (options.finalize
+        ? '冻结当前 GDD 草稿，提取资产/场景/玩法合约，并按差异落地资产和代码。'
+        : '');
+    if (!userPrompt) return;
+    const systemPrompt = options.finalize
+      ? gddModeFinalizePromptSystem()
+      : gddModePromptSystem();
+    void get().sendPrompt(`${systemPrompt}\n\n用户需求：\n${userPrompt}`);
+  },
+
   generateComfyPrompt: (text) => {
     const prompt = stripComfyCommand(text);
     if (!prompt) return;
@@ -5207,10 +5254,24 @@ ${previousReply.slice(0, 4000)}
         const simpleAssetCapabilityBlock = shouldUseAssetCapabilityBlockForPrompt(trimmed)
           ? assetCapabilityBlock
           : '';
+        // Frozen memory snapshot: read ONCE here at the start of the turn and
+        // baked into the system prompt. Mid-session memory writes only touch
+        // disk; they refresh on the next turn's snapshot so the native-CLI
+        // prefix cache stays stable. See lib/memoryStore.ts CONTRACT.
+        const workspaceMemoryId = ch.workspaceId || undefined;
+        const memoryConfig = loadMemoryConfig();
+        const memorySnapshot = memoryConfig.snapshotEnabled
+          ? await renderMemorySnapshot(workspaceMemoryId).catch(() => '')
+          : '';
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
           personalBlock,
+          memorySnapshot,
+          memoryConfig.writeEnabled ? MEMORY_WRITE_INSTRUCTION : '',
+          // Recall needs a workspace to scope the history search; only offer it
+          // when this session belongs to one and recall is enabled.
+          ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
           gameExpertBlock,
           simpleAssetCapabilityBlock,
           projectEngineGuidance,
@@ -5392,6 +5453,45 @@ ${previousReply.slice(0, 4000)}
               });
               answer = full || returned;
             }
+            // History recall: if the model asked to search past conversations,
+            // run the search, strip the block, feed the formatted hits back as
+            // a continuation, and loop again (bounded by MAX_INTERACTION_ROUNDS).
+            const recallWorkspaceId = ch.workspaceId;
+            const recall =
+              recallWorkspaceId && memoryConfig.recallEnabled ? parseRecall(answer) : null;
+            if (recall && recallWorkspaceId) {
+              const preface = stripRecall(answer);
+              setActive(
+                withAiTiming(routedBody(routeLine, preface || '⟳ 检索历史会话…')),
+                true,
+              );
+              const reader: SessionReader = {
+                listSessions: (wid) =>
+                  historyStore.listSessions(wid).then((rows) =>
+                    rows.map((r) => ({
+                      sessionId: r.sessionId ?? r.id,
+                      title: r.title,
+                      updatedAt:
+                        typeof r.updatedAt === 'number'
+                          ? r.updatedAt
+                          : Date.parse(String(r.updatedAt)) || 0,
+                    })),
+                  ),
+                getSession: (wid, sid) =>
+                  historyStore
+                    .getSession(wid, sid)
+                    .then((rec) => (rec ? { messages: rec.messages } : null)),
+              };
+              const hits = await searchSessions(
+                reader,
+                recallWorkspaceId,
+                recall.query,
+                { limit: Math.min(recall.limit ?? 5, 8), excludeSessionId: ch.sessionId ?? undefined },
+              ).catch(() => []);
+              newBubble(withAiTiming('⟳ 生成中…'));
+              continuation = `历史会话检索结果（query: ${recall.query}）：\n${formatRecallHits(hits)}\n\n请基于以上检索结果继续回答用户。`;
+              continue;
+            }
             const req = parseInteraction(answer);
             if (!req) {
               finalAnswer = answer;
@@ -5415,6 +5515,60 @@ ${previousReply.slice(0, 4000)}
             continuation = formatAnswerForPrompt(req, userAnswer);
           }
           const turnMessageId = activeId;
+          // Defensive: if a recall block survived into the final answer (e.g.
+          // the round budget ran out before it was processed), strip it so the
+          // protocol JSON never reaches the user.
+          finalAnswer = stripRecall(finalAnswer);
+          // Long-term memory: parse any <<UGS_MEMORY>> block(s) the model
+          // emitted this turn, strip them from the visible prose, and apply
+          // them to disk in the background. The write lands on the NEXT turn's
+          // frozen snapshot — it does not touch this turn's prompt/cache.
+          const memoryWrites = memoryConfig.writeEnabled
+            ? parseMemoryWrites(finalAnswer)
+            : [];
+          if (memoryWrites.length) {
+            finalAnswer = stripMemoryWrites(finalAnswer);
+            void applyMemoryWrites(memoryWrites, workspaceMemoryId).catch(() => {});
+          } else if (memoryConfig.writeEnabled) {
+            // Strip any block we won't apply so protocol JSON never shows.
+            finalAnswer = stripMemoryWrites(finalAnswer);
+          }
+          // Background self-review (stage 5): when enabled and rate-limit/signal
+          // gates pass, fork a cheap fire-and-forget model call that replays the
+          // transcript and proposes durable memory. Spends model quota, so it is
+          // OFF by default and bounded by shouldRunReview().
+          {
+            const reviewWsKey = ch.workspaceId || '';
+            const transcriptMsgs = [
+              ...priorMessages.map((m) => ({ role: m.role, text: m.text })),
+              { role: 'user' as const, text: trimmed },
+              { role: 'assistant' as const, text: finalAnswer },
+            ];
+            if (
+              shouldRunReview(
+                memoryConfig,
+                getLastReviewAt(reviewWsKey),
+                transcriptMsgs.length,
+              )
+            ) {
+              setLastReviewAt(reviewWsKey);
+              void (async () => {
+                try {
+                  const transcript = buildReviewTranscript(transcriptMsgs);
+                  const out = await completeDirectWithSpeed({
+                    system: REVIEW_SYSTEM,
+                    userContent: buildReviewUserPrompt(transcript),
+                  });
+                  const proposals = parseMemoryWrites(out);
+                  if (proposals.length) {
+                    await applyMemoryWrites(proposals, workspaceMemoryId);
+                  }
+                } catch {
+                  /* review is best-effort; never disturb the chat turn */
+                }
+              })();
+            }
+          }
           // Re-attach the tool sentinels captured while streaming so the answer
           // bubble keeps its tool cards AND the session-files list keeps the
           // files this turn touched (it parses <<UGS_TOOL>> sentinels from the

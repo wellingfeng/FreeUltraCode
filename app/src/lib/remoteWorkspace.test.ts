@@ -261,9 +261,9 @@ describe('purgeDefaultRemoteWorkspaces', () => {
     expect(getRemoteWorkspace(real.id)).not.toBeNull();
   });
 
-  it('keeps a default-server workspace that has real project content', () => {
-    // 用内置默认 Token 保存、但已绑定仓库/项目 id 的真实云端项目：
-    // 不是纯预填空壳，启动期清理必须保留它（否则用默认 Token 存的项目会被误删）。
+  it('keeps a default-server workspace the user explicitly created', () => {
+    // 用户在对话框里显式保存的云端项目（userCreated:true），即便用的是内置默认
+    // Token、且 projectId 是自动绑定的，也必须保留——这是有意创建的真实项目。
     const real = saveRemoteWorkspace(
       {
         label: '默认服上的真实项目',
@@ -271,6 +271,7 @@ describe('purgeDefaultRemoteWorkspaces', () => {
         projectId: 'proj_real',
         repoUrl: 'https://github.com/me/real.git',
         adapter: 'codex',
+        userCreated: true,
       },
       { token: DEFAULT_REMOTE_RUNNER_TOKEN },
     );
@@ -279,6 +280,24 @@ describe('purgeDefaultRemoteWorkspaces', () => {
 
     expect(removed).toEqual([]);
     expect(getRemoteWorkspace(real.id)).not.toBeNull();
+  });
+
+  it('removes a ghost even after auto-binding stamped a projectId on it', () => {
+    // 回归：旧实现用 projectId/repoUrl 当真实判据，导致幽灵空壳被自动绑定
+    // projectId 后永久免死。现在改用 userCreated 来源标记，未显式创建的空壳
+    // 即便已绑定 projectId 也应被清理。
+    const ghost = saveRemoteWorkspace({
+      label: '默认云端',
+      serverUrl: DEFAULT_REMOTE_RUNNER_SERVER_URL,
+      projectId: 'proj_autobound',
+      repoUrl: 'https://github.com/me/autobound.git',
+      adapter: 'claude',
+    });
+
+    const removed = purgeDefaultRemoteWorkspaces();
+
+    expect(removed).toEqual([ghost.id]);
+    expect(loadRemoteWorkspaces()).toHaveLength(0);
   });
 
   it('does not touch workspaces pointing at a custom server', () => {
