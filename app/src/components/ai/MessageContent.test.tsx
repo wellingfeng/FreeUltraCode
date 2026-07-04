@@ -509,4 +509,32 @@ describe('MessageContent integration', () => {
       container.remove();
     }
   });
+
+  it('renders info-less ASCII-diagram fences as plain folded text, not a guessed language', () => {
+    // Regression for a real chat transcript: the model draws a plain ``` block
+    // (no language tag) full of box-drawing arrows + Chinese prose to sketch a
+    // state timeline. `rehype-highlight`'s `detect` heuristic used to guess a
+    // random registered language (e.g. `javascript`) for this kind of
+    // ambiguous content, which showed a nonsense language badge in the header
+    // and painted the ASCII art with garish syntax-highlight colors.
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: [
+          '```',
+          '时间轴 ────────────────────────────────────────────────────────▶',
+          '',
+          '[Unknown]',
+          '    │  第一次转换：告诉GPU"接下来当拷贝目标用"',
+          '    ▼',
+          'CopyDest ◀── 真身IDTexture 正在把数据拷进来',
+          '```',
+        ].join('\n'),
+        streaming: false,
+      }),
+    );
+
+    expect(html).not.toMatch(/language-(?!plaintext)[a-z]+/);
+    expect(html).not.toMatch(/hljs-/);
+    expect(html).toMatch(/ai-code__folded/); // plain-text fences fold by default
+  });
 });

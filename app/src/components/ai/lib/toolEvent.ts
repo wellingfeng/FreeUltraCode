@@ -308,6 +308,31 @@ export function mergeToolPatches(patches: ToolEventPatch[]): ToolEvent[] {
   return order.map((id) => byId.get(id)!);
 }
 
+/**
+ * Append a synthetic terminal patch for every tool sentinel in `text` whose
+ * merged status is still `running`. A turn can legitimately reach its final
+ * answer while a tool call it started never got a matching `done`/`error`
+ * patch (model moved on without waiting, CLI process exited mid-stream,
+ * round budget ran out, etc.). Without this, the persisted message freezes
+ * that tool card in a permanent spinner even though the turn is long over —
+ * indistinguishable in the UI from "still actually running".
+ */
+export function closeDanglingToolPatches(text: string): string {
+  if (!hasToolSentinel(text)) return text;
+  const dangling = mergeToolPatches(extractToolSentinels(text).patches).filter(
+    (event) => event.status === 'running',
+  );
+  if (dangling.length === 0) return text;
+  const closers = dangling.map((event) =>
+    encodeToolPatch({
+      id: event.id,
+      status: 'error',
+      result: '本轮已结束，未收到该工具调用的完成事件（可能被中断或超时）。',
+    }),
+  );
+  return `${text}${closers.join('')}`;
+}
+
 function stripUndefined<T extends object>(obj: T): Partial<T> {
   const out: Partial<T> = {};
   for (const k of Object.keys(obj) as Array<keyof T>) {

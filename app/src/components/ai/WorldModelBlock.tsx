@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
@@ -181,7 +181,7 @@ function WorldModelOverlay({
   }, [onClose]);
 
   const [surface, setSurface] = useState<HTMLElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSurface(document.getElementById('ugs-stream-surface'));
   }, []);
 

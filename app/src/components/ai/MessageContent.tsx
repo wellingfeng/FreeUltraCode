@@ -7,6 +7,7 @@ import ToolCard from './ToolCard';
 import type { ToolEvent } from './lib/toolEvent';
 import { FileChipBudgetProvider, type OpenFileFn } from './FileChip';
 import { answerActionText } from './lib/messageText';
+import { type SearchHighlightState } from './lib/searchHighlight';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
 
@@ -42,12 +43,14 @@ function MessageContentImpl({
   showActions = false,
   onOpenFile,
   cwd,
+  searchState = null,
 }: {
   text: string;
   streaming?: boolean;
   showActions?: boolean;
   onOpenFile?: OpenFileFn;
   cwd?: string;
+  searchState?: SearchHighlightState | null;
 }) {
   const locale = useStore((s) => s.locale);
   const segments = segmentMessage(text, streaming);
@@ -91,6 +94,7 @@ function MessageContentImpl({
                 text={seg.text}
                 done={seg.done}
                 streaming={streaming && !seg.done}
+                searchState={searchState}
               />
             );
           }
@@ -116,6 +120,7 @@ function MessageContentImpl({
                 streaming={streaming && i === lastAnswerIdx}
                 onOpenFile={onOpenFile}
                 cwd={cwd}
+                searchState={searchState}
               />
               {streaming && i === lastIdx && (
                 <span className="ai-caret ai-caret--trailing" aria-hidden />

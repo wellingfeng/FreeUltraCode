@@ -133,6 +133,12 @@ import {
   type RunShellKind,
 } from '@/lib/shellConfig';
 import {
+  DEFAULT_CACHE_CLEANUP_CONFIG,
+  loadCacheCleanupConfig,
+  saveCacheCleanupConfig,
+  type CacheCleanupConfig,
+} from '@/lib/cacheCleanupConfig';
+import {
   getManifestModeEnabled,
   setManifestModeEnabled,
   subscribeManifestMode,
@@ -1050,6 +1056,20 @@ function GeneralSettings({
     getRunShell(),
   );
   const [shellError, setShellError] = useState<string | null>(null);
+  const [cacheCleanupConfig, setCacheCleanupConfig] =
+    useState<CacheCleanupConfig>(() => {
+      try {
+        return loadCacheCleanupConfig();
+      } catch {
+        return { ...DEFAULT_CACHE_CLEANUP_CONFIG };
+      }
+    });
+  const patchCacheCleanupConfig = useCallback(
+    (patch: Partial<CacheCleanupConfig>) => {
+      setCacheCleanupConfig((prev) => saveCacheCleanupConfig({ ...prev, ...patch }));
+    },
+    [],
+  );
   const [translationSettings, setTranslationSettings] =
     useTranslationSettingsState();
   const translationProviderOptions = useMemo(
@@ -1294,6 +1314,37 @@ function GeneralSettings({
           ))}
         </div>
       </SettingRow>
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <h4 className="text-xs font-semibold text-fg">
+          {t(locale, 'settings.cacheCleanup.title')}
+        </h4>
+        <p className="text-[11px] leading-relaxed text-fg-faint">
+          {t(locale, 'settings.cacheCleanup.description')}
+        </p>
+        <SettingRow
+          title={t(locale, 'settings.cacheCleanup.enabledLabel')}
+          description={t(locale, 'settings.cacheCleanup.enabledHint')}
+        >
+          <SwitchControl
+            checked={cacheCleanupConfig.enabled}
+            onChange={(v) => patchCacheCleanupConfig({ enabled: v })}
+          />
+        </SettingRow>
+        {cacheCleanupConfig.enabled && (
+          <SettingRow
+            title={t(locale, 'settings.cacheCleanup.retentionLabel')}
+            description={t(locale, 'settings.cacheCleanup.retentionHint')}
+          >
+            <StepperControl
+              value={cacheCleanupConfig.retentionDays}
+              min={1}
+              max={365}
+              onChange={(v) => patchCacheCleanupConfig({ retentionDays: v })}
+            />
+          </SettingRow>
+        )}
+      </div>
     </div>
   );
 }

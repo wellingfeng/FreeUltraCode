@@ -48,6 +48,7 @@ const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: stri
   ['settings/modelListHidden.v1.json', 'ugs_model_list_hidden_v1'],
   ['settings/memoryConfig.v1.json', 'ultragamestudio.memoryConfig.v1'],
   ['settings/memoryReviewState.v1.json', 'ultragamestudio.memoryReviewState.v1'],
+  ['settings/cacheCleanup.v1.json', 'ultragamestudio.cacheCleanup.v1'],
 ];
 
 // relPath -> serialized JSON. Authoritative in-memory view once `diskReady`.

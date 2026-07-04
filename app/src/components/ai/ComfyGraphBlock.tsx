@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Background,
@@ -372,7 +372,7 @@ function ComfyEditorOverlay({
   // the message bubble that owns this block. Falls back to in-place rendering
   // when the surface isn't present (e.g. the compact dock layout).
   const [surface, setSurface] = useState<HTMLElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSurface(document.getElementById('ugs-stream-surface'));
   }, []);
 

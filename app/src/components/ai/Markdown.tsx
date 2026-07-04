@@ -37,6 +37,10 @@ import {
 } from './FileChip';
 import { claimFileChipSlot, useFileChipBudget } from './lib/fileChipBudget';
 import { isModelUrl } from './lib/modelLink';
+import {
+  highlightSearchMarks,
+  type SearchHighlightState,
+} from './lib/searchHighlight';
 
 function markdownUrlTransform(url: string, key: string): string | null | undefined {
   if (
@@ -82,11 +86,13 @@ function MarkdownImpl({
   streaming = false,
   onOpenFile,
   cwd,
+  searchState = null,
 }: {
   text: string;
   streaming?: boolean;
   onOpenFile?: OpenFileFn;
   cwd?: string;
+  searchState?: SearchHighlightState | null;
 }) {
   const normalized = useMemo(
     () => protectWindowsPaths(convertInlineHtml(normalizeMath(text))),
@@ -112,7 +118,13 @@ function MarkdownImpl({
         : [
             [
               rehypeHighlight,
-              { detect: true, languages: HL_LANGUAGES, aliases: HL_ALIASES },
+              // `detect: false` (default): an info-less fence (bare ``` with no
+              // language tag) must render as plain text. `hljs.highlightAuto`'s
+              // heuristics are unreliable on prose/ASCII-art blocks — it has
+              // mislabeled diagram fences as `python`/`yaml`, which then shows
+              // a wrong language badge in CodeBlock's header. Explicit fence
+              // tags (```ts, ```mermaid, ...) are unaffected by this flag.
+              { languages: HL_LANGUAGES, aliases: HL_ALIASES },
             ],
             rehypeKatex,
           ],
@@ -149,7 +161,13 @@ function MarkdownImpl({
   ): { node: ReactNode; hiddenOnly: boolean } => {
     const parts = scanFileRefs(text);
     if (parts.length === 1 && typeof parts[0] === 'string') {
-      return { node: text, hiddenOnly: false };
+      // No file refs — apply search highlight if active, else return raw string.
+      const highlighted = highlightSearchMarks(
+        parts[0],
+        searchState,
+        key == null ? undefined : String(key),
+      );
+      return { node: highlighted, hiddenOnly: false };
     }
 
     let hasVisibleText = false;
@@ -158,7 +176,12 @@ function MarkdownImpl({
     const nodes = parts.map((part, i) => {
       if (typeof part === 'string') {
         if (part.trim()) hasVisibleText = true;
-        return part ? <span key={i}>{part}</span> : null;
+        const highlighted = highlightSearchMarks(part, searchState, `${key}-${i}`);
+        return highlighted === part
+          ? part
+            ? <span key={i}>{part}</span>
+            : null
+          : <span key={i}>{highlighted}</span>;
       }
       const rendered = renderFileRef(part, i);
       if (rendered.hidden) {

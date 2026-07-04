@@ -1,4 +1,5 @@
 import { SIMPLE_CHAT_SYSTEM, buildAssetCapabilityBlock } from '@/lib/anthropic';
+import { isLocale, languageAdaptationPrompt, languageDirectiveReminder } from '@/lib/i18n';
 import {
   preferredReadyImageProviderId,
 } from '@/lib/imageGeneration';
@@ -555,16 +556,19 @@ function buildRemotePrompt(options: StartRemoteChatTurnOptions): string {
   });
   const system = [
     SIMPLE_CHAT_SYSTEM,
-    options.locale === 'zh-CN'
-      ? '\n除非用户明确要求换用其他语言，所有面向用户的说明必须用简体中文。'
-      : '',
+    languageAdaptationPrompt(isLocale(options.locale) ? options.locale : 'zh-CN'),
     options.personalBlock,
     options.gameExpertBlock,
     assetCapabilityBlock,
     options.projectEngineGuidance,
     '\n你运行在云端项目工作区。可以修改该项目仓库；回答需总结改动、风险、验证。不要输出 workflow 蓝图。',
   ].join('');
-  return `${system}\n\n用户：${options.prompt}`;
+  const locale = isLocale(options.locale) ? options.locale : 'zh-CN';
+  // Recency reminder: a long agentic remote run accumulates lots of English
+  // tool output between the front-loaded system block and the actual
+  // question, which dilutes it. Repeating a compact directive right after
+  // the question (where models weight context most) measurably helps.
+  return `${system}\n\n用户：${options.prompt}${languageDirectiveReminder(locale)}`;
 }
 
 function configuredProviderModels(

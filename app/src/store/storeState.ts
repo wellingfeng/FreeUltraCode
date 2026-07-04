@@ -164,6 +164,8 @@ export interface StoreState {
    * blueprint editing), so consecutive chat messages aren't blocked.
    */
   chattingSessions: WorkflowSessionKey[];
+  /** User message ids for simple-chat turns accepted locally but not started yet. */
+  queuedChatMessageIds: string[];
   /**
    * Sessions whose in-flight turn is parked on a user interaction (a UGS_ASK
    * select/input/confirm). The turn is still "live" (its channel stays open),
@@ -408,6 +410,16 @@ export interface StoreState {
   ) => string;
   /** Delete one message from the active conversation and persist the transcript. */
   deleteMessage: (messageId: string) => void;
+  /** Edit a simple-chat user message that is still waiting in the local queue. */
+  updateQueuedChatMessage: (messageId: string, text: string) => boolean;
+  /** Delete a simple-chat user message that is still waiting in the local queue. */
+  deleteQueuedChatMessage: (messageId: string) => boolean;
+  /**
+   * Interject a queued simple-chat message right now: abort the in-flight
+   * turn(s) for the same session so this queued turn starts immediately
+   * instead of waiting for the current answer to finish naturally.
+   */
+  interjectQueuedChatMessage: (messageId: string) => boolean;
   /** Create a new chat session containing messages up to the chosen assistant reply. */
   branchSessionFromMessage: (messageId: string) => void;
   clearBlockedSendTip: () => void;

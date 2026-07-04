@@ -565,6 +565,51 @@ pre,
 .ugs-stream-nav:focus-within {
   opacity: 1;
 }
+.ugs-stream-nav-edge {
+  position: absolute;
+  left: 50%;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--stream-surface-border);
+  background: var(--stream-surface-control-bg);
+  color: var(--stream-fg-muted);
+  cursor: pointer;
+  pointer-events: auto;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+.ugs-stream-nav-edge--top {
+  top: 0;
+}
+.ugs-stream-nav-edge--bottom {
+  bottom: 0;
+}
+.ugs-stream-nav-edge:hover,
+.ugs-stream-nav-edge:focus-visible {
+  border-color: var(--stream-link);
+  color: var(--stream-link);
+  background: color-mix(in oklab, var(--stream-link) 14%, var(--stream-surface-control-bg));
+}
+.ugs-stream-nav-edge:active {
+  transform: translateX(-50%) scale(0.92);
+}
+.ugs-stream-nav-edge:focus-visible {
+  outline: 2px solid var(--stream-link);
+  outline-offset: 2px;
+}
+.ugs-stream-nav-body {
+  position: absolute;
+  inset: 24px 0;
+}
 .ugs-stream-nav-track {
   position: absolute;
   inset: 0 auto;
@@ -653,6 +698,7 @@ pre,
 @media (prefers-reduced-motion: reduce) {
   .ugs-stream-nav,
   .ugs-stream-nav-marker,
+  .ugs-stream-nav-edge,
   .ugs-stream-nav-tooltip {
     transition: none;
   }
@@ -1199,7 +1245,18 @@ html.ugs-stream-scheme-solarized-dark {
 /* Prose blocks. Tight vertical rhythm to suit a chat surface. */
 .ai-stream-text,
 .ai-stream-markdown {
+  min-width: 0;
+  max-width: 100%;
   color: var(--stream-fg);
+}
+.ai-message,
+.ai-markdown {
+  min-width: 0;
+  max-width: 100%;
+}
+.ai-markdown {
+  overflow-wrap: anywhere;
+  isolation: isolate;
 }
 .ai-stream-user-bubble {
   border: 1px solid var(--stream-user-bubble-border);
@@ -1230,6 +1287,10 @@ html.ugs-stream-scheme-solarized-dark {
 .ai-markdown li::marker { color: var(--fg-faint); }
 .ai-markdown li > input[type='checkbox'] { margin-right: 0.4em; }
 .ai-markdown a { color: var(--stream-link); }
+.ai-markdown :where(.ai-code, .ai-mermaid, .ai-comfy, .ai-world, .ai-table-wrap, .ai-model-viewer) {
+  min-width: 0;
+  max-width: 100%;
+}
 .ai-generated-image {
   display: block;
   max-width: min(100%, 34rem);
@@ -1293,10 +1354,15 @@ html.ugs-stream-scheme-solarized-dark {
   backdrop-filter: blur(8px);
 }
 .ai-mermaid {
+  min-width: 0;
+  max-width: 100%;
   color: var(--stream-fg);
+  isolation: isolate;
 }
 .ai-mermaid__body {
   min-height: 5rem;
+  max-width: 100%;
+  isolation: isolate;
   background:
     linear-gradient(color-mix(in oklab, var(--stream-surface-border) 26%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in oklab, var(--stream-surface-border) 26%, transparent) 1px, transparent 1px),

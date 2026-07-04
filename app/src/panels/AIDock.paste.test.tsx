@@ -189,7 +189,7 @@ describe('AIDock pasted clipboard images', () => {
         cwd: 'E:\\UltraGameStudio',
       });
       expect(input.value).toBe(
-        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+        '`E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png`',
       );
     } finally {
       await view.cleanup();
@@ -244,7 +244,7 @@ describe('AIDock pasted clipboard images', () => {
 
       expect(tauriMocks.saveClipboardImage).toHaveBeenCalledTimes(1);
       expect(input.value).toBe(
-        'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png',
+        '`E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\shot.png`',
       );
     } finally {
       await view.cleanup();
@@ -316,7 +316,7 @@ describe('AIDock pasted clipboard images', () => {
           }),
         }),
       );
-      expect(input.value).toBe('.ultragamestudio/clipboard-images/shot.png');
+      expect(input.value).toBe('`.ultragamestudio/clipboard-images/shot.png`');
     } finally {
       await view.cleanup();
     }

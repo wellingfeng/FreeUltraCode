@@ -100,6 +100,7 @@ function resetStore(workflow: IRGraph): void {
     aiStreaming: false,
     aiEditingSessions: [],
     chattingSessions: [],
+    queuedChatMessageIds: [],
     blockedSendTip: null,
     dirty: false,
     currentFilePath: null,
@@ -2993,6 +2994,93 @@ describe('simple-workflow chat mode', () => {
     expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
       '问题一',
       '问题二',
+    ]);
+  });
+
+  it('edits a queued interjection before it starts', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    const userContents: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async (request) =>
+        new Promise<string>((resolve) => {
+          userContents.push(String(request.userContent));
+          resolvers.push(resolve);
+        }),
+    );
+
+    useStore.getState().sendPrompt('问题一');
+    await waitFor(() => resolvers.length === 1, 'first chat call');
+    useStore.getState().sendPrompt('问题二');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'queued message id',
+    );
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+
+    expect(
+      useStore.getState().updateQueuedChatMessage(queuedId, '改后的问题二'),
+    ).toBe(true);
+    expect(
+      useStore
+        .getState()
+        .messages.filter((message) => message.role === 'user')
+        .map((message) => message.text),
+    ).toEqual(['问题一', '改后的问题二']);
+
+    resolvers[0]('答一');
+    await waitFor(() => resolvers.length === 2, 'edited queued turn runs');
+    expect(userContents[1]).toContain('改后的问题二');
+    expect(userContents[1]).not.toContain('用户：问题二');
+
+    resolvers[1]('答二');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'edited queued chat to finish',
+    );
+    expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
+      '问题一',
+      '改后的问题二',
+    ]);
+  });
+
+  it('deletes a queued interjection before it starts', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async () => new Promise<string>((resolve) => resolvers.push(resolve)),
+    );
+
+    useStore.getState().sendPrompt('问题一');
+    await waitFor(() => resolvers.length === 1, 'first chat call');
+    useStore.getState().sendPrompt('问题二');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'queued message id',
+    );
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+
+    expect(useStore.getState().deleteQueuedChatMessage(queuedId)).toBe(true);
+    expect(useStore.getState().queuedChatMessageIds).toEqual([]);
+    expect(
+      useStore
+        .getState()
+        .messages.filter((message) => message.role === 'user')
+        .map((message) => message.text),
+    ).toEqual(['问题一']);
+
+    resolvers[0]('答一');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'remaining chat turn to finish',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
+      '问题一',
     ]);
   });
 

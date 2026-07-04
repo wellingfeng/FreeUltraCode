@@ -665,6 +665,14 @@ export interface CliOpts {
   sessionId?: string;
   /** Continue `sessionId` instead of creating it. */
   resume?: boolean;
+  /**
+   * Short language-enforcement directive (see `languageDirectiveReminder` in
+   * `lib/i18n.ts`). For the claude adapter the backend injects this via
+   * `--append-system-prompt` (real system-role authority, resent every
+   * turn); codex/gemini have no such flag, so it is appended at the very end
+   * of the stdin prompt instead, right after the user's question.
+   */
+  languageDirective?: string;
 }
 
 let __cliSeq = 0;
@@ -786,6 +794,7 @@ export async function aiEditViaCli(
       runId,
       sessionId: opts.sessionId ?? null,
       resume: opts.resume ?? null,
+      languageDirective: opts.languageDirective ?? null,
       shell: runShellPayload(),
     });
     if (isAiCliResult(result)) {

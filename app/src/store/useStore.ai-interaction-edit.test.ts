@@ -241,6 +241,62 @@ describe('AI edit interactions', () => {
     expect(useStore.getState().aiStreaming).toBe(false);
   });
 
+  it('folds an orphaned interaction answer into a fresh chat turn instead of dropping it', async () => {
+    // Regression test: a pending interaction whose resolver is gone (the run
+    // loop that asked already finished, the app reloaded mid-wait, etc. —
+    // pendingInteractionResolvers is in-memory only and never persisted).
+    // Answering it used to just flip the widget to "answered" with nothing
+    // happening after. It must now fold the answer into a brand-new turn.
+    resetStore();
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      apiKey: 'test-key',
+      model: 'sonnet',
+      transport: 'anthropic',
+    });
+    const requests: Array<{ userContent: string }> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      requests.push({ userContent: String(request.userContent) });
+      return '好的，已收到。';
+    });
+
+    const orphanId = 'm_orphan_ask';
+    useStore.setState({
+      messages: [
+        {
+          id: orphanId,
+          role: 'assistant',
+          text: '要不要继续生成？',
+          createdAt: Date.now(),
+          interaction: { type: 'confirm', prompt: '要不要继续生成？' },
+          interactionStatus: 'pending',
+        },
+      ],
+    });
+
+    // No live run/chat loop ever registered a resolver for this message id —
+    // this is exactly the orphan case (nothing to await, nothing to resolve).
+    useStore
+      .getState()
+      .answerInteraction(orphanId, { kind: 'confirm', confirmed: true });
+
+    await waitFor(
+      () => gatewayMocks.completeGatewayText.mock.calls.length === 1,
+      'the orphaned answer to fire a fresh chat turn',
+    );
+
+    expect(requests[0].userContent).toContain(
+      '用户已回复你上一次的交互请求',
+    );
+    expect(requests[0].userContent).toContain('要不要继续生成？');
+
+    const answered = useStore
+      .getState()
+      .messages.find((m) => m.id === orphanId);
+    expect(answered?.interactionStatus).toBe('answered');
+  });
+
   // [dynamic-only refactor] newWorkflow 蓝图创建已停用（改为 no-op）；此旧用例
   // 依赖创建第二个可视化 workflow 会话，保留源码但跳过以便日后恢复蓝图入口。
   it.skip('starts a new workflow AI edit while another workflow is still generating', async () => {

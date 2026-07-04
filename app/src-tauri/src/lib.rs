@@ -11,6 +11,7 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
+mod cache_cleanup;
 mod cc_switch_import;
 mod cli_runtime;
 mod free_proxy;
@@ -13725,6 +13726,12 @@ async fn ai_cli(
     // call's full context so a downstream step needn't re-explore the project.
     session_id: Option<String>,
     resume: Option<bool>,
+    // Short language-enforcement directive (from the UI locale). For claude
+    // this is injected via `--append-system-prompt` (genuine system-role
+    // authority, resent every turn — cheap and counters mid-session drift);
+    // codex/gemini have no such flag, so it is prepended to the stdin prompt
+    // alongside the workspace note.
+    language_directive: Option<String>,
     // Optional launch shell wrapping (from the General settings "启动 Shell").
     shell: Option<ShellSpec>,
     app: tauri::AppHandle,
@@ -13757,6 +13764,16 @@ async fn ai_cli(
         };
         let inject_extra_workspace_note =
             !extra_workspace_note.is_empty() && !resume.unwrap_or(false);
+        // Unlike the workspace note, the language directive is resent on
+        // EVERY turn (including resumed sessions) — it is small, and a
+        // resumed session's warm context is exactly where language drift
+        // creeps back in over a long agentic run.
+        let language_directive = language_directive
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default()
+            .to_string();
         let binary = match cli_command
             .as_deref()
             .map(cli_runtime::normalize_cli_command_override)
@@ -14004,9 +14021,16 @@ async fn ai_cli(
                 args.push("--add-dir".into());
                 args.push(dir.clone());
             }
-            if inject_extra_workspace_note {
+            if inject_extra_workspace_note || !language_directive.is_empty() {
+                let combined: Vec<&str> = [
+                    inject_extra_workspace_note.then_some(extra_workspace_note.as_str()),
+                    (!language_directive.is_empty()).then_some(language_directive.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
                 args.push("--append-system-prompt".into());
-                args.push(extra_workspace_note.clone());
+                args.push(combined.join("\n\n"));
             }
         }
 
@@ -14044,9 +14068,17 @@ async fn ai_cli(
         let mut stdin_pipe = child.stdin.take();
         // Codex/Gemini have no `--append-system-prompt`, so the extra-workspace
         // note (claude gets it as a system-prompt arg above) is prepended to the
-        // prompt fed over stdin instead.
+        // prompt fed over stdin instead. The language directive is appended at
+        // the very END instead (right after the user's actual question) — models
+        // weight the tail of a long agentic prompt more than the head, so this
+        // is the strongest lever available without a real system-role channel.
         let prompt = if inject_extra_workspace_note && (is_codex || is_gemini) {
             format!("{extra_workspace_note}\n\n{prompt}")
+        } else {
+            prompt
+        };
+        let prompt = if !language_directive.is_empty() && (is_codex || is_gemini) {
+            format!("{prompt}\n\n{language_directive}")
         } else {
             prompt
         };
@@ -14084,6 +14116,14 @@ async fn ai_cli(
         // break early and gracefully terminate the (already finished) process.
         let stream_result_seen = Arc::new(AtomicBool::new(false));
         let stream_result_seen_reader = Arc::clone(&stream_result_seen);
+        // Tracks whether the CLI ever produced real model output (assistant
+        // text/thinking, a tool call, or a non-empty terminal result) as
+        // opposed to only the "session started / requesting model" progress
+        // placeholders. A process that exits with code 0 without ever
+        // flipping this is a silent failure (dropped connection, auth hiccup,
+        // killed mid-turn) and must NOT be reported as a successful turn.
+        let received_content = Arc::new(AtomicBool::new(false));
+        let received_content_reader = Arc::clone(&received_content);
         let partial_streaming = partial_enabled();
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
@@ -14188,10 +14228,12 @@ async fn ai_cli(
                                     {
                                         acc.push_str(tx);
                                         progress.push(tx);
+                                        received_content_reader.store(true, Ordering::Relaxed);
                                     }
                                 }
                             }
                             Some("tool_use") => {
+                                received_content_reader.store(true, Ordering::Relaxed);
                                 let name = v
                                     .get("tool_name")
                                     .and_then(|value| value.as_str())
@@ -14319,6 +14361,8 @@ async fn ai_cli(
                                                     }
                                                     prev_kind = "text";
                                                     progress.push(tx);
+                                                    received_content_reader
+                                                        .store(true, Ordering::Relaxed);
                                                 }
                                             }
                                             Some("thinking_delta") => {
@@ -14331,6 +14375,8 @@ async fn ai_cli(
                                                     }
                                                     prev_kind = "thinking";
                                                     progress.push(tx);
+                                                    received_content_reader
+                                                        .store(true, Ordering::Relaxed);
                                                 }
                                             }
                                             _ => {}
@@ -14363,6 +14409,8 @@ async fn ai_cli(
                                                 // it was already shown live via deltas,
                                                 // so don't re-emit (avoids duplication).
                                                 acc.push_str(tx);
+                                                received_content_reader
+                                                    .store(true, Ordering::Relaxed);
                                                 if !partial_streaming {
                                                     if prev_kind == "thinking" {
                                                         progress.emit_now("</think>");
@@ -14372,6 +14420,7 @@ async fn ai_cli(
                                             }
                                         }
                                         Some("tool_use") => {
+                                            received_content_reader.store(true, Ordering::Relaxed);
                                             let name = block
                                                 .get("name")
                                                 .and_then(|t| t.as_str())
@@ -14463,6 +14512,10 @@ async fn ai_cli(
                             if let Some(r) = v.get("result").and_then(|t| t.as_str()) {
                                 result = r.to_string();
                             }
+                            // Reaching the terminal `result` event at all means the
+                            // turn genuinely completed (even a tool-only turn with
+                            // no closing text is a real, finished turn).
+                            received_content_reader.store(true, Ordering::Relaxed);
                             // The terminal `result` event carries the final
                             // cumulative usage (input/output + cache_read/creation).
                             // Prefer it over per-assistant snapshots.
@@ -14687,7 +14740,9 @@ async fn ai_cli(
 
         match wait_result {
             Err(err) => Err(append_cli_error_context(err, &output, &stderr)),
-            Ok(WaitOutcome::Exited(status)) if status.success() => {
+            Ok(WaitOutcome::Exited(status))
+                if status.success() && received_content.load(Ordering::Relaxed) =>
+            {
                 // Codex completions come through the dedicated outcomes above; a
                 // plain process exit is the claude/gemini path, so prefer the
                 // claude usage snapshot (falls back to codex for safety).
@@ -14697,6 +14752,28 @@ async fn ai_cli(
                     &codex_usage
                 };
                 Ok(ai_cli_result(output, usage))
+            }
+            Ok(WaitOutcome::Exited(status)) if status.success() => {
+                // Exit code 0 but the CLI never produced any real model output
+                // (no assistant text/thinking, no tool call, no terminal
+                // `result` event) — e.g. a dropped connection, an auth hiccup,
+                // or the process being killed mid-turn while still reporting a
+                // clean exit. Reporting this as success would silently strand
+                // the chat bubble on the "会话已启动…/正在请求模型…" placeholder
+                // while the UI marks the turn complete, so surface it as a
+                // real error instead.
+                let detail = if stderr.trim().is_empty() {
+                    if output.trim().is_empty() {
+                        "CLI 退出但未返回任何内容".to_string()
+                    } else {
+                        output.trim().to_string()
+                    }
+                } else {
+                    stderr.trim().to_string()
+                };
+                Err(format!(
+                    "CLI \"{binary}\" 未产生任何回复就退出（退出码 0）：{detail}"
+                ))
             }
             Ok(WaitOutcome::Exited(status)) => {
                 let code = status.code().unwrap_or(-1);
@@ -16290,6 +16367,7 @@ pub fn run() {
 
             start_slash_catalog_scan(app.handle().clone());
             init_vcs_scan_service(app.handle().clone());
+            cache_cleanup::spawn_startup_cache_cleanup();
 
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 let window_to_hide = window.clone();

@@ -22,6 +22,7 @@ import { normalizeWorkflowNodeNumbers } from '@/core/nodeNumbers';
 // } from '@/core/genPrompt';
 // import { applyIntent } from '@/core/intentEngine';
 import {
+  closeDanglingToolPatches,
   encodeToolPatch,
   extractToolSentinels,
   hasToolSentinel,
@@ -96,6 +97,7 @@ import {
   notifySessionComplete,
   setSessionNotificationClickHandler,
 } from '@/lib/sessionNotification';
+import { requestForceBottomScrollForSession } from '@/panels/aidock/streamScroll';
 import {
   imageProviderById,
   imageProviders,
@@ -287,6 +289,7 @@ import {
 import {
   DEFAULT_LOCALE,
   languageAdaptationPrompt,
+  languageDirectiveReminder,
   t,
   type Locale,
 } from '@/lib/i18n';
@@ -402,6 +405,7 @@ import {
   activeRunChannels,
   activeAiEditChannels,
   aiEditRegistered,
+  abortAllPendingRuns,
 } from './channelRegistry';
 export { aiEditRegistered } from './channelRegistry';
 // [M3] Pure run-snapshot <-> session-meta mappers extracted to ./runSnapshot
@@ -3797,6 +3801,7 @@ export const useStore = create<StoreState>((set, get) => ({
   aiStreaming: false,
   aiEditingSessions: [],
   chattingSessions: [],
+  queuedChatMessageIds: [],
   waitingInputSessions: [],
   blockedSendTip: null,
 
@@ -4284,6 +4289,72 @@ export const useStore = create<StoreState>((set, get) => ({
     );
   },
 
+  updateQueuedChatMessage: (messageId, text) => {
+    const entry = queuedChatTurnEntryForMessage(messageId);
+    const nextText = text.trim();
+    if (!entry || !nextText) return false;
+    const ch = entry.channel;
+    ch.messages = ch.messages.map((message) =>
+      message.id === messageId ? { ...message, text: nextText } : message,
+    );
+    ch.workflow = simpleWorkflowFromMessages(ch.workflow, ch.messages);
+    rememberAiEditSnapshot(ch);
+    if (aiEditViewActive(ch)) {
+      set((state) => {
+        const messages = state.messages.map((message) =>
+          message.id === messageId ? { ...message, text: nextText } : message,
+        );
+        return {
+          messages,
+          workflow: simpleWorkflowFromMessages(state.workflow, messages),
+          ...activeMessageSummaryPatch(state, messages),
+        };
+      });
+    }
+    updateAiEditSessionSummary(ch);
+    persistQueuedChatConversation(ch);
+    return true;
+  },
+
+  deleteQueuedChatMessage: (messageId) => {
+    const entry = queuedChatTurnEntryForMessage(messageId);
+    if (!entry) return false;
+    entry.cancelled = true;
+    chatTurnQueueEntries.delete(entry.channel.key);
+    syncQueuedChatMessageIds();
+    const ids = new Set([messageId]);
+    const ch = entry.channel;
+    pruneAiEditSourcesForDeletion(ch.workspaceId, ch.sessionId, ids);
+    let nextMessages: Message[] | null = null;
+    let nextWorkflow: IRGraph | null = null;
+    let persistWorkflow = false;
+    if (aiEditViewActive(ch)) {
+      set((state) => {
+        const messages = removeMessagesById(state.messages, ids);
+        if (messages.length === state.messages.length) return state;
+        const workflow = simpleWorkflowFromMessages(state.workflow, messages);
+        const activeSession = sessionForKey(state, activeWorkflowSessionKey(state));
+        nextMessages = messages;
+        nextWorkflow = workflow;
+        persistWorkflow = activeSession?.isWorkflow === true;
+        return {
+          messages,
+          workflow,
+          ...activeMessageSummaryPatch(state, messages),
+        };
+      });
+    }
+    if (nextMessages) {
+      void persistCurrentConversation(
+        nextMessages,
+        persistWorkflow ? nextWorkflow ?? undefined : undefined,
+      );
+    }
+    return true;
+  },
+
+  interjectQueuedChatMessage: (messageId) => interjectRunningChatTurn(messageId),
+
   branchSessionFromMessage: (messageId) => {
     void branchChatSessionFromMessage(messageId);
   },
@@ -4710,6 +4781,7 @@ ${previousReply.slice(0, 4000)}
         onProgress?: (chunk: string) => void;
         sessionId?: string;
         resume?: boolean;
+        languageDirective?: string;
       },
     ): Promise<string> => {
       await changesBaselineReady;
@@ -5251,7 +5323,11 @@ ${previousReply.slice(0, 4000)}
       // (warm context) instead of colliding on the same native --session-id.
       // Favorite reruns mint a fresh session per turn, so they need no queue.
       const runChatTurn = async () => {
-        const simpleAssetCapabilityBlock = shouldUseAssetCapabilityBlockForPrompt(trimmed)
+        const turnText =
+          ch.messages.find((message) => message.id === userMsg.id)?.text.trim() ??
+          userMsg.text.trim();
+        if (!turnText) return;
+        const simpleAssetCapabilityBlock = shouldUseAssetCapabilityBlockForPrompt(turnText)
           ? assetCapabilityBlock
           : '';
         // Frozen memory snapshot: read ONCE here at the start of the turn and
@@ -5318,8 +5394,8 @@ ${previousReply.slice(0, 4000)}
             .join('\n\n');
         const prior = chatTranscript(priorMessages);
         const chatPrompt = prior.length
-          ? `以下是之前的对话，请结合上下文继续回答最后一个「用户」消息：\n\n${prior}\n\n用户：${trimmed}`
-          : trimmed;
+          ? `以下是之前的对话，请结合上下文继续回答最后一个「用户」消息：\n\n${prior}\n\n用户：${turnText}`
+          : turnText;
         // Respect the permission the user picked in the composer (read-only /
         // ask-each-time / full), matching the other run paths instead of
         // hard-coding 'full'.
@@ -5367,8 +5443,8 @@ ${previousReply.slice(0, 4000)}
               const basePromptBody =
                 nativeSession && nativeResume
                   ? unseenTranscript
-                    ? `以下是你这个模型会话尚未看到的中间对话，请先吸收上下文，再回答最后一个「用户」消息：\n\n${unseenTranscript}\n\n用户：${trimmed}`
-                    : trimmed
+                    ? `以下是你这个模型会话尚未看到的中间对话，请先吸收上下文，再回答最后一个「用户」消息：\n\n${unseenTranscript}\n\n用户：${turnText}`
+                    : turnText
                   : chatPrompt;
               // On a continuation round the native session already carries the
               // prior context, so send only the user's answer; otherwise send
@@ -5388,6 +5464,7 @@ ${previousReply.slice(0, 4000)}
                   ...aiEditCliWorkspaceOptions(ch, state.composer),
                   sessionId: session?.sessionId,
                   resume: session ? resume : undefined,
+                  languageDirective: languageDirectiveReminder(state.locale),
                   onProgress: (chunk) => {
                     live += chunk;
                     setActive(
@@ -5541,7 +5618,7 @@ ${previousReply.slice(0, 4000)}
             const reviewWsKey = ch.workspaceId || '';
             const transcriptMsgs = [
               ...priorMessages.map((m) => ({ role: m.role, text: m.text })),
-              { role: 'user' as const, text: trimmed },
+              { role: 'user' as const, text: turnText },
               { role: 'assistant' as const, text: finalAnswer },
             ];
             if (
@@ -5575,10 +5652,17 @@ ${previousReply.slice(0, 4000)}
           // persisted message text). Without this, the clean CLI reply replaces
           // the streamed text and every read/edited file vanishes from the list.
           const finalProse = finalAnswer.trim() || '（模型没有返回内容）';
-          const finalBody = finalChatBodyWithStreamedTools(
-            finalProse,
-            latestCliLive,
-            streamedToolSentinels,
+          // The turn is finalizing now — any tool call whose sentinel never
+          // got a matching done/error patch (background command the model
+          // didn't wait on, CLI exited mid-stream, round budget exhausted)
+          // would otherwise stay a permanent spinner in the persisted
+          // message even though this turn is over. Close those out here.
+          const finalBody = closeDanglingToolPatches(
+            finalChatBodyWithStreamedTools(
+              finalProse,
+              latestCliLive,
+              streamedToolSentinels,
+            ),
           );
           setActive(
             withAiTiming(routedBody(routeLine, finalBody)),
@@ -5591,7 +5675,7 @@ ${previousReply.slice(0, 4000)}
             ).length;
           }
           // Record the input on the node (keeps the graph a single node).
-          commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [trimmed]));
+          commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [turnText]));
           syncAndPersistSessionRunStatus(
             { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
             'success',
@@ -5629,7 +5713,7 @@ ${previousReply.slice(0, 4000)}
       // chat rather than racing it as a parallel turn. Favorite reruns mint a
       // fresh session per turn, so they never queue.
       if (!replayFavoriteSimpleChat) {
-        void enqueueChatTurn(chSessionKey, runChatTurn);
+        void enqueueChatTurn(chSessionKey, ch, runChatTurn);
       } else {
         void runChatTurn();
       }
@@ -5813,8 +5897,15 @@ ${previousReply.slice(0, 4000)}
 
   // Resolve a node's interaction request with the user's answer. Marks the
   // message answered (so the widget collapses to a summary) and resolves the
-  // promise the run loop is awaiting on (see awaitInteraction). A no-op resolver
-  // (e.g. answering a stale widget after the run ended) just updates the message.
+  // promise the run loop is awaiting on (see awaitInteraction).
+  //
+  // ORPHAN CASE: if the run/chat loop that asked the question is no longer
+  // around to catch the resolve (it already finished, died, or the app
+  // reloaded during a long wait — pendingInteractionResolvers is in-memory
+  // only, never persisted), the answer used to just vanish: the widget flipped
+  // to "answered" but nothing downstream ever ran. Instead, fold the answer
+  // into a brand-new chat turn using the same protocol text a live loop would
+  // have fed back, so a slow reply still resumes the task.
   answerInteraction: (messageId, answer) => {
     const mark = (m: Message): Message =>
       m.id === messageId && m.interactionStatus === 'pending'
@@ -5825,6 +5916,10 @@ ${previousReply.slice(0, 4000)}
     const aiCh = resolver?.aiEditKey
       ? getAiEditChannelByKey(resolver.aiEditKey)
       : null;
+    // Captured before mark() flips the status — only used on the orphan path.
+    const orphanReq = !resolver
+      ? useStore.getState().messages.find((m) => m.id === messageId)?.interaction
+      : undefined;
     // Keep the run channel's shadow in sync so a later commit doesn't overwrite
     // the answered status with stale messages.
     if (ch) {
@@ -5841,6 +5936,10 @@ ${previousReply.slice(0, 4000)}
       pendingInteractionResolvers.delete(messageId);
       syncWaitingInputSessions();
       resolver.resolve(answer);
+      return;
+    }
+    if (orphanReq) {
+      get().sendPrompt(formatAnswerForPrompt(orphanReq, answer));
     }
   },
 
@@ -6056,6 +6155,11 @@ ${previousReply.slice(0, 4000)}
 
 setSessionNotificationClickHandler(({ workspaceId, sessionId }) => {
   if (!sessionId) return;
+  // The notification fired because something happened after the user last
+  // looked at this session (it finished or needs input) — jump straight to
+  // the latest content instead of restoring wherever the scrollbar happened
+  // to be left, which may be far above the new content.
+  requestForceBottomScrollForSession(sessionId);
   useStore.getState().selectSession(sessionId, workspaceId ?? undefined);
 });
 
@@ -6087,12 +6191,77 @@ const chatNativeSessions = new Map<string, ChatNativeSession>();
  */
 const chatTurnQueues = new Map<string, Promise<void>>();
 
+interface ChatTurnQueueEntry {
+  sessionKey: string;
+  messageId: string;
+  channel: AiEditChannel;
+  started: boolean;
+  cancelled: boolean;
+}
+
+const chatTurnQueueEntries = new Map<string, ChatTurnQueueEntry>();
+
+function queuedChatMessageIds(): string[] {
+  return [...chatTurnQueueEntries.values()]
+    .filter((entry) => !entry.started && !entry.cancelled)
+    .map((entry) => entry.messageId);
+}
+
+function syncQueuedChatMessageIds(): void {
+  useStore.setState({ queuedChatMessageIds: queuedChatMessageIds() });
+}
+
+function queuedChatTurnEntryForMessage(
+  messageId: string,
+): ChatTurnQueueEntry | null {
+  return (
+    [...chatTurnQueueEntries.values()].find(
+      (entry) =>
+        entry.messageId === messageId && !entry.started && !entry.cancelled,
+    ) ?? null
+  );
+}
+
+function persistQueuedChatConversation(ch: AiEditChannel): void {
+  const patch: SessionPatch = {
+    messages: ch.chat ? mergeAiEditChatMessages(ch) : ch.messages,
+  };
+  if (ch.workflowSession) patch.workflow = ch.workflow;
+  scheduleAiEditPersist(ch, patch, 0);
+}
+
 function enqueueChatTurn(
   sessionKey: string,
+  ch: AiEditChannel,
   run: () => Promise<void>,
 ): Promise<void> {
+  const messageId =
+    [...(ch.ownedMessageIds ?? [])].find((id) =>
+      ch.messages.some((message) => message.id === id && message.role === 'user'),
+    ) ??
+    ch.messages.find((message) => message.role === 'user')?.id ??
+    ch.key;
+  const entry: ChatTurnQueueEntry = {
+    sessionKey,
+    messageId,
+    channel: ch,
+    started: false,
+    cancelled: false,
+  };
+  chatTurnQueueEntries.set(ch.key, entry);
+  syncQueuedChatMessageIds();
   const prev = chatTurnQueues.get(sessionKey) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(run);
+  const next = prev.catch(() => {}).then(async () => {
+    if (entry.cancelled || !aiEditRegistered(ch)) return;
+    entry.started = true;
+    syncQueuedChatMessageIds();
+    try {
+      await run();
+    } finally {
+      chatTurnQueueEntries.delete(ch.key);
+      syncQueuedChatMessageIds();
+    }
+  });
   chatTurnQueues.set(sessionKey, next);
   void next.catch(() => {}).finally(() => {
     if (chatTurnQueues.get(sessionKey) === next) {
@@ -6103,6 +6272,12 @@ function enqueueChatTurn(
 }
 
 function clearChatTurnQueue(sessionKey: string): void {
+  for (const [key, entry] of chatTurnQueueEntries) {
+    if (entry.sessionKey !== sessionKey || entry.started) continue;
+    entry.cancelled = true;
+    chatTurnQueueEntries.delete(key);
+  }
+  syncQueuedChatMessageIds();
   chatTurnQueues.delete(sessionKey);
 }
 
@@ -6115,6 +6290,8 @@ function clearChatTurnQueue(sessionKey: string): void {
  */
 export function __resetSimpleChatRuntimeForTests(): void {
   chatTurnQueues.clear();
+  chatTurnQueueEntries.clear();
+  syncQueuedChatMessageIds();
   chatNativeSessions.clear();
 }
 
@@ -6351,6 +6528,51 @@ function stopActiveChat(): void {
   for (const item of channels) {
     removeAiEditChannel(item);
   }
+}
+
+/**
+ * Real interjection for a queued simple-chat message: unlike `stopActiveChat`
+ * (which kills every channel AND wipes the whole queue), this aborts only the
+ * turn(s) currently in flight for the SAME session and leaves the queue intact
+ * — so the targeted queued message, next in the session's FIFO chain
+ * (`chatTurnQueues` in enqueueChatTurn), starts the moment the aborted turn's
+ * promise settles instead of waiting for it to finish naturally. There is no
+ * live stdin channel into a running native CLI process to push new text into
+ * an answer mid-generation (see lib.rs: prompt is written once, stdin is then
+ * closed) — this is a "stop-and-run-next-now" interjection, not a token-level
+ * splice into the still-generating answer.
+ */
+function interjectRunningChatTurn(messageId: string): boolean {
+  const entry = queuedChatTurnEntryForMessage(messageId);
+  if (!entry) return false;
+  const runningEntries = [...chatTurnQueueEntries.values()].filter(
+    (candidate) =>
+      candidate.sessionKey === entry.sessionKey &&
+      candidate.started &&
+      !candidate.cancelled,
+  );
+  if (runningEntries.length === 0) return true;
+  const interjectedAt = Date.now();
+  for (const running of runningEntries) {
+    const ch = running.channel;
+    ch.abortController.abort();
+    resolvePendingAiEditInteractions(ch);
+    void cancelActiveAiEditRuns(ch);
+    const interjectedMsg: Message = {
+      id: shortId('m'),
+      role: 'assistant',
+      text: `⚡ 已插话打断当前回复 · ${formatClock(interjectedAt)}，正在续接下一条消息…`,
+      createdAt: interjectedAt,
+    };
+    ch.ownedMessageIds?.add(interjectedMsg.id);
+    ch.messages = [...ch.messages, interjectedMsg];
+    aiEditCommitMessages(ch, true);
+    syncAndPersistSessionRunStatus(
+      { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      'interrupted',
+    );
+  }
+  return true;
 }
 
 /** Is a run alive? (false once the user hits 停止, or the channel is gone.) */
@@ -6769,6 +6991,66 @@ function finishRun(ch: RunChannel | null): void {
   activeRuns.delete(ch.key);
   syncRunningSessions();
   refreshSessionChangesForKey(sessionKey, rootPath);
+}
+
+/**
+ * Force-teardown every still-active run channel, used as the last-resort
+ * safety net. Mirrors {@link stopWorkflowRun}'s per-channel cleanup but
+ * applies to ALL active runs (not just the one bound to the active session):
+ * flips each to cancelled, persists an `interrupted` snapshot, cancels child
+ * CLI runs, and drops the channel from the registry. Idempotent — channels
+ * already cancelled are skipped by {@link abortAllPendingRuns}.
+ *
+ * Call sites:
+ *   - `beforeunload` (page close / reload): so a stale run can't lock the
+ *     owning session into a phantom "running" state on next load.
+ *   - HMR dispose (see module hot path below).
+ *   - Anywhere the host suspects a run is wedged (executor promise rejected
+ *     without reaching its finally, relay process died, etc.).
+ */
+function abortAllActiveRuns(reason: string): void {
+  abortAllPendingRuns((ch) => {
+    const runningNodeIds = Object.entries(ch.runState)
+      .filter(([, status]) => status === 'running')
+      .map(([nodeId]) => nodeId);
+    const interruptedNodeId = runningNodeIds[0] ?? null;
+    const stoppedAt = Date.now();
+    ch.runState = {
+      ...ch.runState,
+      ...Object.fromEntries(
+        runningNodeIds.map((nodeId) => [nodeId, 'interrupted' as const]),
+      ),
+    };
+    ch.failedNodeId = interruptedNodeId;
+    ch.error = interruptedNodeId
+      ? {
+          code: 'interrupted',
+          message: reason,
+          nodeId: interruptedNodeId,
+          occurredAt: stoppedAt,
+        }
+      : null;
+    resolvePendingInteractions(ch);
+    void cancelActiveCliRuns(ch);
+    pushRunLog(
+      ch,
+      `⏹ 运行已中止（${reason}）· ${formatClock(stoppedAt)}`,
+      'assistant',
+    );
+    channelCommit(ch, 'interrupted', true);
+    if (runViewActive(ch)) useStore.getState().setMode('design');
+    syncRunningSessions();
+    refreshSessionChangesForKey(
+      { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      ch.config.cwd,
+    );
+  });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    abortAllActiveRuns('页面卸载');
+  });
 }
 
 /**
@@ -7890,38 +8172,62 @@ async function executeViaCliInterpreter(
   const callbacks = buildGuiCallbacks(ch, adapter, errorRef);
   const context = buildGuiRunContext(ch, workflow);
 
-  const result = await executeWorkflowDag(workflow, callbacks, context, {
-    resumeFromNodeId: options.resumeFromNodeId,
-    seedOutputs: options.seedOutputs,
-    seedRunState: ch.runState,
-    seedNodeHashes: options.seedNodeHashes,
-  });
+  try {
+    const result = await executeWorkflowDag(workflow, callbacks, context, {
+      resumeFromNodeId: options.resumeFromNodeId,
+      seedOutputs: options.seedOutputs,
+      seedRunState: ch.runState,
+      seedNodeHashes: options.seedNodeHashes,
+    });
 
-  // Record this run's per-node hashes so a later "continue" can validate which
-  // cached outputs are still reusable (unchanged node + unchanged upstreams).
-  if (result.nodeHashes) ch.nodeHashes = result.nodeHashes;
+    // Record this run's per-node hashes so a later "continue" can validate which
+    // cached outputs are still reusable (unchanged node + unchanged upstreams).
+    if (result.nodeHashes) ch.nodeHashes = result.nodeHashes;
 
-  if (runActive(ch)) {
-    const runFinishedAt = Date.now();
-    const errored = !result.success;
-    pushRunLog(
-      ch,
-      errored
-        ? `✗ 运行中断 · 完成 ${formatClock(runFinishedAt)} · 总耗时 ${formatDuration(
-            runFinishedAt - runStartedAt,
-          )}`
-        : `✓ 运行完成 · 完成 ${formatClock(runFinishedAt)} · 总耗时 ${formatDuration(
-            runFinishedAt - runStartedAt,
-          )}`,
-      'assistant',
-    );
-    if (errored && result.error) ch.error = result.error;
-    channelCommit(ch, errored ? 'error' : 'success', true);
-    // Only the live view should drop back to design mode; a backgrounded run's
-    // owning session reverts when the user next opens it (its persisted snapshot
-    // is already terminal).
-    if (runViewActive(ch)) useStore.getState().setMode('design');
-    finishRun(ch);
+    if (runActive(ch)) {
+      const runFinishedAt = Date.now();
+      const errored = !result.success;
+      pushRunLog(
+        ch,
+        errored
+          ? `✗ 运行中断 · 完成 ${formatClock(runFinishedAt)} · 总耗时 ${formatDuration(
+              runFinishedAt - runStartedAt,
+            )}`
+          : `✓ 运行完成 · 完成 ${formatClock(runFinishedAt)} · 总耗时 ${formatDuration(
+              runFinishedAt - runStartedAt,
+            )}`,
+        'assistant',
+      );
+      if (errored && result.error) ch.error = result.error;
+      channelCommit(ch, errored ? 'error' : 'success', true);
+      // Only the live view should drop back to design mode; a backgrounded run's
+      // owning session reverts when the user next opens it (its persisted snapshot
+      // is already terminal).
+      if (runViewActive(ch)) useStore.getState().setMode('design');
+      finishRun(ch);
+    }
+  } catch (err) {
+    // Safety net: if executeWorkflowDag (or anything above) throws, the channel
+    // would otherwise stay in activeRuns with mode='running' forever — the UI
+    // shows "运行中" but nothing is actually executing. Treat it as interrupted
+    // and tear down so the user can re-run.
+    if (runActive(ch)) {
+      const message = err instanceof Error ? err.message : String(err);
+      ch.error = {
+        code: 'uncaught',
+        message,
+        adapter,
+        occurredAt: Date.now(),
+      };
+      pushRunLog(
+        ch,
+        `✗ 运行意外中止: ${message} · ${formatClock(Date.now())}`,
+        'assistant',
+      );
+      channelCommit(ch, 'interrupted', true);
+      if (runViewActive(ch)) useStore.getState().setMode('design');
+      finishRun(ch);
+    }
   }
 }
 
@@ -7946,45 +8252,59 @@ async function executeViaSimulator(
       : null;
   let resumePending = !!resumeFromNodeId;
 
-  for (const node of order) {
-    if (!stillRunning(ch)) return; // user stopped
-    if (resumePending && node.id !== resumeFromNodeId) {
-      if (
-        node.type === 'start' ||
-        node.type === 'end' ||
-        options.seedOutputs?.[node.id] != null ||
-        ch.runState[node.id] === 'success'
-      ) {
-        markRunNode(ch, node.id, 'success');
+  try {
+    for (const node of order) {
+      if (!stillRunning(ch)) return; // user stopped
+      if (resumePending && node.id !== resumeFromNodeId) {
+        if (
+          node.type === 'start' ||
+          node.type === 'end' ||
+          options.seedOutputs?.[node.id] != null ||
+          ch.runState[node.id] === 'success'
+        ) {
+          markRunNode(ch, node.id, 'success');
+        }
+        continue;
       }
-      continue;
+      if (resumePending && node.id === resumeFromNodeId) {
+        resumePending = false;
+      }
+      markRunNode(ch, node.id, 'running');
+      pushRunLog(ch, `▸ ${node.label ?? node.type} (${node.id})`);
+
+      await delay(stepDelay);
+      if (!stillRunning(ch)) return;
+
+      ch.runOutputs = {
+        ...ch.runOutputs,
+        [node.id]: `模拟完成: ${node.label ?? node.type}`,
+      };
+      ch.failedNodeId = null;
+      markRunNode(ch, node.id, 'success');
     }
-    if (resumePending && node.id === resumeFromNodeId) {
-      resumePending = false;
+
+    if (runActive(ch)) {
+      pushRunLog(
+        ch,
+        `✓ 模拟运行完成 · ${order.length} 个节点（浏览器无命令行，未真正执行）`,
+        'assistant',
+      );
+      channelCommit(ch, 'success', true);
+      if (runViewActive(ch)) useStore.getState().setMode('design');
+      finishRun(ch);
     }
-    markRunNode(ch, node.id, 'running');
-    pushRunLog(ch, `▸ ${node.label ?? node.type} (${node.id})`);
-
-    await delay(stepDelay);
-    if (!stillRunning(ch)) return;
-
-    ch.runOutputs = {
-      ...ch.runOutputs,
-      [node.id]: `模拟完成: ${node.label ?? node.type}`,
-    };
-    ch.failedNodeId = null;
-    markRunNode(ch, node.id, 'success');
-  }
-
-  if (runActive(ch)) {
-    pushRunLog(
-      ch,
-      `✓ 模拟运行完成 · ${order.length} 个节点（浏览器无命令行，未真正执行）`,
-      'assistant',
-    );
-    channelCommit(ch, 'success', true);
-    if (runViewActive(ch)) useStore.getState().setMode('design');
-    finishRun(ch);
+  } catch (err) {
+    if (runActive(ch)) {
+      const message = err instanceof Error ? err.message : String(err);
+      pushRunLog(
+        ch,
+        `✗ 模拟运行意外中止: ${message} · ${formatClock(Date.now())}`,
+        'assistant',
+      );
+      channelCommit(ch, 'interrupted', true);
+      if (runViewActive(ch)) useStore.getState().setMode('design');
+      finishRun(ch);
+    }
   }
 }
 

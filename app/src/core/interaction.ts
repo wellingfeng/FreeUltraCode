@@ -37,6 +37,9 @@ export interface InteractionRequest {
   options?: string[];
   /** `select`: allow choosing more than one. */
   multi?: boolean;
+  /** `select`: render a free-text input below the option buttons so the user
+   *  can type a custom answer instead of picking a preset. */
+  allowInput?: boolean;
   /** `input`: placeholder text for the field. */
   placeholder?: string;
   /** `input`: render a multi-line textarea instead of a single-line field. */
@@ -72,11 +75,11 @@ export const INTERACTION_PROTOCOL = `---
 当且仅当你确实需要用户做出选择，或需要用户补充一段你无法自行决定的信息时，不要用自然语言提问，而是只输出下面这个交互块，然后立刻结束本回合，不要再输出其它任何文字：
 
 ${ASK_OPEN}
-{"type":"select","prompt":"问题（简体中文）","options":["选项A","选项B"],"multi":false}
+{"type":"select","prompt":"问题（简体中文）","options":["选项A","选项B"],"multi":false,"allowInput":true}
 ${ASK_CLOSE}
 
 可用的 type：
-- "select"：让用户在 options 中选择；需要多选时设 "multi":true。
+- "select"：让用户在 options 中选择；需要多选时设 "multi":true。推荐设 "allowInput":true，选项下方会显示输入框，用户可直接输入自定义内容，不必从预设里选。
 - "input"：让用户输入文本；可选 "placeholder"、"multiline":true（多行）。
 - "confirm"：让用户确认是否继续；可选 "confirmLabel"、"cancelLabel"。
 规则：
@@ -159,7 +162,13 @@ export function parseInteraction(text: string): InteractionRequest | null {
   if (type === 'select') {
     const options = toOptions(raw.options);
     if (options.length === 0) return null; // a select with no options is unusable
-    return { type, prompt, options, multi: raw.multi === true };
+    return {
+      type,
+      prompt,
+      options,
+      multi: raw.multi === true,
+      allowInput: raw.allowInput === true,
+    };
   }
   if (type === 'input') {
     return {

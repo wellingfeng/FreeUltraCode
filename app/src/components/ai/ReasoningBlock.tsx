@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Brain, ChevronRight } from 'lucide-react';
 import Markdown from './Markdown';
+import { type SearchHighlightState } from './lib/searchHighlight';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
 
@@ -16,10 +17,12 @@ export default function ReasoningBlock({
   text,
   done,
   streaming,
+  searchState = null,
 }: {
   text: string;
   done: boolean;
   streaming: boolean;
+  searchState?: SearchHighlightState | null;
 }) {
   const [open, setOpen] = useState(true);
   const locale = useStore((s) => s.locale);
@@ -94,7 +97,7 @@ export default function ReasoningBlock({
         <div className="min-h-0 overflow-hidden">
           <div className="ai-reasoning__inner break-words border-t border-border-soft px-3 py-2 text-[12px] leading-relaxed">
             {text ? (
-              <Markdown text={text} streaming={streaming} />
+              <Markdown text={text} streaming={streaming} searchState={searchState} />
             ) : streaming ? (
               '…'
             ) : (

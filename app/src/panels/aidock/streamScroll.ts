@@ -9,6 +9,29 @@ export interface StreamScrollSnapshot {
   anchorOffsetTop: number;
 }
 
+// Sessions that must snap to the bottom the next time their stream mounts as
+// the active session, bypassing the normal per-session scroll-position
+// restore. Used when a background notification (session completed / needs
+// input) is clicked: the user's last-viewed scroll position for that session
+// may predate the event that triggered the notification, so jumping to the
+// latest content is more useful than restoring stale history.
+const pendingForceBottomSessionIds = new Set<string>();
+
+export function requestForceBottomScrollForSession(
+  sessionId: string | null | undefined,
+): void {
+  if (!sessionId) return;
+  pendingForceBottomSessionIds.add(sessionId);
+}
+
+export function consumeForceBottomScrollForSession(
+  sessionId: string | null | undefined,
+): boolean {
+  if (!sessionId || !pendingForceBottomSessionIds.has(sessionId)) return false;
+  pendingForceBottomSessionIds.delete(sessionId);
+  return true;
+}
+
 export function streamScrollKey(
   layout: 'dock' | 'chat',
   workspaceId: string | null | undefined,

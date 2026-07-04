@@ -16,6 +16,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   ChevronUp,
   Copy,
   Eye,
@@ -27,6 +29,7 @@ import {
   ListChecks,
   Loader2,
   Lock,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
@@ -259,6 +262,7 @@ import {
   type SlashTrigger,
 } from "@/panels/aidock/slashSuggestions";
 import {
+  consumeForceBottomScrollForSession,
   readStreamScrollSnapshot,
   restoreStreamScrollSnapshot,
   scrollStreamToBottom,
@@ -840,60 +844,6 @@ function MessageActionToolbar({
   );
 }
 
-function renderHighlightedText(
-  text: string,
-  messageId: string,
-  query: string,
-  activeMatchId: string | null,
-  onActiveMatchNode: (node: HTMLElement | null) => void,
-): ReactNode {
-  if (!query) return text;
-
-  const lowerText = text.toLowerCase();
-  const lowerQuery = query.toLowerCase();
-  if (!lowerQuery) return text;
-
-  const nodes: ReactNode[] = [];
-  let cursor = 0;
-  let hitIndex = 0;
-
-  while (cursor <= lowerText.length) {
-    const found = lowerText.indexOf(lowerQuery, cursor);
-    if (found === -1) break;
-    if (found > cursor) nodes.push(text.slice(cursor, found));
-
-    const matchId = `${messageId}:text:${hitIndex}`;
-    const isActive = matchId === activeMatchId;
-    nodes.push(
-      <mark
-        key={matchId}
-        data-search-match-id={matchId}
-        ref={
-          isActive
-            ? (node) => {
-                onActiveMatchNode(node);
-              }
-            : undefined
-        }
-        className={
-          "rounded-sm px-0.5 text-fg transition-colors " +
-          (isActive
-            ? "bg-accent-3/35 ring-1 ring-inset ring-accent-3/55"
-            : "bg-accent/20")
-        }
-      >
-        {text.slice(found, found + lowerQuery.length)}
-      </mark>,
-    );
-
-    hitIndex += 1;
-    cursor = found + Math.max(lowerQuery.length, 1);
-  }
-
-  if (cursor < text.length) nodes.push(text.slice(cursor));
-  return nodes.length > 0 ? nodes : text;
-}
-
 interface TextSelection {
   start: number;
   end: number;
@@ -909,6 +859,13 @@ function formatFilePathInsertion(paths: string[]): string {
   return paths
     .map((path) => path.trim())
     .filter(Boolean)
+    // Wrap as inline code so the path is an explicit file surface: bare-text
+    // chip detection (scanFileRefs) stops at whitespace to avoid mistaking
+    // ordinary prose for a path, which breaks any inserted path that itself
+    // contains a space (e.g. a workspace root under "C:\Users\John Doe\...").
+    // Backticks route parsing through parseFileRef(..., { allowSpaces: true }),
+    // so the resulting chip/preview always resolves to the real path.
+    .map((path) => `\`${path}\``)
     .join("\n");
 }
 
@@ -1370,12 +1327,16 @@ function InteractionWidget({
   active,
   onAnswer,
   onDismiss,
+  workspaceCwd,
+  remoteRootPath,
 }: {
   message: Message;
   locale: Locale;
   active: boolean;
   onAnswer: (answer: InteractionAnswer) => void;
   onDismiss: () => void;
+  workspaceCwd?: string;
+  remoteRootPath?: string;
 }) {
   const req = message.interaction;
   const status = message.interactionStatus ?? "pending";
@@ -1403,7 +1364,14 @@ function InteractionWidget({
     );
   }
 
-  const disabled = !active;
+  // A pending widget stays fully interactive even when nothing is live for it
+  // (`active` false — the run/chat that asked already finished, the app was
+  // reloaded mid-wait, etc.). Answering it then routes through
+  // store.answerInteraction's orphan branch, which sends the answer as a fresh
+  // chat turn instead of resolving a resolver that no longer exists — so a
+  // long wait before answering never silently swallows the reply. `active`
+  // only controls the informational hint below, not whether inputs work.
+  const disabled = false;
   const trimmedText = text.trim();
   const canSubmitSelect = selected.length > 0;
   const submitSelect = () => {
@@ -1421,6 +1389,41 @@ function InteractionWidget({
   };
   const submitInput = () => {
     if (trimmedText) onAnswer({ kind: "input", text: trimmedText });
+  };
+  const submitCustomSelect = () => {
+    if (trimmedText) onAnswer({ kind: "select", values: [trimmedText] });
+  };
+  const addCustomOption = () => {
+    const v = trimmedText;
+    if (!v) return;
+    setSelected((cur) => (cur.includes(v) ? cur : [...cur, v]));
+    setText("");
+  };
+  const handleImagePaste = (
+    event: ReactClipboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+  ) => {
+    if (disabled) return;
+    if (!tauriAvailable() && !remoteRootPath) return;
+    const images = clipboardImageFiles(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? target.value.length;
+    void Promise.allSettled(
+      images.map((file) =>
+        savePastedImageFile(file, workspaceCwd ?? "", remoteRootPath),
+      ),
+    ).then((results) => {
+      const paths = results
+        .filter(
+          (r): r is PromiseFulfilledResult<string> => r.status === "fulfilled",
+        )
+        .map((r) => r.value);
+      if (paths.length === 0) return;
+      const insertion = paths.join(" ");
+      setText((cur) => cur.slice(0, start) + insertion + cur.slice(end));
+    });
   };
 
   return (
@@ -1499,6 +1502,74 @@ function InteractionWidget({
               );
             })}
           </div>
+          {req.allowInput && (
+            <div className="flex flex-col gap-1.5">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+                {t(locale, "interaction.customInputHint")}
+              </span>
+              <div className="flex gap-2">
+                <input
+                  value={text}
+                  disabled={disabled}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" || e.shiftKey) return;
+                    e.preventDefault();
+                    if (req.multi) addCustomOption();
+                    else submitCustomSelect();
+                  }}
+                  onPaste={handleImagePaste}
+                  placeholder={t(locale, "interaction.customInputPlaceholder")}
+                  className="min-h-10 flex-1 rounded-md border border-border bg-bg px-2.5 py-1.5 text-sm text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                {req.multi ? (
+                  <button
+                    type="button"
+                    disabled={disabled || !trimmedText}
+                    onClick={addCustomOption}
+                    className="min-h-10 shrink-0 rounded-md border border-border bg-panel-2 px-3 text-xs font-medium text-fg-dim transition-colors hover:border-accent/45 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {t(locale, "interaction.add")}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={disabled || !trimmedText}
+                    onClick={submitCustomSelect}
+                    className="min-h-10 shrink-0 rounded-md bg-fg px-3 text-xs font-medium text-bg transition-colors hover:bg-fg-dim disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {t(locale, "interaction.submit")}
+                  </button>
+                )}
+              </div>
+              {req.multi &&
+                selected.some((s) => !req.options?.includes(s)) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {selected
+                      .filter((s) => !req.options?.includes(s))
+                      .map((s) => (
+                        <span
+                          key={s}
+                          className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-xs text-fg"
+                        >
+                          {s}
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() =>
+                              setSelected((cur) => cur.filter((o) => o !== s))
+                            }
+                            className="text-fg-faint hover:text-fg"
+                            aria-label={t(locale, "common.cancel")}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                  </div>
+                )}
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
             {!disabled && (
               <button
@@ -1510,7 +1581,7 @@ function InteractionWidget({
                 {t(locale, "common.cancel")}
               </button>
             )}
-            {disabled && (
+            {!active && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
                 {t(locale, "interaction.ended")}
               </span>
@@ -1536,6 +1607,7 @@ function InteractionWidget({
               value={text}
               disabled={disabled}
               onChange={(e) => setText(e.target.value)}
+              onPaste={handleImagePaste}
               placeholder={
                 req.placeholder ?? t(locale, "interaction.inputPlaceholder")
               }
@@ -1553,6 +1625,7 @@ function InteractionWidget({
                   submitInput();
                 }
               }}
+              onPaste={handleImagePaste}
               placeholder={
                 req.placeholder ?? t(locale, "interaction.inputPlaceholder")
               }
@@ -1570,7 +1643,7 @@ function InteractionWidget({
                 {t(locale, "interaction.skip")}
               </button>
             )}
-            {disabled && (
+            {!active && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
                 {t(locale, "interaction.ended")}
               </span>
@@ -1603,7 +1676,7 @@ function InteractionWidget({
                 {t(locale, "interaction.skip")}
               </button>
             )}
-            {disabled && (
+            {!active && (
               <span className="mr-auto font-mono text-[10px] text-fg-faint">
                 {t(locale, "interaction.ended")}
               </span>
@@ -1689,6 +1762,12 @@ export default function AIDock({
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
   const deleteMessage = useStore((s) => s.deleteMessage);
+  const queuedChatMessageIds = useStore((s) => s.queuedChatMessageIds);
+  const updateQueuedChatMessage = useStore((s) => s.updateQueuedChatMessage);
+  const deleteQueuedChatMessage = useStore((s) => s.deleteQueuedChatMessage);
+  const interjectQueuedChatMessage = useStore(
+    (s) => s.interjectQueuedChatMessage,
+  );
   const branchSessionFromMessage = useStore((s) => s.branchSessionFromMessage);
   const runSelection = useStore(
     (s) => workflowDefaultGatewaySelection(s.workflow),
@@ -1828,7 +1907,18 @@ export default function AIDock({
   const searchScrollTopRef = useRef<number | null>(null);
   const lastSearchActiveRef = useRef(false);
   const stickToBottomRef = useRef(true);
-  const forceNextMessageBottomRef = useRef(false);
+  // Key of the session that requested a forced bottom-scroll (via
+  // pinActiveStreamToBottom, e.g. right after the user hits send), or null
+  // when no such request is pending. Storing the KEY — not a bare boolean —
+  // matters because the request may still be in flight (the actual message
+  // append can lag a tick behind an async submit) when the user switches to a
+  // different session. A bare boolean would get "stolen" by the next
+  // `messages.length` change, which fires on ANY session switch (the array
+  // swaps to the new session's messages), forcibly bottom-scrolling and
+  // clobbering whichever unrelated session happens to be active at that
+  // moment. Gating on the key ensures the forced scroll only ever applies to
+  // the session that actually asked for it.
+  const forceNextMessageBottomRef = useRef<string | null>(null);
   const streamScrollSnapshotsRef = useRef(
     new Map<string, StreamScrollSnapshot>(),
   );
@@ -1902,6 +1992,10 @@ export default function AIDock({
   const [chatVisibleRightInset, setChatVisibleRightInset] = useState(0);
   const [chatTitleEditing, setChatTitleEditing] = useState(false);
   const [chatTitleDraft, setChatTitleDraft] = useState("");
+  const [queuedEditMessageId, setQueuedEditMessageId] = useState<string | null>(
+    null,
+  );
+  const [queuedEditDraft, setQueuedEditDraft] = useState("");
   const [chatTitleSaving, setChatTitleSaving] = useState(false);
   // The organization chart is no longer a top tab beside the stream; it pops up
   // from a `$组织架构` trigger at the input bottom and collapses on outside click.
@@ -2412,6 +2506,34 @@ export default function AIDock({
     chatTitleDraft,
     renameWorkflowSession,
   ]);
+
+  useEffect(() => {
+    if (!queuedEditMessageId) return;
+    if (queuedChatMessageIds.includes(queuedEditMessageId)) return;
+    setQueuedEditMessageId(null);
+    setQueuedEditDraft("");
+  }, [queuedChatMessageIds, queuedEditMessageId]);
+
+  const beginQueuedMessageEdit = useCallback((message: Message) => {
+    setQueuedEditMessageId(message.id);
+    setQueuedEditDraft(message.text);
+  }, []);
+
+  const cancelQueuedMessageEdit = useCallback(() => {
+    setQueuedEditMessageId(null);
+    setQueuedEditDraft("");
+  }, []);
+
+  const commitQueuedMessageEdit = useCallback(
+    (messageId: string) => {
+      if (!queuedEditDraft.trim()) return;
+      if (updateQueuedChatMessage(messageId, queuedEditDraft)) {
+        setQueuedEditMessageId(null);
+        setQueuedEditDraft("");
+      }
+    },
+    [queuedEditDraft, updateQueuedChatMessage],
+  );
 
   // One bottom "Channel" select owns the active runtime route. The default
   // group mirrors Settings -> Default Channels: each configured provider is a
@@ -3990,6 +4112,10 @@ export default function AIDock({
         : messages,
     [hiddenMessageCount, messages],
   );
+  const queuedChatMessageIdSet = useMemo(
+    () => new Set(queuedChatMessageIds),
+    [queuedChatMessageIds],
+  );
   const aiBusy = mode === "running" || activeAiEditing || activeChatting;
 
   useLayoutEffect(() => {
@@ -4337,8 +4463,8 @@ export default function AIDock({
   // the snapshot's atBottom over stickToBottomRef, so we must clear it too).
   const pinActiveStreamToBottom = useCallback(() => {
     stickToBottomRef.current = true;
-    forceNextMessageBottomRef.current = true;
     const key = activeStreamScrollKeyRef.current;
+    forceNextMessageBottomRef.current = key;
     const snapshot = streamScrollSnapshotsRef.current.get(key);
     if (snapshot) {
       streamScrollSnapshotsRef.current.set(key, {
@@ -4349,6 +4475,40 @@ export default function AIDock({
     }
     const stream = streamRef.current;
     if (stream) scrollStreamToBottom(stream);
+  }, []);
+
+  // Timeline "jump to edge" buttons. Unlike pinActiveStreamToBottom (used on
+  // send, instant scroll) these are user-triggered smooth scrolls, so they
+  // don't force stickToBottomRef/forceNextMessageBottomRef — the normal
+  // onScroll snapshot tracking already recalculates atBottom once the smooth
+  // scroll settles.
+  const jumpStreamToTop = useCallback(() => {
+    if (!renderFullMessageList && messages.length > 0) {
+      const key = activeStreamScrollKeyRef.current;
+      messageWindowSizesRef.current.set(key, messages.length);
+      setMessageWindow({ key, size: messages.length });
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const stream = streamRef.current;
+        if (!stream) return;
+        if (typeof stream.scrollTo === "function") {
+          stream.scrollTo({ top: 0, behavior: "smooth" });
+        } else {
+          stream.scrollTop = 0;
+        }
+      });
+    });
+  }, [messages.length, renderFullMessageList]);
+
+  const jumpStreamToBottom = useCallback(() => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    if (typeof stream.scrollTo === "function") {
+      stream.scrollTo({ top: stream.scrollHeight, behavior: "smooth" });
+    } else {
+      stream.scrollTop = stream.scrollHeight;
+    }
   }, []);
 
   const rememberStreamScrollSnapshot = useCallback((key?: string) => {
@@ -4441,11 +4601,27 @@ export default function AIDock({
     (key: string): boolean => {
       const stream = streamRef.current;
       if (!stream) return false;
+      // A pending notification-click jump for this session overrides its
+      // remembered scroll position: snap to the bottom instead so the user
+      // lands on whatever just finished/needs input, not a stale spot.
+      if (consumeForceBottomScrollForSession(activeSessionId)) {
+        scrollStreamToBottom(stream);
+        stickToBottomRef.current = true;
+        streamScrollSnapshotsRef.current.set(key, {
+          atBottom: true,
+          scrollTop: stream.scrollTop,
+          scrollHeight: stream.scrollHeight,
+          clientHeight: stream.clientHeight,
+          anchorMessageId: null,
+          anchorOffsetTop: 0,
+        });
+        return true;
+      }
       const snapshot = streamScrollSnapshotsRef.current.get(key);
       stickToBottomRef.current = snapshot?.atBottom ?? true;
       return restoreStreamScrollSnapshot(stream, messageRefs.current, snapshot);
     },
-    [],
+    [activeSessionId],
   );
 
   const updateActiveTopicFromScroll = useCallback(() => {
@@ -5079,6 +5255,45 @@ export default function AIDock({
     ],
   );
 
+  const handleQueuedEditPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+      if (isReadOnly || (!tauriAvailable() && !activeRemoteWorkspaceRoot)) {
+        return;
+      }
+
+      const images = clipboardImageFiles(event.clipboardData);
+      if (images.length === 0) return;
+
+      event.preventDefault();
+      const textarea = event.currentTarget;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+
+      void Promise.allSettled(
+        images.map((file) =>
+          savePastedImageFile(file, workspaceCwd, activeRemoteWorkspaceRoot),
+        ),
+      ).then((results) => {
+        const paths = uploadedPathsFromResults(results, {
+          remote: !!activeRemoteWorkspaceRoot,
+        });
+        if (paths.length === 0) return;
+        const insertText = formatFilePathInsertion(paths);
+        setQueuedEditDraft((prev) => {
+          const before = prev.slice(0, start);
+          const after = prev.slice(end);
+          return `${before}${insertText}${after}`;
+        });
+      });
+    },
+    [
+      activeRemoteWorkspaceRoot,
+      isReadOnly,
+      uploadedPathsFromResults,
+      workspaceCwd,
+    ],
+  );
+
   const handleComposerDragOver = useCallback(
     (event: ReactDragEvent<HTMLElement>) => {
       const hasProjectPaths = hasProjectFileDragData(event.dataTransfer);
@@ -5308,7 +5523,15 @@ export default function AIDock({
   ]);
 
   useLayoutEffect(() => {
-    if (!forceNextMessageBottomRef.current) return;
+    // Only honor a pending forced-bottom request for the session that
+    // actually asked for it. If the user switched sessions before the
+    // request's `messages.length` change landed, the request is stale for
+    // whatever session is active now — drop it rather than bottom-scrolling
+    // (and clobbering the snapshot of) an unrelated session.
+    if (forceNextMessageBottomRef.current !== activeStreamScrollKey) {
+      forceNextMessageBottomRef.current = null;
+      return;
+    }
     const stream = streamRef.current;
     if (!stream) return;
 
@@ -5322,8 +5545,8 @@ export default function AIDock({
       anchorMessageId: null,
       anchorOffsetTop: 0,
     });
-    forceNextMessageBottomRef.current = false;
-  }, [messages.length]);
+    forceNextMessageBottomRef.current = null;
+  }, [activeStreamScrollKey, messages.length]);
 
   // Keep the latest message in view unless return search is active or the user
   // has scrolled away from the bottom. `stickToBottomRef` is updated by the
@@ -6891,40 +7114,64 @@ export default function AIDock({
   const streamNavigation = isChat && timelineMarkers.length > 0 && (
     <div
       className="ugs-stream-nav absolute bottom-4 right-2 top-4 z-20 w-8"
-      aria-label={t(locale, "dock.streamTimelineAria")}
+      aria-label={t(locale, "dock.streamNavAria")}
     >
-      <div className="ugs-stream-nav-track" aria-hidden="true" />
-      {timelineMarkers.map((marker) => {
-        const active =
-          marker.id === activeTopicMessageId ||
-          marker.id === assetJumpHighlightId ||
-          marker.id === pendingTimelineJumpId;
-        const hidden = marker.messageIndex < hiddenMessageCount;
-        const ariaLabel = t(locale, "dock.timelineMarker")
-          .replace("{index}", String(marker.number))
-          .replace("{summary}", marker.label);
-        return (
-          <button
-            key={marker.id}
-            type="button"
-            data-ugs-timeline-marker="true"
-            data-active={active ? "true" : undefined}
-            data-hidden={hidden ? "true" : undefined}
-            onClick={() => scrollToTimelineMessage(marker.id)}
-            title={marker.label}
-            aria-label={ariaLabel}
-            className={cn(
-              "ugs-stream-nav-marker",
-              active && "ugs-stream-nav-marker--active",
-            )}
-            style={{ top: `${marker.position}%` }}
-          >
-            <span className="ugs-stream-nav-tooltip">{marker.label}</span>
-          </button>
-        );
-      })}
+      <button
+        type="button"
+        onClick={jumpStreamToTop}
+        title={t(locale, "dock.navTop")}
+        aria-label={t(locale, "dock.navTop")}
+        className="ugs-stream-nav-edge ugs-stream-nav-edge--top"
+      >
+        <ChevronsUp size={13} />
+      </button>
+      <div
+        className="ugs-stream-nav-body"
+        aria-label={t(locale, "dock.streamTimelineAria")}
+      >
+        <div className="ugs-stream-nav-track" aria-hidden="true" />
+        {timelineMarkers.map((marker) => {
+          const active =
+            marker.id === activeTopicMessageId ||
+            marker.id === assetJumpHighlightId ||
+            marker.id === pendingTimelineJumpId;
+          const hidden = marker.messageIndex < hiddenMessageCount;
+          const ariaLabel = t(locale, "dock.timelineMarker")
+            .replace("{index}", String(marker.number))
+            .replace("{summary}", marker.label);
+          return (
+            <button
+              key={marker.id}
+              type="button"
+              data-ugs-timeline-marker="true"
+              data-active={active ? "true" : undefined}
+              data-hidden={hidden ? "true" : undefined}
+              onClick={() => scrollToTimelineMessage(marker.id)}
+              title={marker.label}
+              aria-label={ariaLabel}
+              className={cn(
+                "ugs-stream-nav-marker",
+                active && "ugs-stream-nav-marker--active",
+              )}
+              style={{ top: `${marker.position}%` }}
+            >
+              <span className="ugs-stream-nav-tooltip">{marker.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={jumpStreamToBottom}
+        title={t(locale, "dock.navBottom")}
+        aria-label={t(locale, "dock.navBottom")}
+        className="ugs-stream-nav-edge ugs-stream-nav-edge--bottom"
+      >
+        <ChevronsDown size={13} />
+      </button>
     </div>
   );
+
   const channelOptions =
     generationMode === "image"
       ? imageChannelOptions
@@ -7284,7 +7531,10 @@ export default function AIDock({
             </div>
           )}
         </header>
-        <div className={"relative min-h-0 " + (centerInput ? "" : "flex-1")}>
+        <div
+          id="ugs-stream-surface"
+          className={"relative min-h-0 " + (centerInput ? "" : "flex-1")}
+        >
           {captureStatus && (
             <div
               className={
@@ -7351,6 +7601,10 @@ export default function AIDock({
                 {visibleMessages.map((m) => {
                   const isUser = m.role === "user";
                   const isChatUser = isChat && isUser;
+                  const queuedUserMessage =
+                    isChatUser && queuedChatMessageIdSet.has(m.id);
+                  const editingQueuedMessage =
+                    queuedUserMessage && queuedEditMessageId === m.id;
                   const isSystem = m.role === "system";
                   const isSearchHit = searchMatchMessageIds.has(m.id);
                   const isCurrentSearchHit =
@@ -7386,6 +7640,19 @@ export default function AIDock({
                     assistantActions &&
                     !aiBusy &&
                     previousUserText(messages, m.id).length > 0;
+                  // Per-message search-highlight state. The hitCounter is a
+                  // fresh object on each render; LazyMessageContent / FileText
+                  // reset it to 0 before use so the fallback and rich renderer
+                  // produce identical match IDs.
+                  const searchState = normalizedSearch
+                    ? {
+                        query: normalizedSearch,
+                        messageId: m.id,
+                        hitCounter: { current: 0 },
+                        activeMatchId: activeSearchMatchId,
+                        onActiveMatchNode: setActiveSearchMatchNode,
+                      }
+                    : null;
                   return (
                     <li
                       key={m.id}
@@ -7426,12 +7693,63 @@ export default function AIDock({
                         >
                           {formatMessageTime(m.createdAt)}
                         </span>
+                        {queuedUserMessage && (
+                          <span className="shrink-0 rounded border border-accent/30 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+                            排队中
+                          </span>
+                        )}
                         {isUser && m.text.trim() && (
                           <CopyButton
                             value={m.text}
                             title={t(locale, "dock.copy")}
                             className="shrink-0 opacity-0 transition-opacity group-hover/msg:opacity-100"
                           />
+                        )}
+                        {queuedUserMessage && !normalizedSearch && (
+                          <>
+                            {/* Real interjection: token-level splicing into an
+                                answer that is still generating has no backing
+                                support (the native CLI subprocesses are fed one
+                                prompt over stdin, closed right after — no live
+                                channel left to push more input mid-run). What
+                                IS achievable: abort just the in-flight turn for
+                                this session and let this already-queued message
+                                start immediately instead of waiting for the
+                                current answer to finish naturally. See
+                                interjectRunningChatTurn in useStore.ts. */}
+                            <button
+                              type="button"
+                              onClick={() => interjectQueuedChatMessage(m.id)}
+                              title={t(locale, "dock.liveInterjectTip")}
+                              aria-label={t(locale, "dock.liveInterject")}
+                              className="shrink-0 rounded text-fg-faint opacity-0 transition-colors transition-opacity hover:text-accent-3 group-hover/msg:opacity-100"
+                            >
+                              <Zap size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => beginQueuedMessageEdit(m)}
+                              title={t(locale, "common.edit")}
+                              aria-label={t(locale, "common.edit")}
+                              className="shrink-0 rounded text-fg-faint opacity-0 transition-colors transition-opacity hover:text-fg group-hover/msg:opacity-100"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (queuedEditMessageId === m.id) {
+                                  cancelQueuedMessageEdit();
+                                }
+                                deleteQueuedChatMessage(m.id);
+                              }}
+                              title={t(locale, "common.delete")}
+                              aria-label={t(locale, "common.delete")}
+                              className="shrink-0 rounded text-fg-faint opacity-0 transition-colors transition-opacity hover:text-accent-3 group-hover/msg:opacity-100"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </>
                         )}
                       </div>
                       {m.runProgress && (
@@ -7446,6 +7764,8 @@ export default function AIDock({
                         <InteractionWidget
                           message={m}
                           locale={locale}
+                          workspaceCwd={workspaceCwd}
+                          remoteRootPath={activeRemoteWorkspaceRoot}
                           active={
                             (m.interactionStatus ?? "pending") === "pending" &&
                             (!!m.appAction ||
@@ -7458,28 +7778,54 @@ export default function AIDock({
                           }
                           onDismiss={() => handleInteractionDismiss(m)}
                         />
-                      ) : normalizedSearch ? (
-                        // While a return search is active we fall back to the
-                        // plain highlighter for every message so match marks
-                        // land on real text nodes.
-                        <span
-                          className={
-                            "whitespace-pre-wrap break-words text-sm leading-relaxed " +
-                            (isChatUser
-                              ? "ai-stream-user-bubble max-w-[86%] rounded-md px-3 py-2 text-left"
-                              : isChat
-                                ? "ai-stream-text w-[min(100%,calc(100%_-_2rem))]"
-                                : "ai-stream-text")
-                          }
-                        >
-                          {renderHighlightedText(
-                            isUser ? m.text : cleanMessageText(m.text),
-                            m.id,
-                            normalizedSearch,
-                            activeSearchMatchId,
-                            setActiveSearchMatchNode,
-                          )}
-                        </span>
+                      ) : editingQueuedMessage ? (
+                        <div className="ai-stream-user-bubble flex w-[min(100%,32rem)] max-w-[86%] flex-col gap-2 rounded-md px-3 py-2 text-left">
+                          <textarea
+                            value={queuedEditDraft}
+                            onChange={(event) =>
+                              setQueuedEditDraft(event.target.value)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelQueuedMessageEdit();
+                                return;
+                              }
+                              if (
+                                event.key === "Enter" &&
+                                (event.ctrlKey || event.metaKey)
+                              ) {
+                                event.preventDefault();
+                                commitQueuedMessageEdit(m.id);
+                              }
+                            }}
+                            onPaste={handleQueuedEditPaste}
+                            autoFocus
+                            rows={Math.min(8, Math.max(2, queuedEditDraft.split("\n").length))}
+                            className="max-h-52 min-h-16 resize-y rounded-md border border-border bg-bg/70 px-2 py-1.5 text-sm leading-relaxed text-fg outline-none transition-colors focus:border-accent"
+                          />
+                          <div className="flex justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={cancelQueuedMessageEdit}
+                              title={t(locale, "common.cancel")}
+                              aria-label={t(locale, "common.cancel")}
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-fg-dim transition-colors hover:border-accent hover:text-fg"
+                            >
+                              <X size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => commitQueuedMessageEdit(m.id)}
+                              disabled={!queuedEditDraft.trim()}
+                              title={t(locale, "common.save")}
+                              aria-label={t(locale, "common.save")}
+                              className="flex h-7 w-7 items-center justify-center rounded-md border border-accent/50 text-accent transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <Check size={14} />
+                            </button>
+                          </div>
+                        </div>
                       ) : isUser ? (
                         <span
                           className={
@@ -7495,6 +7841,7 @@ export default function AIDock({
                             text={m.text}
                             onOpenFile={onOpenFile}
                             cwd={workspaceCwd || undefined}
+                            searchState={searchState}
                           />
                         </span>
                       ) : (
@@ -7502,6 +7849,8 @@ export default function AIDock({
                         // chips, links, and collapsible reasoning blocks. Off-screen
                         // messages render as plain text first and upgrade lazily so
                         // opening a long history doesn't block on parsing every one.
+                        // During search, inline <mark> highlights are applied via
+                        // searchState without losing the rich rendering.
                         <div
                           className={
                             isChat
@@ -7517,11 +7866,13 @@ export default function AIDock({
                             onOpenFile={onOpenFile}
                             eager={
                               forceEagerCapture ||
+                              !!normalizedSearch ||
                               eagerMessageIds.has(m.id) ||
                               (aiBusy && m.id === lastAssistantId)
                             }
                             scrollRootRef={streamRef}
                             cwd={workspaceCwd || undefined}
+                            searchState={searchState}
                           />
                         </div>
                       )}
@@ -8662,6 +9013,9 @@ export default function AIDock({
       <FilePreviewDrawer
         refData={filePreviewRef}
         cwd={workspaceCwd || undefined}
+        diffEnabled={Boolean(
+          workspaceCwd && !isRemoteWorkspacePath(workspaceCwd),
+        )}
         onClose={() => setFilePreviewRef(null)}
       />
       {keyModalChannel && (

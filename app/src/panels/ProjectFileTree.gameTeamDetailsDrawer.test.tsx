@@ -51,7 +51,7 @@ function toolBlock(id: string, name: string, extra: Record<string, unknown>): st
   return encodeToolPatch({ id, name, status: 'done', ...extra });
 }
 
-function resetStore(): void {
+function resetStore(options: { messages?: Message[] } = {}): void {
   const workspace = {
     id: 'ws_game_team_drawer',
     path: 'E:\\UltraGameStudio',
@@ -74,7 +74,7 @@ function resetStore(): void {
     composer: { ...defaultComposer, workspace: workspace.path },
     composerDraft: '',
     composerDrafts: {},
-    messages: [editMessage],
+    messages: options.messages ?? [editMessage],
     gameExpertSettings: {
       ...DEFAULT_GAME_EXPERT_SETTINGS,
       enabled: true,
@@ -141,6 +141,43 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
     }
   });
 
+  it('keeps the empty session-files state stable while assistant prose streams', async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
+    resetStore({ messages: [] });
+    const view = await renderProjectFileTree();
+
+    try {
+      expect(view.container.textContent).toContain('读取会话文件');
+
+      await act(async () => {
+        await vi.runOnlyPendingTimersAsync();
+      });
+
+      expect(view.container.textContent).toContain('当前会话还没有修改过文件。');
+      expect(view.container.textContent).not.toContain('读取会话文件');
+
+      await act(async () => {
+        useStore.setState({
+          messages: [
+            {
+              id: 'streaming-a1',
+              role: 'assistant',
+              createdAt: 20,
+              text: '正在分析这个问题，没有工具事件。',
+            },
+          ],
+        });
+      });
+
+      expect(view.container.textContent).toContain('当前会话还没有修改过文件。');
+      expect(view.container.textContent).not.toContain('读取会话文件');
+    } finally {
+      await view.cleanup();
+      vi.useRealTimers();
+    }
+  });
+
   it('handles global file preview requests inside the existing project panel', async () => {
     resetStore();
     const view = await renderProjectFileTree();
@@ -169,7 +206,9 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       expect(view.container.textContent).toContain('gameOrgDefaults.json');
       expect(view.container.querySelectorAll('aside')).toHaveLength(1);
       expect(view.container.querySelector('.fixed.inset-0')).toBeNull();
-      expect(workspaceFileDiff).not.toHaveBeenCalled();
+      // 通用文件预览也应尝试拉取 VCS 差异（git/svn/p4 均由后端通用支持），
+      // 不应只限定在"会话文件"列表打开的场景。
+      expect(workspaceFileDiff).toHaveBeenCalled();
     } finally {
       await view.cleanup();
     }

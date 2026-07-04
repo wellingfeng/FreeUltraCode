@@ -483,6 +483,17 @@ where
     )
 }
 
+/// Return the absolute path of every known project workspace, read from the
+/// global workspace index. Used by background maintenance (e.g. cache
+/// retention sweeps) to reach each project's `.ultragamestudio` cache dir
+/// without the frontend having to enumerate them explicitly.
+pub fn known_workspace_roots() -> Vec<PathBuf> {
+    match global_root() {
+        Ok(root) => workspace_paths_from_index(&root),
+        Err(_) => Vec::new(),
+    }
+}
+
 pub fn project_artifact_dir(cwd: Option<&str>, name: &str) -> Option<PathBuf> {
     workspace_root(cwd).map(|root| root.join(PROJECT_ROOT_DIR_NAME).join(name))
 }

@@ -4,6 +4,7 @@ import { parseFileRef, looksLikePath, displayFileRefPath } from './filePath';
 import { scanFileRefs } from './fileScan';
 import {
   fenceLooseDiffBlocks,
+  normalizeFenceLineBreaks,
   repairMarkdown,
   repairFences,
   unwrapMarkdownWrapper,
@@ -287,6 +288,39 @@ describe('repairMarkdown', () => {
   it('ignores ticks inside a closed fence', () => {
     const src = '```\na ` b\n```';
     expect(repairMarkdown(src)).toBe(src);
+  });
+});
+
+describe('normalizeFenceLineBreaks', () => {
+  it('splits language fences glued to prose before markdown parsing', () => {
+    const src = [
+      'GPU 硬件执行```mermaid',
+      'flowchart LR',
+      'A-->B',
+      '```',
+      '后续说明',
+    ].join('\n');
+
+    expect(normalizeFenceLineBreaks(src)).toBe(
+      [
+        'GPU 硬件执行',
+        '```mermaid',
+        'flowchart LR',
+        'A-->B',
+        '```',
+        '后续说明',
+      ].join('\n'),
+    );
+  });
+
+  it('leaves ordinary inline triple-backtick mentions untouched', () => {
+    const src = '这里说的是 ``` 这个符号，不是代码块。';
+    expect(normalizeFenceLineBreaks(src)).toBe(src);
+  });
+
+  it('does not split prose that names a fence language inline', () => {
+    const src = 'Markdown 里可用```ts 语法标记 TypeScript。';
+    expect(normalizeFenceLineBreaks(src)).toBe(src);
   });
 });
 

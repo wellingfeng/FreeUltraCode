@@ -122,3 +122,34 @@ export function aiEditRegistered(
   return !!ch && activeAiEdits.get(ch.key) === ch;
 }
 
+/**
+ * Force-teardown every still-active run channel. Used as a safety net when a
+ * run's executor promise threw without reaching its normal cleanup path
+ * (uncaught exception inside executeViaCliInterpreter / executeViaSimulator),
+ * or when the host is tearing down (HMR, beforeunload, session wipe).
+ *
+ * The registry itself only flips `cancelled` and drops the channel from the
+ * Map; the side-effecting teardown (commit interrupted snapshot, flip UI back
+ * to design mode, cancel child CLI processes) is delegated to the caller via
+ * `teardown` so this module stays free of useStore imports.
+ *
+ * Returns the channels that were aborted (useful for logging).
+ */
+export function abortAllPendingRuns(
+  teardown: (ch: RunChannel) => void,
+): RunChannel[] {
+  const aborted: RunChannel[] = [];
+  for (const ch of [...activeRuns.values()]) {
+    if (ch.cancelled) continue;
+    ch.cancelled = true;
+    aborted.push(ch);
+    try {
+      teardown(ch);
+    } catch {
+      /* never let a teardown error abort the loop — keep clearing the map */
+    }
+    activeRuns.delete(ch.key);
+  }
+  return aborted;
+}
+

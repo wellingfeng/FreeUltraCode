@@ -8,6 +8,7 @@ import {
   PROJECT_FILE_DRAG_MIME,
   setProjectFileDragData,
 } from '@/lib/projectFileDrag';
+import { encodeToolPatch } from '@/components/ai/lib/toolEvent';
 import {
   remoteWorkspacePath,
   saveRemoteRunnerConnection,
@@ -371,7 +372,7 @@ describe('AIDock project file drag', () => {
         });
       });
 
-      expect(input.value).toBe(fullPath);
+      expect(input.value).toBe(`\`${fullPath}\``);
     } finally {
       await view.cleanup();
     }
@@ -459,7 +460,7 @@ describe('AIDock project file drag', () => {
       });
 
       await vi.waitFor(() =>
-        expect(input.value).toBe('.ultragamestudio/uploads/local.png'),
+        expect(input.value).toBe('`.ultragamestudio/uploads/local.png`'),
       );
       expect(tauriMocks.readLocalFileForUpload).toHaveBeenCalledWith(fullPath);
       expect(fetchMock).toHaveBeenCalledWith(
@@ -533,7 +534,7 @@ describe('AIDock project file drag', () => {
       });
 
       await waitForExpect(() => {
-        expect(input.value).toBe('.ultragamestudio/uploads/item.png');
+        expect(input.value).toBe('`.ultragamestudio/uploads/item.png`');
       });
       expect(fetchMock).toHaveBeenCalledWith(
         'https://runner.test/projects/proj_items_drag/files',
@@ -588,7 +589,7 @@ describe('AIDock project file drag', () => {
       expect(dropPreventDefault).toHaveBeenCalled();
       expect(dropStopPropagation).toHaveBeenCalled();
       expect(input.value).toBe(
-        'E:\\UltraGameStudio\\app\\src\\App.tsx\nE:\\UltraGameStudio\\app\\src\\panels',
+        '`E:\\UltraGameStudio\\app\\src\\App.tsx`\n`E:\\UltraGameStudio\\app\\src\\panels`',
       );
     } finally {
       await view.cleanup();
@@ -636,7 +637,7 @@ describe('AIDock project file drag', () => {
       });
 
       expect(dropPreventDefault).toHaveBeenCalled();
-      expect(input.value).toBe(dragEntry.path);
+      expect(input.value).toBe(`\`${dragEntry.path}\``);
       expect(hasProjectFileDragData(targetDataTransfer)).toBe(false);
     } finally {
       await view.cleanup();
@@ -683,7 +684,7 @@ describe('AIDock project file drag', () => {
         });
       });
 
-      expect(input.value).toBe(dragEntry.path);
+      expect(input.value).toBe(`\`${dragEntry.path}\``);
     } finally {
       await view.cleanup();
     }
@@ -778,7 +779,7 @@ describe('AIDock project file drag', () => {
         });
       });
 
-      expect(input.value).toBe('src/RemoteFile.ts');
+      expect(input.value).toBe('`src/RemoteFile.ts`');
       expect(
         fetchMock.mock.calls.filter(
           ([url]) => url === 'https://runner.test/projects/proj_tree_drag/files',
@@ -827,15 +828,45 @@ describe('AIDock project file drag', () => {
       }),
     );
     resetStore({ withWorkspace: true });
+    useStore.setState({
+      messages: [
+        {
+          id: 'assistant-session-files',
+          role: 'assistant',
+          createdAt: 25,
+          text:
+            encodeToolPatch({
+              id: 'project-file-tree',
+              name: 'Edit',
+              status: 'done',
+              args: { file_path: 'app/src/ProjectFileTree.tsx' },
+            }) +
+            encodeToolPatch({
+              id: 'new-file',
+              name: 'Write',
+              status: 'done',
+              args: { file_path: 'app/src/new.ts' },
+            }) +
+            encodeToolPatch({
+              id: 'deleted-file',
+              name: 'Edit',
+              status: 'done',
+              args: { file_path: 'app/src/gone.ts' },
+            }),
+        },
+      ],
+    });
     const view = await renderProjectDragHarness();
 
     try {
-      expect(view.container.textContent).toContain(
-        '3 个文件 · 新增 1 · 修改 1 · 删除 1',
-      );
-      expect(view.container.textContent).toContain('ProjectFileTree.tsx');
-      expect(view.container.textContent).toContain('new.ts');
-      expect(view.container.textContent).toContain('gone.ts');
+      await waitForExpect(() => {
+        expect(view.container.textContent).toContain(
+          '3 个文件 · 新增 1 · 修改 1 · 删除 1',
+        );
+        expect(view.container.textContent).toContain('ProjectFileTree.tsx');
+        expect(view.container.textContent).toContain('new.ts');
+        expect(view.container.textContent).toContain('gone.ts');
+      });
     } finally {
       await view.cleanup();
     }
@@ -875,7 +906,7 @@ describe('AIDock project file drag', () => {
         sourceProps.onDragEnd?.({ clientX: 40, clientY: 40 });
       });
 
-      expect(input.value).toBe(dragEntry.path);
+      expect(input.value).toBe(`\`${dragEntry.path}\``);
     } finally {
       await view.cleanup();
     }

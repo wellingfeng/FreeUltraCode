@@ -7,6 +7,10 @@ import {
 } from 'react';
 import MessageContent from './MessageContent';
 import type { OpenFileFn } from './FileChip';
+import {
+  highlightSearchMarks,
+  type SearchHighlightState,
+} from './lib/searchHighlight';
 
 /**
  * Performance wrapper around {@link MessageContent}.
@@ -28,6 +32,11 @@ import type { OpenFileFn } from './FileChip';
  * `scrollRootRef` is the scroll container; passing it makes the observer measure
  * intersection relative to the message stream rather than the whole window, and
  * a generous rootMargin pre-upgrades just-off-screen messages to hide pop-in.
+ *
+ * `searchState` enables inline search-match highlighting in both the plain-text
+ * fallback and the rich renderer. The hit counter is reset at the start of each
+ * render so the fallback and the eventual rich upgrade assign identical match
+ * IDs (`${messageId}:text:${hitIndex}`).
  */
 function LazyMessageContentImpl({
   text,
@@ -38,6 +47,7 @@ function LazyMessageContentImpl({
   cwd,
   eager = false,
   scrollRootRef,
+  searchState = null,
 }: {
   text: string;
   /** Plain-text stand-in shown until the rich renderer is mounted. */
@@ -48,7 +58,13 @@ function LazyMessageContentImpl({
   cwd?: string;
   eager?: boolean;
   scrollRootRef?: RefObject<HTMLElement | null>;
+  searchState?: SearchHighlightState | null;
 }) {
+  // Reset the per-message hit counter before each render so the fallback and
+  // the rich renderer (which may render at different times due to lazy
+  // upgrading) always start from index 0 and produce identical match IDs.
+  if (searchState) searchState.hitCounter.current = 0;
+
   const [rich, setRich] = useState(eager && streaming);
   const holderRef = useRef<HTMLDivElement>(null);
 
@@ -87,6 +103,7 @@ function LazyMessageContentImpl({
         showActions={showActions}
         onOpenFile={onOpenFile}
         cwd={cwd}
+        searchState={searchState}
       />
     );
   }
@@ -96,7 +113,9 @@ function LazyMessageContentImpl({
       ref={holderRef}
       className="ai-stream-text whitespace-pre-wrap break-words text-sm leading-relaxed"
     >
-      {fallback}
+      {searchState
+        ? highlightSearchMarks(fallback, searchState, "fb")
+        : fallback}
     </div>
   );
 }

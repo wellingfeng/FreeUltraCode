@@ -56,6 +56,49 @@ describe('MermaidBlock', () => {
     }
   });
 
+  it('renders a mermaid fence even when the model glues it to preceding prose', async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg role="img"><text>GPU path</text></svg>',
+    });
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(MessageContent, {
+            text: [
+              'GPU 硬件执行```mermaid',
+              'flowchart LR',
+              'A-->B',
+              '```',
+              '后续说明',
+            ].join('\n'),
+          }),
+        );
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain('GPU 硬件执行');
+      expect(container.textContent).toContain('后续说明');
+      expect(container.querySelector('.ai-mermaid')).not.toBeNull();
+      expect(container.querySelector('.ai-mermaid svg')).not.toBeNull();
+      expect(container.querySelector('.ai-code')).toBeNull();
+      expect(mermaidMocks.render).toHaveBeenCalledWith(
+        expect.stringMatching(/^ai-mermaid-/),
+        'flowchart LR\nA-->B',
+      );
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('falls back to the raw code block when mermaid render fails', async () => {
     mermaidMocks.render.mockRejectedValue(new Error('Parse error'));
     const container = document.createElement('div');

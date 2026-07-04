@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import FilePreviewDrawer from '@/components/ai/FilePreviewDrawer';
 import type { FileRef } from '@/components/ai/lib/filePath';
+import { hasToolSentinel } from '@/components/ai/lib/toolEvent';
 import GameTeamPanel, {
   OPEN_GAME_TEAM_DETAILS_EVENT,
   type OpenGameTeamDetailsEventDetail,
@@ -145,6 +146,24 @@ function emptySessionFilesViewState(
     counts: EMPTY_SESSION_FILE_COUNTS,
     tree: [],
   };
+}
+
+function sessionFileEntriesEqual(
+  a: SessionFileEntry[],
+  b: SessionFileEntry[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((entry, index) => {
+    const other = b[index];
+    return (
+      entry.path === other.path &&
+      entry.basename === other.basename &&
+      entry.action === other.action &&
+      entry.changeStatus === other.changeStatus &&
+      entry.touchCount === other.touchCount &&
+      entry.lastTouchedAt === other.lastTouchedAt
+    );
+  });
 }
 
 function scheduleSessionPanelWork(callback: () => void): () => void {
@@ -707,7 +726,12 @@ export default function ProjectFileTree() {
   const composerWorkspaceFolders = useStore((s) => s.composer.workspaceFolders);
   // 「会话文件」标签的数据来源：当前会话里 AI 工具调用（<<UGS_TOOL>> 内联事件）
   // 修改过的文件，并合并运行结束时已经持久化的会话改动缓存。
-  const sessionMessages = useStore((s) => s.messages);
+  const sessionToolActivityKey = useStore((s) =>
+    s.messages
+      .filter((message) => message.role === 'assistant' && hasToolSentinel(message.text))
+      .map((message) => `${message.id}:${message.createdAt ?? 0}:${message.text}`)
+      .join('\n'),
+  );
   const sessionActivityVersion = useStore(
     (s) =>
       `${s.aiEditingSessions.length}:${s.chattingSessions.length}:${s.runningSessions.length}`,
@@ -925,31 +949,43 @@ export default function ProjectFileTree() {
 
     let cancelled = false;
     const key = sessionFilesViewKey;
-    // 信息流流式刷新时 sessionMessages 会高频变化导致本 effect 频繁重跑。若当前
-    // 会话已经有文件列表，就保持原内容、保留 ready 状态（返回同一引用不触发重渲染），
-    // 在后台静默重算后再整体替换；只有切换会话/首次加载（无文件）时才显示加载态。
+    // 信息流流式刷新时纯文本 token 会高频变化；上面的 selector 只让工具哨兵变化
+    // 触发本 effect。若当前会话已经 ready（即使文件数为 0），保持原内容和空态，
+    // 在后台静默重算后再整体替换；只有切换会话/首次加载时才显示加载态。
     // 否则每来一行 token 都会把整棵会话文件树替换成居中转圈，造成右侧面板闪烁。
     setSessionFilesState((current) =>
-      current.key === key && current.files.length > 0
+      current.key === key && current.status === 'ready'
         ? current
         : emptySessionFilesViewState(key, 'loading'),
     );
     const cancelWork = scheduleSessionPanelWork(() => {
       if (cancelled) return;
       const isIgnored = buildSessionIgnorePredicate(ignoreRoots);
-      const activityFiles = extractSessionFiles(sessionMessages, { isIgnored });
+      const activityFiles = extractSessionFiles(useStore.getState().messages, {
+        isIgnored,
+      });
       const files = mergeSessionFilesWithWorkspaceChanges(
         activityFiles,
         sessionChangesSnapshot,
         { isIgnored },
       ).filter((entry) => entry.action === 'edited' || entry.changeStatus);
       if (cancelled) return;
-      setSessionFilesState({
+      const nextState: SessionFilesViewState = {
         key,
         status: 'ready',
         files,
         counts: countSessionFileChanges(files),
         tree: buildSessionFileTree(files),
+      };
+      setSessionFilesState((current) => {
+        if (
+          current.key === key &&
+          current.status === nextState.status &&
+          sessionFileEntriesEqual(current.files, nextState.files)
+        ) {
+          return current;
+        }
+        return nextState;
       });
     });
 
@@ -960,7 +996,7 @@ export default function ProjectFileTree() {
   }, [
     panelTab,
     sessionFilesViewKey,
-    sessionMessages,
+    sessionToolActivityKey,
     ignoreRoots,
     sessionChangesSnapshot,
   ]);
@@ -1143,7 +1179,7 @@ export default function ProjectFileTree() {
       event.preventDefault();
       setTeamDetailsPreview(null);
       setPreviewCwd(detail.cwd || undefined);
-      setPreviewDiffEnabled(false);
+      setPreviewDiffEnabled(true);
       setPreviewRef(detail.ref);
     };
     window.addEventListener(

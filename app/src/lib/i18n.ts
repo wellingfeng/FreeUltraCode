@@ -635,6 +635,9 @@ const UI_FULL = {
     'dock.runChatTitle': '运行当前会话输入',
     'dock.stopChatTitle': '停止当前会话生成',
     'dock.interjectTitle': '插入发送（排队续接当前会话）',
+    'dock.liveInterject': '插话',
+    'dock.liveInterjectTip':
+      '插话：立即中断当前正在生成的回复，改为马上发送这条排队消息（不会等它自然生成完）。注意做不到把新内容拼进正在生成的那句回复里，只能打断重来。',
     'dock.modelSwitchBlockedTip':
       '当前回答仍在使用原模型生成。可以继续输入或切换模型，但要等回答结束后，才能用新模型发送。',
     'dock.runningStop': '停止',
@@ -738,6 +741,10 @@ const UI_FULL = {
     'mermaid.renderFailed': 'Mermaid 渲染失败',
     'mermaid.diagram': 'Mermaid 图表',
     'mermaid.rendering': '正在渲染图表...',
+    'mermaid.zoomIn': '放大',
+    'mermaid.zoomOut': '缩小',
+    'mermaid.fit': '适应窗口',
+    'mermaid.expandHint': '滚轮缩放，拖动平移',
     'callout.note': '注',
     'callout.tip': '提示',
     'callout.important': '要点',
@@ -1408,6 +1415,14 @@ const UI_FULL = {
     'settings.languageDescription': '界面文案、提示词标签和内置选项会跟随这个语言显示。',
     'settings.autoTranslateLabel': '提示词自动翻译',
     'settings.autoTranslateDescription': '开启后，保存一种语言的提示词时会自动补齐其他语言版本。',
+    'settings.cacheCleanup.title': '缓存自动清理',
+    'settings.cacheCleanup.description':
+      '启动后台会定期清理超过保留天数的临时文件、备份、回收站和未收藏的历史会话，避免磁盘占用无限增长。',
+    'settings.cacheCleanup.enabledLabel': '启动时自动清理',
+    'settings.cacheCleanup.enabledHint': '关闭后不再自动清理，仍可手动清理。',
+    'settings.cacheCleanup.retentionLabel': '保留天数',
+    'settings.cacheCleanup.retentionHint':
+      '超过这个天数未使用的缓存文件和未收藏会话会被自动删除。',
     'settings.translationProviderLabel': '翻译服务',
     'settings.translationProviderDescription':
       '选择界面内按需翻译使用的公共翻译渠道。默认使用 Google；国内网络不可达时可切换到百度翻译。',
@@ -1561,10 +1576,13 @@ const UI_FULL = {
     'interaction.inputPlaceholder': '输入内容…',
     'interaction.other': 'Other',
     'interaction.otherPlaceholder': 'Type your own answer here',
+    'interaction.customInputHint': '或直接输入自定义内容',
+    'interaction.customInputPlaceholder': '自定义输入…',
+    'interaction.add': '添加',
     'interaction.youAnswered': '你的回答',
     'interaction.answered': '已回答',
     'interaction.cancelled': '交互已取消',
-    'interaction.ended': '运行已结束，无法作答',
+    'interaction.ended': '运行已结束，回答将作为新一轮消息发送',
     'interaction.skip': '跳过',
     'interaction.skipTitle': '跳过这个问题，不作回答',
     'defaultBlueprint.agentPlaceholder': '描述你的第一个步骤',
@@ -1945,6 +1963,9 @@ const UI_FULL = {
     'dock.runChatTitle': 'Run current chat input',
     'dock.stopChatTitle': 'Stop current chat generation',
     'dock.interjectTitle': 'Send now (queue onto the running chat)',
+    'dock.liveInterject': 'Interject',
+    'dock.liveInterjectTip':
+      'Interject: stop the reply that is generating right now and send this queued message immediately instead of waiting for it to finish. This cannot splice new text into the answer while it streams — it stops it and moves on.',
     'dock.modelSwitchBlockedTip':
       'Current answer is still running on the previous model. You can keep typing or switch models, but send with the new model after it finishes.',
     'dock.runningStop': 'Stop',
@@ -2048,6 +2069,10 @@ const UI_FULL = {
     'mermaid.renderFailed': 'Mermaid render failed',
     'mermaid.diagram': 'Mermaid diagram',
     'mermaid.rendering': 'Rendering diagram…',
+    'mermaid.zoomIn': 'Zoom in',
+    'mermaid.zoomOut': 'Zoom out',
+    'mermaid.fit': 'Fit to window',
+    'mermaid.expandHint': 'Scroll to zoom, drag to pan',
     'callout.note': 'Note',
     'callout.tip': 'Tip',
     'callout.important': 'Important',
@@ -2722,6 +2747,15 @@ const UI_FULL = {
     'settings.languageDescription': 'UI strings, prompt labels, and built-in option names follow this language.',
     'settings.autoTranslateLabel': 'Auto-translate prompts',
     'settings.autoTranslateDescription': 'When enabled, saving a prompt in one language automatically fills the other language versions.',
+    'settings.cacheCleanup.title': 'Automatic cache cleanup',
+    'settings.cacheCleanup.description':
+      'On startup, a background sweep periodically removes temp files, backups, trash, and unfavorited session history older than the retention window, so disk usage does not grow unbounded.',
+    'settings.cacheCleanup.enabledLabel': 'Clean up on startup',
+    'settings.cacheCleanup.enabledHint':
+      'When off, cleanup never runs automatically; you can still clear caches manually.',
+    'settings.cacheCleanup.retentionLabel': 'Retention (days)',
+    'settings.cacheCleanup.retentionHint':
+      'Cache files and unfavorited sessions untouched longer than this are deleted automatically.',
     'settings.translationProviderLabel': 'Translation service',
     'settings.translationProviderDescription':
       'Choose the public translation provider used by on-demand UI translation. Google is the default; switch to Baidu when Google is unreachable in China.',
@@ -2875,10 +2909,13 @@ const UI_FULL = {
     'interaction.inputPlaceholder': 'Type here…',
     'interaction.other': 'Other',
     'interaction.otherPlaceholder': 'Type your own answer here',
+    'interaction.customInputHint': 'Or type your own answer',
+    'interaction.customInputPlaceholder': 'Type your own…',
+    'interaction.add': 'Add',
     'interaction.youAnswered': 'Your answer',
     'interaction.answered': 'Answered',
     'interaction.cancelled': 'Interaction cancelled',
-    'interaction.ended': 'Run ended — can no longer answer',
+    'interaction.ended': 'Run ended — your answer will be sent as a new message',
     'interaction.skip': 'Skip',
     'interaction.skipTitle': 'Skip this question without answering',
     'defaultBlueprint.agentPlaceholder': 'Describe your first step',
@@ -3231,6 +3268,15 @@ const UI_FULL = {
     'settings.languageDescription': 'Las cadenas de la interfaz, las etiquetas de los prompts y los nombres de las opciones integradas siguen este idioma.',
     'settings.autoTranslateLabel': 'Traducir prompts automáticamente',
     'settings.autoTranslateDescription': 'Cuando está activado, guardar un prompt en un idioma rellena automáticamente las versiones en los demás idiomas.',
+    'settings.cacheCleanup.title': 'Limpieza automática de caché',
+    'settings.cacheCleanup.description':
+      'Al iniciar, una tarea en segundo plano elimina periódicamente archivos temporales, copias de seguridad, la papelera y el historial de sesiones no favoritas más antiguo que el periodo de retención, para que el uso de disco no crezca sin límite.',
+    'settings.cacheCleanup.enabledLabel': 'Limpiar al iniciar',
+    'settings.cacheCleanup.enabledHint':
+      'Si está desactivado, la limpieza nunca se ejecuta automáticamente; aún puedes limpiar la caché manualmente.',
+    'settings.cacheCleanup.retentionLabel': 'Retención (días)',
+    'settings.cacheCleanup.retentionHint':
+      'Los archivos de caché y las sesiones no favoritas sin usar durante más de este tiempo se eliminan automáticamente.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'Elige la CLI de modelo predeterminada para la ejecución local.',
     'settings.shellLabel': 'Shell de inicio',
@@ -3293,7 +3339,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'Tu respuesta',
     'interaction.answered': 'Respondido',
     'interaction.cancelled': 'Interacción cancelada',
-    'interaction.ended': 'La ejecución terminó: ya no se puede responder',
+    'interaction.ended': 'La ejecución terminó: tu respuesta se enviará como un nuevo mensaje',
     'interaction.skip': 'Omitir',
     'interaction.skipTitle': 'Omitir esta pregunta sin responder',
     'defaultBlueprint.agentPlaceholder': 'Describe tu primer paso',
@@ -3648,6 +3694,15 @@ const UI_FULL = {
     'settings.languageDescription': "Les textes de l'interface, les étiquettes des prompts et les noms des options intégrées suivent cette langue.",
     'settings.autoTranslateLabel': 'Traduction automatique des prompts',
     'settings.autoTranslateDescription': "Lorsqu'activée, enregistrer un prompt dans une langue remplit automatiquement les versions dans les autres langues.",
+    'settings.cacheCleanup.title': 'Nettoyage automatique du cache',
+    'settings.cacheCleanup.description':
+      "Au démarrage, une tâche en arrière-plan supprime périodiquement les fichiers temporaires, les sauvegardes, la corbeille et l'historique des sessions non favorites plus ancien que la période de rétention, afin que l'espace disque n'augmente pas indéfiniment.",
+    'settings.cacheCleanup.enabledLabel': 'Nettoyer au démarrage',
+    'settings.cacheCleanup.enabledHint':
+      "Si désactivé, le nettoyage ne s'exécute plus automatiquement ; vous pouvez toujours vider le cache manuellement.",
+    'settings.cacheCleanup.retentionLabel': 'Rétention (jours)',
+    'settings.cacheCleanup.retentionHint':
+      'Les fichiers de cache et les sessions non favorites inutilisées au-delà de cette durée sont supprimés automatiquement.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': "Choisissez la CLI de modèle par défaut utilisée pour l'exécution locale.",
     'settings.shellLabel': 'Shell de lancement',
@@ -3707,7 +3762,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'Votre réponse',
     'interaction.answered': 'Répondu',
     'interaction.cancelled': 'Interaction annulée',
-    'interaction.ended': 'Exécution terminée — impossible de répondre',
+    'interaction.ended': 'Exécution terminée — votre réponse sera envoyée comme un nouveau message',
     'interaction.skip': 'Ignorer',
     'interaction.skipTitle': 'Ignorer cette question sans répondre',
     'defaultBlueprint.agentPlaceholder': 'Decris ta premiere etape',
@@ -4062,6 +4117,15 @@ const UI_FULL = {
     'settings.languageDescription': 'Строки интерфейса, метки промптов и названия встроенных опций отображаются на этом языке.',
     'settings.autoTranslateLabel': 'Автоперевод промптов',
     'settings.autoTranslateDescription': 'При включении сохранение промпта на одном языке автоматически заполняет версии на других языках.',
+    'settings.cacheCleanup.title': 'Автоочистка кэша',
+    'settings.cacheCleanup.description':
+      'При запуске фоновая задача периодически удаляет временные файлы, резервные копии, корзину и неизбранную историю сессий старше периода хранения, чтобы место на диске не росло бесконечно.',
+    'settings.cacheCleanup.enabledLabel': 'Очищать при запуске',
+    'settings.cacheCleanup.enabledHint':
+      'Если выключено, автоочистка не выполняется автоматически; кэш можно очистить вручную.',
+    'settings.cacheCleanup.retentionLabel': 'Срок хранения (дней)',
+    'settings.cacheCleanup.retentionHint':
+      'Файлы кэша и неизбранные сессии, не используемые дольше этого срока, удаляются автоматически.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'Выберите CLI модели по умолчанию для локального выполнения.',
     'settings.shellLabel': 'Оболочка запуска',
@@ -4121,7 +4185,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'Ваш ответ',
     'interaction.answered': 'Отвечено',
     'interaction.cancelled': 'Взаимодействие отменено',
-    'interaction.ended': 'Выполнение завершено — ответ больше невозможен',
+    'interaction.ended': 'Выполнение завершено — ответ будет отправлен как новое сообщение',
     'interaction.skip': 'Пропустить',
     'interaction.skipTitle': 'Пропустить этот вопрос без ответа',
     'defaultBlueprint.agentPlaceholder': 'Опишите первый шаг',
@@ -4476,6 +4540,15 @@ const UI_FULL = {
     'settings.languageDescription': 'نصوص الواجهة وتسميات التلميحات وأسماء الخيارات المدمجة تتبع هذه اللغة.',
     'settings.autoTranslateLabel': 'الترجمة التلقائية للتلميحات',
     'settings.autoTranslateDescription': 'عند التمكين، يؤدي حفظ تلميح بلغة ما إلى ملء النسخ باللغات الأخرى تلقائياً.',
+    'settings.cacheCleanup.title': 'التنظيف التلقائي للذاكرة المؤقتة',
+    'settings.cacheCleanup.description':
+      'عند بدء التشغيل، تقوم مهمة في الخلفية بحذف الملفات المؤقتة والنسخ الاحتياطية وسلة المحذوفات وسجل الجلسات غير المفضلة الأقدم من فترة الاحتفاظ بشكل دوري، حتى لا تنمو مساحة القرص بلا حدود.',
+    'settings.cacheCleanup.enabledLabel': 'التنظيف عند بدء التشغيل',
+    'settings.cacheCleanup.enabledHint':
+      'عند التعطيل، لن يتم التنظيف تلقائياً بعد الآن؛ لا يزال بإمكانك مسح الذاكرة المؤقتة يدوياً.',
+    'settings.cacheCleanup.retentionLabel': 'مدة الاحتفاظ (أيام)',
+    'settings.cacheCleanup.retentionHint':
+      'يتم حذف ملفات الذاكرة المؤقتة والجلسات غير المفضلة غير المستخدمة لفترة أطول من هذا تلقائياً.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'اختر CLI النموذج الافتراضي المستخدم للتنفيذ المحلي.',
     'settings.shellLabel': 'shell التشغيل',
@@ -4535,7 +4608,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'إجابتك',
     'interaction.answered': 'تم الإجابة',
     'interaction.cancelled': 'تم إلغاء التفاعل',
-    'interaction.ended': 'انتهى التشغيل — لا يمكن الإجابة بعد الآن',
+    'interaction.ended': 'انتهى التشغيل — سيتم إرسال إجابتك كرسالة جديدة',
     'interaction.skip': 'تخطي',
     'interaction.skipTitle': 'تخطي هذا السؤال دون إجابة',
     'defaultBlueprint.agentPlaceholder': 'صف خطوتك الأولى',
@@ -4890,6 +4963,15 @@ const UI_FULL = {
     'settings.languageDescription': 'UI स्ट्रिंग्स, प्रॉम्प्ट लेबल और निर्मित विकल्प नाम इस भाषा का अनुसरण करते हैं।',
     'settings.autoTranslateLabel': 'प्रॉम्प्ट स्वचालित अनुवाद',
     'settings.autoTranslateDescription': 'सक्षम होने पर, एक भाषा में प्रॉम्प्ट सहेजने से अन्य भाषा संस्करण स्वचालित रूप से भरे जाते हैं।',
+    'settings.cacheCleanup.title': 'स्वचालित कैश सफाई',
+    'settings.cacheCleanup.description':
+      'लॉन्च होने पर, एक बैकग्राउंड प्रक्रिया समय-समय पर अस्थायी फ़ाइलों, बैकअप, ट्रैश और रिटेंशन अवधि से पुराने गैर-पसंदीदा सत्र इतिहास को हटाती है, ताकि डिस्क स्थान असीमित रूप से न बढ़े।',
+    'settings.cacheCleanup.enabledLabel': 'लॉन्च पर सफाई करें',
+    'settings.cacheCleanup.enabledHint':
+      'बंद होने पर, सफाई स्वचालित रूप से नहीं चलेगी; आप अभी भी कैश को मैन्युअल रूप से साफ़ कर सकते हैं।',
+    'settings.cacheCleanup.retentionLabel': 'रिटेंशन (दिन)',
+    'settings.cacheCleanup.retentionHint':
+      'इस अवधि से अधिक समय तक उपयोग न किए गए कैश फ़ाइलें और गैर-पसंदीदा सत्र स्वचालित रूप से हटा दिए जाते हैं।',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'स्थानीय निष्पादन के लिए डिफ़ॉल्ट मॉडल CLI चुनें।',
     'settings.shellLabel': 'लॉन्च Shell',
@@ -4949,7 +5031,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'आपका उत्तर',
     'interaction.answered': 'उत्तर दिया',
     'interaction.cancelled': 'इंटरैक्शन रद्द किया गया',
-    'interaction.ended': 'चलना समाप्त — अब उत्तर नहीं दे सकते',
+    'interaction.ended': 'चलना समाप्त — आपका उत्तर एक नए संदेश के रूप में भेजा जाएगा',
     'interaction.skip': 'छोड़ें',
     'interaction.skipTitle': 'इस प्रश्न को बिना उत्तर दिए छोड़ें',
     'defaultBlueprint.agentPlaceholder': 'अपना पहला चरण बताएं',
@@ -5304,6 +5386,15 @@ const UI_FULL = {
     'settings.languageDescription': 'UI テキスト、プロンプトラベル、組み込みオプション名はこの言語で表示されます。',
     'settings.autoTranslateLabel': 'プロンプト自動翻訳',
     'settings.autoTranslateDescription': '有効にすると、ある言語でプロンプトを保存した際に他の言語バージョンが自動的に補完されます。',
+    'settings.cacheCleanup.title': 'キャッシュの自動削除',
+    'settings.cacheCleanup.description':
+      '起動時にバックグラウンドタスクが定期的に一時ファイル、バックアップ、ゴミ箱、保持期間を超えたお気に入り登録のないセッション履歴を削除し、ディスク使用量が際限なく増えないようにします。',
+    'settings.cacheCleanup.enabledLabel': '起動時にクリーンアップ',
+    'settings.cacheCleanup.enabledHint':
+      'オフにすると自動クリーンアップは実行されません。手動でキャッシュを削除することは可能です。',
+    'settings.cacheCleanup.retentionLabel': '保持日数',
+    'settings.cacheCleanup.retentionHint':
+      'この日数を超えて使用されていないキャッシュファイルとお気に入り登録のないセッションは自動的に削除されます。',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'ローカル実行に使用するデフォルトのモデル CLI を選択します。',
     'settings.shellLabel': '起動 Shell',
@@ -5363,7 +5454,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'あなたの回答',
     'interaction.answered': '回答済み',
     'interaction.cancelled': 'インタラクションをキャンセルしました',
-    'interaction.ended': '実行が終了しました — これ以上回答できません',
+    'interaction.ended': '実行は終了しましたが、回答は新しいメッセージとして送信されます',
     'interaction.skip': 'スキップ',
     'interaction.skipTitle': 'この質問に回答せずスキップ',
     'defaultBlueprint.agentPlaceholder': '最初のステップを説明',
@@ -5718,6 +5809,15 @@ const UI_FULL = {
     'settings.languageDescription': 'Os textos da interface, as etiquetas dos prompts e os nomes das opções incorporadas seguem este idioma.',
     'settings.autoTranslateLabel': 'Traduzir prompts automaticamente',
     'settings.autoTranslateDescription': 'Quando ativado, guardar um prompt num idioma preenche automaticamente as versões noutras línguas.',
+    'settings.cacheCleanup.title': 'Limpeza automática de cache',
+    'settings.cacheCleanup.description':
+      'Ao iniciar, uma tarefa em segundo plano remove periodicamente ficheiros temporários, backups, o lixo e o histórico de sessões não favoritas mais antigo do que o período de retenção, para que o uso de disco não cresça indefinidamente.',
+    'settings.cacheCleanup.enabledLabel': 'Limpar ao iniciar',
+    'settings.cacheCleanup.enabledHint':
+      'Quando desativado, a limpeza nunca é executada automaticamente; ainda pode limpar o cache manualmente.',
+    'settings.cacheCleanup.retentionLabel': 'Retenção (dias)',
+    'settings.cacheCleanup.retentionHint':
+      'Ficheiros de cache e sessões não favoritas não usadas há mais tempo do que este são eliminados automaticamente.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'Escolha a CLI de modelo predefinida usada para execução local.',
     'settings.shellLabel': 'Shell de lançamento',
@@ -5777,7 +5877,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'A sua resposta',
     'interaction.answered': 'Respondido',
     'interaction.cancelled': 'Interação cancelada',
-    'interaction.ended': 'A execução terminou — já não é possível responder',
+    'interaction.ended': 'A execução terminou — a sua resposta será enviada como uma nova mensagem',
     'interaction.skip': 'Ignorar',
     'interaction.skipTitle': 'Ignorar esta pergunta sem responder',
     'defaultBlueprint.agentPlaceholder': 'Descreva seu primeiro passo',
@@ -6132,6 +6232,15 @@ const UI_FULL = {
     'settings.languageDescription': 'UI-Texte, Prompt-Bezeichnungen und integrierte Optionsnamen folgen dieser Sprache.',
     'settings.autoTranslateLabel': 'Prompts automatisch übersetzen',
     'settings.autoTranslateDescription': 'Wenn aktiviert, werden beim Speichern eines Prompts in einer Sprache automatisch die anderen Sprachversionen ergänzt.',
+    'settings.cacheCleanup.title': 'Automatische Cache-Bereinigung',
+    'settings.cacheCleanup.description':
+      'Beim Start entfernt ein Hintergrundvorgang regelmäßig temporäre Dateien, Backups, den Papierkorb und nicht favorisierten Sitzungsverlauf, der älter als der Aufbewahrungszeitraum ist, damit der Speicherplatz nicht unbegrenzt wächst.',
+    'settings.cacheCleanup.enabledLabel': 'Beim Start bereinigen',
+    'settings.cacheCleanup.enabledHint':
+      'Bei Deaktivierung läuft die Bereinigung nicht mehr automatisch; der Cache kann weiterhin manuell geleert werden.',
+    'settings.cacheCleanup.retentionLabel': 'Aufbewahrung (Tage)',
+    'settings.cacheCleanup.retentionHint':
+      'Cache-Dateien und nicht favorisierte Sitzungen, die länger als dieser Zeitraum nicht verwendet wurden, werden automatisch gelöscht.',
     'settings.cliLabel': 'CLI',
     'settings.cliDescription': 'Wähle die Standardmodell-CLI für die lokale Ausführung.',
     'settings.shellLabel': 'Start-Shell',
@@ -6191,7 +6300,7 @@ const UI_FULL = {
     'interaction.youAnswered': 'Deine Antwort',
     'interaction.answered': 'Beantwortet',
     'interaction.cancelled': 'Interaktion abgebrochen',
-    'interaction.ended': 'Durchlauf beendet — keine Antwort mehr möglich',
+    'interaction.ended': 'Durchlauf beendet — deine Antwort wird als neue Nachricht gesendet',
     'interaction.skip': 'Überspringen',
     'interaction.skipTitle': 'Diese Frage ohne Antwort überspringen',
     'defaultBlueprint.agentPlaceholder': 'Beschreibe deinen ersten Schritt',
@@ -6296,6 +6405,19 @@ export function languageAdaptationPrompt(locale: Locale): string {
     `除非用户在本轮明确要求换用其他语言，所有面向用户的说明、回答、workflow 名称、节点标签、节点 prompt 等可见内容都必须用 ${language} 输出。`,
     `不要因为代码、报错、英文上下文或工具输出而擅自切换成英文或其他语言。`,
   ].join('\n');
+}
+
+/**
+ * Short, single-line restatement of `languageAdaptationPrompt`, meant to be
+ * placed at the very END of a prompt (right after the user's actual
+ * question) instead of buried near the top. Long agentic CLI turns (lots of
+ * English tool output / file paths / code) bury a front-loaded instruction
+ * under a growing context; models weight the tail of the context more, so
+ * repeating a compact version there measurably reduces language drift.
+ */
+export function languageDirectiveReminder(locale: Locale): string {
+  const language = localeAiName(locale);
+  return `\n\n[语言强制] 不论上文、工具输出、代码或文件路径是什么语言，本次回复正文必须完整使用${language}撰写。`;
 }
 
 export function localizePromptGroup(

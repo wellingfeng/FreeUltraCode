@@ -16,6 +16,9 @@ const MARKDOWN_WRAPPER_INFO = /^(?:markdown|md|mdx)$/i;
 const SAFE_MARKDOWN_WRAPPER_PREFIX = /^(?:⚙|⏱|✓|✗|耗时|路由|模型)/u;
 const LOOSE_DIFF_LINE = /^ {0,3}[+-](?: {4,}|\t+)\S/;
 const LOOSE_DIFF_HUNK = /^ {0,3}@@\s.+@@/;
+const FENCE_RUN = /(`{3,}|~{3,})/g;
+const FENCE_INFO_HEAD = /^[A-Za-z][\w.+#-]*$/;
+const FENCE_INFO_ATTR = /^\{\.?[A-Za-z][\w.+#-]*\}$/;
 
 function fenceToken(line: string): { mark: string; len: number; info: string } | null {
   const match = FENCE_LINE.exec(line);
@@ -31,6 +34,69 @@ function isFenceClose(line: string, open: { mark: string; len: number }): boolea
 
 function isFenceLine(line: string): boolean {
   return !!fenceToken(line);
+}
+
+function looksLikeFenceInfo(info: string): boolean {
+  const trimmed = info.trim();
+  return FENCE_INFO_HEAD.test(trimmed) || FENCE_INFO_ATTR.test(trimmed);
+}
+
+function splitGluedOpeningFence(line: string): string[] | null {
+  FENCE_RUN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = FENCE_RUN.exec(line))) {
+    const index = match.index;
+    if (index === 0) continue;
+
+    const before = line.slice(0, index);
+    if (!before.trim()) continue;
+
+    const after = line.slice(index + match[1].length);
+    if (!looksLikeFenceInfo(after)) continue;
+
+    return [before.trimEnd(), match[1] + after];
+  }
+  return null;
+}
+
+/**
+ * Models often glue a fenced block directly after prose
+ * (`说明```mermaid`). CommonMark then treats the later closing fence as a new
+ * opener, so the diagram source spills into prose and the rest of the answer
+ * becomes one giant code block. Split only language-tagged fences; ordinary
+ * inline triple-backtick mentions stay untouched.
+ */
+export function normalizeFenceLineBreaks(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let openFence: { mark: string; len: number } | null = null;
+
+  for (const line of lines) {
+    if (openFence) {
+      out.push(line);
+      if (isFenceClose(line, openFence)) openFence = null;
+      continue;
+    }
+
+    const token = fenceToken(line);
+    if (token) {
+      openFence = { mark: token.mark, len: token.len };
+      out.push(line);
+      continue;
+    }
+
+    const split = splitGluedOpeningFence(line);
+    if (!split) {
+      out.push(line);
+      continue;
+    }
+
+    out.push(...split);
+    const opened = fenceToken(split[1]);
+    if (opened) openFence = { mark: opened.mark, len: opened.len };
+  }
+
+  return out.join('\n');
 }
 
 function lastNonEmptyLine(lines: string[]): number {
@@ -151,7 +217,7 @@ export function fenceLooseDiffBlocks(md: string): string {
 }
 
 function normalizeMarkdownContainers(md: string): string {
-  return fenceLooseDiffBlocks(unwrapMarkdownWrapper(md));
+  return fenceLooseDiffBlocks(unwrapMarkdownWrapper(normalizeFenceLineBreaks(md)));
 }
 
 function danglingFenceClose(md: string): string | null {
