@@ -32,6 +32,10 @@ import {
   type ToolEvent,
   type ToolEventPatch,
 } from './toolEvent';
+import {
+  hasLegacyXmlTool,
+  legacyXmlToolsToSentinels,
+} from './legacyXmlTool';
 import { parseToolLine } from './toolLine';
 import { compactRuntimeHeartbeatLines } from '@/core/interaction';
 
@@ -153,10 +157,13 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
   const anySentinels = segments.some(
     (s) => s.type === 'answer' && hasToolSentinel(s.text),
   );
+  const anyLegacyXmlTools = segments.some(
+    (s) => s.type === 'answer' && hasLegacyXmlTool(s.text),
+  );
   const anyLegacyToolLines = segments.some(
     (s) => s.type === 'answer' && hasLegacyToolMarker(s.text),
   );
-  if (!anySentinels && !anyLegacyToolLines) return segments;
+  if (!anySentinels && !anyLegacyXmlTools && !anyLegacyToolLines) return segments;
 
   // Decode every patch first (in stream order) so we can merge globally by id.
   // Only the final answer segment can carry a half-streamed trailing sentinel,
@@ -170,9 +177,12 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
   const allPatches: ToolEventPatch[] = [];
   for (let i = 0; i < segments.length; i += 1) {
     const s = segments[i];
-    if (s.type === 'answer' && hasToolSentinel(s.text)) {
+    if (s.type === 'answer') {
       const streamingTail = streaming && i === lastAnswerIndex;
-      allPatches.push(...extractToolSentinels(s.text, { streamingTail }).patches);
+      const toolText = legacyXmlToolsToSentinels(s.text, { streamingTail });
+      if (hasToolSentinel(toolText)) {
+        allPatches.push(...extractToolSentinels(toolText, { streamingTail }).patches);
+      }
     }
   }
   const merged = mergeToolPatches(allPatches);
@@ -239,13 +249,14 @@ function expandTools(segments: Segment[], streaming: boolean): Segment[] {
       out.push(s);
       continue;
     }
-    if (!hasToolSentinel(s.text)) {
-      pushTextWithLegacyTools(s.text);
+    const streamingTail = streaming && i === lastAnswerIndex;
+    const toolText = legacyXmlToolsToSentinels(s.text, { streamingTail });
+    if (!hasToolSentinel(toolText)) {
+      pushTextWithLegacyTools(toolText);
       continue;
     }
-    const streamingTail = streaming && i === lastAnswerIndex;
     // Walk the ordered parts so tool cards land exactly between prose runs.
-    for (const part of extractToolSentinels(s.text, { streamingTail }).parts) {
+    for (const part of extractToolSentinels(toolText, { streamingTail }).parts) {
       if ('text' in part) pushTextWithLegacyTools(part.text);
       else pushTool(part.patch);
     }

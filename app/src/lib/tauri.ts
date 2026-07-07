@@ -63,6 +63,18 @@ export interface ModelCliScanResult {
   error?: string | null;
 }
 
+/** Version-check status for one of the supported model CLIs (claude/codex/gemini). */
+export interface CliVersionStatus {
+  adapter: string;
+  label: string;
+  executablePath?: string | null;
+  installedVersion?: string | null;
+  latestVersion?: string | null;
+  updateAvailable: boolean;
+  checkedAtMs: number;
+  error?: string | null;
+}
+
 export type SlashCatalogEntryKind = 'command' | 'skill';
 
 export interface SlashCatalogText {
@@ -587,6 +599,18 @@ export async function notifySessionCompleteDesktop(
     workspaceId: input.workspaceId,
     sessionId: input.sessionId,
     kind: input.kind ?? 'success',
+  });
+}
+
+/** Dismiss the native desktop notification for a session waiting on input. */
+export async function dismissSessionWaitingInputNotificationDesktop(
+  input: SessionNotificationClickPayload,
+): Promise<boolean> {
+  if (!tauriAvailable()) return false;
+  const invoke = await getInvoke();
+  return invoke<boolean>('dismiss_session_waiting_input_notification', {
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
   });
 }
 
@@ -1971,6 +1995,32 @@ export async function validateCliPath(path: string): Promise<CliPathValidation> 
   }
   const invoke = await getInvoke();
   return invoke<CliPathValidation>('validate_cli_path', { path });
+}
+
+/**
+ * Check installed vs. latest npm-registry version for claude/codex/gemini.
+ * Latest-version lookups are cached ~12h on the Rust side. Desktop-only.
+ */
+export async function checkCliUpdates(): Promise<CliVersionStatus[]> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<CliVersionStatus[]>('check_cli_updates');
+}
+
+/**
+ * Trigger a one-click update for a given adapter (`claude-code` | `codex` |
+ * `gemini`): `claude update` / `codex update` natively, or
+ * `npm install -g @google/gemini-cli@latest` for gemini (no native updater).
+ * Resolves with the combined stdout/stderr log on success. Desktop-only.
+ */
+export async function updateCli(adapter: string): Promise<string> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<string>('update_cli', { adapter });
 }
 
 /**

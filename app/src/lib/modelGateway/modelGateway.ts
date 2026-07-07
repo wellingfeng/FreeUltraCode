@@ -1,5 +1,6 @@
 import { primeCliRuntime, resolveCliInvocation } from '@/lib/cliConfig';
 import { aiEditViaCli, isTauri } from '@/lib/tauri';
+import { canUseProviderDirectTransport } from '@/lib/apiConfig';
 import {
   estimateGatewayUsage,
   mergeUsageReports,
@@ -28,7 +29,10 @@ export async function completeGatewayText(
     return completeGatewayTextViaCli(request);
   }
 
-  if (request.route.transport === 'anthropic' && request.route.apiKey) {
+  if (
+    request.route.transport === 'anthropic' &&
+    canUseProviderDirectTransport(request.route.apiKey, request.route.baseUrl)
+  ) {
     try {
       return await completeDirectWithUsage(request, completeAnthropic);
     } catch (error) {
@@ -40,7 +44,7 @@ export async function completeGatewayText(
   }
   if (
     request.route.transport === 'openai-compatible' &&
-    request.route.apiKey
+    canUseProviderDirectTransport(request.route.apiKey, request.route.baseUrl)
   ) {
     try {
       return await completeDirectWithUsage(request, completeOpenAICompatible);
@@ -149,7 +153,7 @@ export function resolveDirectGatewayRoute(
   if (
     (route.transport === 'anthropic' ||
       route.transport === 'openai-compatible') &&
-    route.apiKey
+    canUseProviderDirectTransport(route.apiKey, route.baseUrl)
   ) {
     return route;
   }

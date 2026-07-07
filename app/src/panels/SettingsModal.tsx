@@ -110,7 +110,15 @@ import {
   type SkillInstallTarget,
   uninstallSkill,
   validateShellPath,
+  updateCli,
 } from '@/lib/tauri';
+import {
+  getCliUpdateSnapshot,
+  markCliUpdatesSeen,
+  primeCliUpdateStatus,
+  refreshCliUpdateStatus,
+  subscribeCliUpdateStatus,
+} from '@/lib/cliUpdateStatus';
 import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import ProjectSettingsModal, {
@@ -124,6 +132,7 @@ import {
   RELEASES_URL,
   checkForUpdate,
   openDownload,
+  pickDownloadUrl,
   type UpdateStatus,
 } from '@/lib/updateCheck';
 import {
@@ -551,6 +560,7 @@ function stopSettingsInputKeyPropagation(
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const cliRuntime = useCliRuntimeState();
+  const cliUpdateAvailable = useCliUpdateBadgeState();
   const locale = useStore((s) => s.locale);
   const setLocale = useStore((s) => s.setLocale);
   const promptAutoTranslate = useStore((s) => s.promptAutoTranslate);
@@ -733,6 +743,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               {tabs.map((item) => {
                 const active = item.id === tab;
                 const Icon = item.Icon;
+                const showBadge = item.id === 'general' && cliUpdateAvailable;
                 return (
                   <button
                     key={item.id}
@@ -749,14 +760,25 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                         : 'border border-transparent text-fg-dim hover:bg-border-soft hover:text-fg',
                     )}
                   >
-                    <Icon
-                      size={15}
-                      strokeWidth={2}
-                      className={active ? 'text-accent' : 'text-fg-faint'}
-                    />
+                    <span className="relative shrink-0">
+                      <Icon
+                        size={15}
+                        strokeWidth={2}
+                        className={active ? 'text-accent' : 'text-fg-faint'}
+                      />
+                      {showBadge && (
+                        <span
+                          className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-[#ef4444]"
+                          aria-hidden="true"
+                        />
+                      )}
+                    </span>
                     <span className="min-w-0 flex-1 truncate">
                       {t(locale, item.labelKey)}
                     </span>
+                    {showBadge && (
+                      <span className="sr-only">{t(locale, 'settings.cliUpdate.badgeHint')}</span>
+                    )}
                   </button>
                 );
               })}
@@ -967,6 +989,23 @@ function useCliRuntimeState(): CliRuntimeSnapshot {
   }, []);
 
   return state;
+}
+
+function useCliUpdateBadgeState(): boolean {
+  const [hasUnseenUpdate, setHasUnseenUpdate] = useState(
+    () => getCliUpdateSnapshot().hasUnseenUpdate,
+  );
+
+  useEffect(() => {
+    setHasUnseenUpdate(getCliUpdateSnapshot().hasUnseenUpdate);
+    const unsubscribe = subscribeCliUpdateStatus((next) =>
+      setHasUnseenUpdate(next.hasUnseenUpdate),
+    );
+    void primeCliUpdateStatus();
+    return unsubscribe;
+  }, []);
+
+  return hasUnseenUpdate;
 }
 
 function useTranslationSettingsState(): [
@@ -1343,6 +1382,171 @@ function GeneralSettings({
               onChange={(v) => patchCacheCleanupConfig({ retentionDays: v })}
             />
           </SettingRow>
+        )}
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <h4 className="text-xs font-semibold text-fg">
+          {t(locale, 'settings.cliUpdate.title')}
+        </h4>
+        <p className="text-[11px] leading-relaxed text-fg-faint">
+          {t(locale, 'settings.cliUpdate.description')}
+        </p>
+        <CliUpdatePanel locale={locale} />
+      </div>
+    </div>
+  );
+}
+
+const CLI_UPDATE_ADAPTER_ORDER = ['claude-code', 'codex', 'gemini'] as const;
+
+function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
+  if (adapter === 'claude-code') return 'Claude Code';
+  if (adapter === 'codex') return 'Codex';
+  if (adapter === 'gemini') return 'Gemini CLI';
+  return fallback;
+}
+
+function CliUpdatePanel({ locale }: { locale: Locale }) {
+  const [snapshot, setSnapshot] = useState(() => getCliUpdateSnapshot());
+  const [updatingAdapter, setUpdatingAdapter] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = subscribeCliUpdateStatus(setSnapshot);
+    void primeCliUpdateStatus();
+    return unsubscribe;
+  }, []);
+
+  // The user is actively looking at this panel, so whatever update is
+  // currently shown counts as "seen" -- clears the red-dot badge on the
+  // sidebar settings button and the "general" tab nav item.
+  useEffect(() => {
+    if (snapshot.statuses.length > 0) {
+      markCliUpdatesSeen(snapshot.statuses);
+    }
+  }, [snapshot.statuses]);
+
+  const statuses = useMemo(
+    () =>
+      [...snapshot.statuses].sort(
+        (a, b) =>
+          CLI_UPDATE_ADAPTER_ORDER.indexOf(a.adapter as (typeof CLI_UPDATE_ADAPTER_ORDER)[number]) -
+          CLI_UPDATE_ADAPTER_ORDER.indexOf(b.adapter as (typeof CLI_UPDATE_ADAPTER_ORDER)[number]),
+      ),
+    [snapshot.statuses],
+  );
+  const checking = snapshot.status === 'loading';
+  const loaded = snapshot.status === 'ready' || snapshot.status === 'error';
+
+  const runCheck = useCallback(() => {
+    setMessage(null);
+    void refreshCliUpdateStatus();
+  }, []);
+
+  const runUpdate = useCallback(
+    async (adapter: string) => {
+      setUpdatingAdapter(adapter);
+      setMessage(null);
+      try {
+        await updateCli(adapter);
+        setMessage(t(locale, 'settings.cliUpdate.updateSucceeded'));
+        await refreshCliUpdateStatus();
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        setMessage(`${t(locale, 'settings.cliUpdate.updateFailedPrefix')}${detail}`);
+      } finally {
+        setUpdatingAdapter(null);
+      }
+    },
+    [locale],
+  );
+
+  if (!isTauri()) {
+    return (
+      <p className="text-[11px] leading-relaxed text-fg-faint">
+        {t(locale, 'settings.cliDesktopOnly')}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="space-y-2 rounded-md border border-border bg-panel-2 p-2">
+        {!loaded && checking ? (
+          <p className="px-1 py-1.5 text-xs text-fg-faint">
+            {t(locale, 'settings.cliUpdate.checking')}
+          </p>
+        ) : (
+          statuses.map((status) => {
+            const label = cliUpdateAdapterLabel(status.adapter, status.label);
+            const isUpdating = updatingAdapter === status.adapter;
+            const current = status.installedVersion ?? t(locale, 'settings.cliUpdate.unknown');
+            const latest = status.latestVersion ?? t(locale, 'settings.cliUpdate.unknown');
+            return (
+              <div
+                key={status.adapter}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-panel px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-xs font-medium text-fg">
+                    <span>{label}</span>
+                    {status.updateAvailable ? (
+                      <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
+                        {t(locale, 'settings.cliUpdate.newVersion')}
+                      </span>
+                    ) : status.installedVersion && status.latestVersion ? (
+                      <span className="rounded-full bg-panel-2 px-1.5 py-0.5 text-[10px] text-fg-faint">
+                        {t(locale, 'settings.cliUpdate.upToDate')}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-fg-faint">
+                    {t(locale, 'settings.cliUpdate.currentLabel')} {current}
+                    {'  ·  '}
+                    {t(locale, 'settings.cliUpdate.latestLabel')} {latest}
+                  </p>
+                  {status.error && (
+                    <p className="mt-0.5 truncate text-[10px] text-[#f78b8b]" title={status.error}>
+                      {status.error}
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={!status.updateAvailable || isUpdating}
+                  onClick={() => void runUpdate(status.adapter)}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                    status.updateAvailable && !isUpdating
+                      ? 'border-accent bg-accent/15 text-fg hover:bg-accent/25'
+                      : 'cursor-not-allowed border-border bg-panel-2 text-fg-faint',
+                  )}
+                >
+                  <UploadCloud size={13} strokeWidth={2.1} />
+                  {isUpdating
+                    ? t(locale, 'settings.cliUpdate.updating')
+                    : t(locale, 'settings.cliUpdate.updateButton')}
+                </button>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => void runCheck()}
+          disabled={checking}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <RefreshCw size={13} strokeWidth={2.1} className={checking ? 'animate-spin' : undefined} />
+          {checking
+            ? t(locale, 'settings.cliUpdate.checking')
+            : t(locale, 'settings.cliUpdate.refresh')}
+        </button>
+        {message && (
+          <p className="min-w-0 flex-1 truncate text-right text-[11px] text-fg-faint">{message}</p>
         )}
       </div>
     </div>
@@ -11005,7 +11209,7 @@ function AboutSettings({ locale }: { locale: Locale }) {
             ) : status.updateAvailable && status.manifest ? (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-accent-2">{t(locale, 'settings.aboutUpdateFound')} v{status.latest}</span>
-                <button type="button" onClick={() => void openDownload(status.manifest!.url)}
+                <button type="button" onClick={() => void openDownload(pickDownloadUrl(status.manifest))}
                   className="flex items-center gap-1.5 rounded-md border border-accent-2/50 bg-accent-2/15 px-2.5 py-1 font-semibold text-accent-2 transition-opacity hover:opacity-90">
                   <DownloadCloud size={14} />{t(locale, 'settings.aboutDownload')}
                 </button>

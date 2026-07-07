@@ -87,7 +87,9 @@ ${ASK_CLOSE}
 - 一次只问一个交互块。
 - 块内必须是单个合法 JSON，不要加注释或多余文字。
 - 如果你已经掌握足够信息（例如下方已给出用户的上一次回答），就不要再提问，直接给出最终结果。
-- 不需要用户参与时，正常输出结果即可，不要输出交互块。`;
+- 不需要用户参与时，正常输出结果即可，不要输出交互块。
+- 严禁把"额外建议""推荐下一步""你可以试试 X 或 Y"之类的收尾性建议包成交互块。只有当缺少用户输入就**无法继续**、且你无法自行合理假设时才出交互块；主问题已回答完后，任何追加建议一律用普通文字陈述，不要变成可点击选项。
+- 不要为了"显得在征求用户意见"而出交互块；只有真正阻塞、必须用户拍板才能继续时才出。`;
 
 /** Coerce an unknown value into a clean string[]; drops empties, de-dupes. */
 function toOptions(value: unknown): string[] {
@@ -223,7 +225,33 @@ export function liveProse(text: string): string {
 const RUNTIME_HEARTBEAT_LINE_RE =
   /^\s*(?:⏳\s*)?仍在运行[.…。]*(?:[（(]已\s*\d+\s*s[）)])?\s*$/u;
 
-/** Keep only a tail-position runtime heartbeat; drop stale "still running" lines. */
+/**
+ * Strip ephemeral progress markers the Rust backend injects via the
+ * `ai-cli-progress` event channel — e.g. "⏳ 正在请求模型…",
+ * "⚙ 会话已启动（…），开始处理…", "⚠ …". These lines are meant to be
+ * live-only placeholders and must never leak into the finalized chat
+ * bubble. They become a problem when the CLI's terminal `result` field
+ * is empty and the chat loop falls back to the streamed `live` buffer
+ * (which contains those markers) — without this strip the bubble would
+ * show "⏳ 正在请求模型…" permanently while the node is actually parked
+ * on a `<<UGS_ASK>>` interaction. Tool-patch sentinels (`<<UGS_TOOL>>`)
+ * are not touched here; they are extracted separately via
+ * `extractToolSentinels`.
+ */
+export function stripCliProgressMarkers(text: string): string {
+  if (!text) return text;
+  const lines = text.split(/\r?\n/u);
+  const kept = lines.filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true; // preserve blank structural lines
+    return !/^(?:⏳|⚙|⚠)/u.test(trimmed);
+  });
+  return kept.join('\n').trim();
+}
+
+/**
+ * Keep only a tail-position runtime heartbeat; drop stale "still running" lines.
+ */
 export function compactRuntimeHeartbeatLines(text: string): string {
   if (!text.includes('仍在运行')) return text;
   const lines = text.split(/\r?\n/u);

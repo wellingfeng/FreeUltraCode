@@ -9,6 +9,7 @@ import {
   usageReportFromCliUsage,
   usageReportFromCodex,
   usageReportFromOpenAI,
+  usageTurnFromReport,
   usageTurnFromSnapshots,
 } from './usageMeter';
 
@@ -263,6 +264,25 @@ describe('usage meter', () => {
     expect(delta.totalTokens).toBeGreaterThan(0);
     expect(delta.estimated).toBe(true);
     expect(delta.cachePercent).toBe(0);
+  });
+
+  it('derives a message usage delta directly from a real usage report', () => {
+    const delta = usageTurnFromReport(
+      usageReportFromOpenAI({
+        prompt_tokens: 200,
+        completion_tokens: 50,
+        total_tokens: 250,
+        prompt_tokens_details: { cached_tokens: 80 },
+      })!,
+      { estimated: false },
+    );
+
+    expect(delta.inputTokens).toBe(200);
+    expect(delta.outputTokens).toBe(50);
+    expect(delta.totalTokens).toBe(250);
+    expect(delta.cachedInputTokens).toBe(80);
+    expect(delta.cachePercent).toBe(40);
+    expect(delta.estimated).toBe(false);
   });
 
   it('rebuilds a session snapshot from persisted message turns', () => {

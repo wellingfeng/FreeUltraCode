@@ -4,22 +4,26 @@ import {
   usageReportFromOpenAI,
   type ModelUsageReport,
 } from '@/lib/usageMeter';
+import { canUseProviderDirectTransport } from '@/lib/apiConfig';
 
 export async function completeOpenAICompatible(
   request: GatewayTextRequest,
 ): Promise<string> {
   const apiKey = request.route.apiKey?.trim();
-  if (!apiKey) throw new Error('NO_API_KEY');
+  if (!canUseProviderDirectTransport(apiKey, request.route.baseUrl)) {
+    throw new Error('NO_API_KEY');
+  }
   const model = request.route.model?.trim();
   if (!model) throw new Error('NO_MODEL');
 
   const endpoint = resolveChatCompletionsEndpoint(request.route.baseUrl);
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  };
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   let res = await fetch(endpoint, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify(openAICompatibleBody(request, model, true)),
     signal: request.signal,
   });
@@ -29,10 +33,7 @@ export async function completeOpenAICompatible(
     if (shouldRetryWithoutStreamUsage(res.status, detail)) {
       res = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${apiKey}`,
-        },
+        headers,
         body: JSON.stringify(openAICompatibleBody(request, model, false)),
         signal: request.signal,
       });

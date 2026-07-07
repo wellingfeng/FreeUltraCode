@@ -2,6 +2,10 @@ name: Build desktop apps
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version to bump (e.g. 0.5.5); leave empty to skip bump and build current files.
+        required: false
   push:
     tags:
       - "v*"
@@ -14,6 +18,49 @@ defaults:
     working-directory: app
 
 jobs:
+  bump-main:
+    name: Sync version files on main
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout main (writable)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+        # Override defaults.working-directory for checkout-only step.
+        working-directory: ${{ github.workspace }}
+
+      - name: Extract version
+        id: ver
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          V=""
+          if [ -n "$INPUT_VERSION" ]; then V="$INPUT_VERSION"; fi
+          if [ -z "$V" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> $GITHUB_OUTPUT
+
+      - name: Bump package.json / tauri.conf.json / Cargo.toml / version.txt
+        if: steps.ver.outputs.version != ''
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        working-directory: ${{ github.workspace }}
+        run: node .github/scripts/bump-version.mjs "$VERSION"
+
+      - name: Commit & push to main
+        if: steps.ver.outputs.version != ''
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml app/version.txt
+          git commit -m "chore(release): bump version to ${{ steps.ver.outputs.version }}" || exit 0
+          git push origin main
+
   build:
     name: Build ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runner }}
@@ -50,6 +97,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Extract version
+        id: ver
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          V=""
+          if [ -n "$INPUT_VERSION" ]; then V="$INPUT_VERSION"; fi
+          if [ -z "$V" ] && [[ "${GITHUB_REF}" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> $GITHUB_OUTPUT
+
+      - name: Bump version files (in-place, no commit)
+        if: steps.ver.outputs.version != ''
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        working-directory: ${{ github.workspace }}
+        run: node .github/scripts/bump-version.mjs "$VERSION"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -114,3 +180,43 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release-assets/**/*
+
+  update-manifest:
+    name: Sync version.txt with real asset URLs
+    runs-on: ubuntu-latest
+    needs: publish
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout main (writable)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+        working-directory: ${{ github.workspace }}
+
+      - name: Resolve tag name
+        id: tag
+        working-directory: ${{ github.workspace }}
+        run: echo "name=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Pull real asset URLs and rewrite version.txt
+        working-directory: ${{ github.workspace }}
+        run: node .github/scripts/update-manifest.mjs "${{ steps.tag.outputs.name }}"
+
+      - name: Commit & push manifest to main
+        working-directory: ${{ github.workspace }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/version.txt
+          if git diff --cached --quiet; then
+            echo "update-manifest: no changes, skipping commit"
+            exit 0
+          fi
+          git commit -m "chore(release): sync version.txt asset URLs for ${{ steps.tag.outputs.name }}"
+          git push origin main

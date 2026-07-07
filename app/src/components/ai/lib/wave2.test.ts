@@ -307,6 +307,76 @@ describe('segmentMessage tool segments', () => {
     expect(segmentMessage('just prose')).toEqual([{ type: 'answer', text: 'just prose' }]);
   });
 
+  it('turns Claude XML invoke blocks into tool cards', () => {
+    const text =
+      '先撤销实验。\n' +
+      'count\n' +
+      '<invoke name="Edit">\n' +
+      '<parameter name="file_path">E:\\project\\Moon\\Shadow.usf</parameter>\n' +
+      '<parameter name="new_string">OutColor = 1;</parameter>\n' +
+      '<parameter name="old_string">OutColor = 0;</parameter>\n' +
+      '<parameter name="replace_all">false</parameter>\n' +
+      '</invoke>\n' +
+      '继续分析。';
+    const segs = segmentMessage(text);
+    expect(segs.map((s) => s.type)).toEqual(['answer', 'tools', 'answer']);
+    expect(segs[0]).toEqual({ type: 'answer', text: '先撤销实验。' });
+    expect(segs[2]).toEqual({ type: 'answer', text: '继续分析。' });
+    const tools = segs[1];
+    expect(tools.type).toBe('tools');
+    if (tools.type === 'tools') {
+      expect(tools.events[0]).toMatchObject({
+        name: 'Edit',
+        subject: 'E:\\project\\Moon\\Shadow.usf',
+        status: 'done',
+        args: {
+          file_path: 'E:\\project\\Moon\\Shadow.usf',
+          replace_all: 'false',
+        },
+      });
+    }
+    for (const s of segs) {
+      if (s.type === 'answer') {
+        expect(s.text).not.toContain('<invoke');
+        expect(s.text).not.toContain('<parameter');
+        expect(s.text).not.toContain('count');
+      }
+    }
+  });
+
+  it('leaves inline XML examples as prose', () => {
+    expect(segmentMessage('Run <invoke name="Bash"></invoke> now.')).toEqual([
+      { type: 'answer', text: 'Run <invoke name="Bash"></invoke> now.' },
+    ]);
+  });
+
+  it('leaves fenced XML examples as prose', () => {
+    const text =
+      '示例：\n```xml\n<invoke name="Bash">\n<parameter name="command">ls</parameter>\n</invoke>\n```';
+    const segs = segmentMessage(text);
+    expect(segs).toEqual([{ type: 'answer', text }]);
+  });
+
+  it('turns a half-streamed XML invoke tail into a running card while live', () => {
+    const text =
+      '先定位。\n' +
+      '<invoke name="Bash">\n' +
+      '<parameter name="command">rg -n "Shadow" app/src</parameter>\n' +
+      '<parameter name="description">定位 shadow';
+    const segs = segmentMessage(text, true);
+    expect(segs.map((s) => s.type)).toEqual(['answer', 'tools']);
+    expect(segs[0]).toEqual({ type: 'answer', text: '先定位。' });
+    const tools = segs[1];
+    expect(tools.type).toBe('tools');
+    if (tools.type === 'tools') {
+      expect(tools.events[0]).toMatchObject({
+        name: 'Bash',
+        subject: 'rg -n "Shadow" app/src',
+        status: 'running',
+      });
+    }
+  });
+
   it('shows a half-streamed trailing tool sentinel as a running card while live', () => {
     const text =
       'Writing the skill file.\n' +

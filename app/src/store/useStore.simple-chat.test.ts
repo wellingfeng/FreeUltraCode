@@ -38,6 +38,7 @@ const tauriMocks = vi.hoisted(() => ({
 }));
 
 const notificationMocks = vi.hoisted(() => ({
+  dismissSessionWaitingInputNotification: vi.fn(),
   notifySessionComplete: vi.fn(),
 }));
 
@@ -73,12 +74,16 @@ vi.mock('@/lib/sessionNotification', async () => {
   );
   return {
     ...actual,
+    dismissSessionWaitingInputNotification:
+      notificationMocks.dismissSessionWaitingInputNotification,
     notifySessionComplete: notificationMocks.notifySessionComplete,
   };
 });
 
 import { useStore } from './useStore';
 import {
+  gatewayRouteHeader,
+  gatewayRouteLine,
   isActiveAiEditingSession,
   isWorkflowReadOnly,
   __resetSimpleChatRuntimeForTests,
@@ -182,6 +187,7 @@ afterEach(async () => {
   tauriMocks.freeProxyEnsure.mockReset();
   tauriMocks.isTauri.mockReset();
   tauriMocks.tauriAvailable.mockReset();
+  notificationMocks.dismissSessionWaitingInputNotification.mockReset();
   notificationMocks.notifySessionComplete.mockReset();
   tauriMocks.freeProxyEnsure.mockResolvedValue({ port: 8766, token: 'test-token' });
   tauriMocks.isTauri.mockReturnValue(false);
@@ -224,6 +230,49 @@ describe('simple-workflow chat mode', () => {
     expect(record?.title).toBe('新会话');
     expect(record?.isWorkflow).toBe(false);
     expect(record?.workflow).toBeUndefined();
+  });
+
+  it('keeps visible chat messages while history activation is waiting for disk init', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const existingMessages: Message[] = [
+      { id: 'm_user_pending', role: 'user', text: '之前的问题', createdAt: 1 },
+      {
+        id: 'm_ai_pending',
+        role: 'assistant',
+        text: '之前的回答',
+        createdAt: 2,
+      },
+    ];
+    const session: Session = {
+      id: 's_pending_history',
+      workspaceId: workspace.id,
+      title: '历史会话',
+      createdAt: 1,
+      updatedAt: 2,
+      isWorkflow: false,
+      messageCount: existingMessages.length,
+      preview: existingMessages.at(-1)?.text,
+    };
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: false,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: 's_current',
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      messages: existingMessages,
+      workflow: simpleBlueprint('当前聊天'),
+      locale: 'zh-CN',
+    });
+
+    useStore.getState().selectSession(session.id, workspace.id);
+
+    expect(useStore.getState().activeSessionId).toBe(session.id);
+    expect(useStore.getState().messages).toEqual(existingMessages);
+    expect(useStore.getState().workflow.meta.simple).toBe(true);
   });
 
   it('branches a chat session from a selected assistant reply', async () => {
@@ -1991,6 +2040,62 @@ describe('simple-workflow chat mode', () => {
     expect(assistant?.text).toContain('这是直接的回答。');
   });
 
+  it('stamps direct simple-chat usage from the gateway usage callback', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      request.onUsage?.({
+        inputTokens: 100,
+        outputTokens: 20,
+        totalTokens: 120,
+        cacheReadInputTokens: 40,
+      });
+      return '带 usage 的回答。';
+    });
+
+    useStore.getState().sendPrompt('测试 direct usage 回填');
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore.getState().messages.some((m) => m.role === 'assistant'),
+      'direct usage simple chat reply',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((m) => m.role === 'assistant');
+    expect(assistant?.usage?.inputTokens).toBe(100);
+    expect(assistant?.usage?.outputTokens).toBe(20);
+    expect(assistant?.usage?.totalTokens).toBe(120);
+    expect(assistant?.usage?.cachedInputTokens).toBe(40);
+    expect(assistant?.usage?.cachePercent).toBe(40);
+    expect(assistant?.usage?.estimated).toBe(false);
+  });
+
+  it('stamps estimated direct simple-chat usage when the gateway has no usage callback data', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    gatewayMocks.completeGatewayText.mockResolvedValue('没有 usage 回调的回答。');
+
+    useStore.getState().sendPrompt('测试 direct usage 估算回填');
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore.getState().messages.some((m) => m.role === 'assistant'),
+      'estimated direct usage simple chat reply',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((m) => m.role === 'assistant');
+    expect(assistant?.usage?.totalTokens).toBeGreaterThan(0);
+    expect(assistant?.usage?.cachedInputTokens).toBe(0);
+    expect(assistant?.usage?.cachePercent).toBe(0);
+    expect(assistant?.usage?.estimated).toBe(true);
+  });
+
   it('keeps simple-chat interaction widgets visible while waiting for input', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     mockDirectRoute();
@@ -2030,6 +2135,7 @@ describe('simple-workflow chat mode', () => {
     );
 
     expect(useStore.getState().waitingInputSessions).toHaveLength(1);
+    const waitingSessionKey = useStore.getState().waitingInputSessions[0]!;
     const interactionMessage = useStore
       .getState()
       .messages.find((message) => message.interaction);
@@ -2068,6 +2174,12 @@ describe('simple-workflow chat mode', () => {
     expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(2);
     expect(requests[1].userContent).toContain('用户的回答：继续连接');
     expect(useStore.getState().waitingInputSessions).toHaveLength(0);
+    expect(
+      notificationMocks.dismissSessionWaitingInputNotification,
+    ).toHaveBeenCalledWith({
+      workspaceId: waitingSessionKey.workspaceId ?? null,
+      sessionId: waitingSessionKey.sessionId ?? null,
+    });
   });
 
   it('does not pause simple chat on an unterminated interaction block', async () => {
@@ -3466,8 +3578,8 @@ describe('simple-workflow chat mode', () => {
     const firstAssistant = useStore
       .getState()
       .messages.find((m) => m.role === 'assistant');
-    expect(firstAssistant?.routeLabel).toBe('OpenRouter · Default · z-ai/glm-4.6');
-    expect(firstAssistant?.text).toContain('⚙ 路由：OpenRouter · Default · 模型：z-ai/glm-4.6');
+    expect(firstAssistant?.routeLabel).toBe('OpenRouter · z-ai/glm-4.6');
+    expect(firstAssistant?.text).toContain('⚙ 路由：OpenRouter · 模型：z-ai/glm-4.6');
 
     useStore.getState().sendPrompt('第二问');
     await waitFor(
@@ -3481,6 +3593,20 @@ describe('simple-workflow chat mode', () => {
     expect(secondUserContent).not.toContain('<<UGS_TOOL>>');
     expect(secondUserContent).not.toContain('free_proxy');
     expect(secondUserContent).not.toContain('⏱');
+  });
+
+  it('omits legacy channel names from visible route labels', () => {
+    const route = {
+      adapter: 'claude-code' as const,
+      modelClass: 'opus' as const,
+      model: 'claude-opus-4.8',
+      providerName: 'Kuro',
+      channelName: 'claude-sonnet-5',
+      label: 'Claude Code · Kuro · claude-sonnet-5 · opus',
+    };
+
+    expect(gatewayRouteHeader(route)).toBe('Kuro · claude-opus-4.8');
+    expect(gatewayRouteLine(route)).toBe('⚙ 路由：Kuro · 模型：claude-opus-4.8');
   });
 
   it('surfaces free proxy startup failures before invoking the CLI', async () => {
@@ -4069,6 +4195,63 @@ describe('simple-workflow chat mode', () => {
       .messages.find((m) => m.role === 'assistant' && m.text.includes('仓库状态'));
     expect(assistant?.text.indexOf('<<UGS_TOOL>>')).toBeLessThan(
       assistant?.text.indexOf('结论：仓库状态已经检查完。') ?? -1,
+    );
+  });
+
+  it('converts streamed Claude XML invoke blocks into persisted tool sentinels', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      modelClass: 'sonnet',
+      model: 'sonnet',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code',
+      source: 'fallback',
+      cliCommand: 'claude',
+    });
+    const editedPath = 'E:\\project\\Moon\\ShadowProjectionPixelShader.usf';
+    tauriMocks.aiEditViaCli.mockImplementation(async (_prompt, _adapter, opts) => {
+      opts.onProgress?.(
+        [
+          '先撤销实验。',
+          'count',
+          '<invoke name="Edit">',
+          `<parameter name="file_path">${editedPath}</parameter>`,
+          '<parameter name="new_string">OutColor = 1;</parameter>',
+          '<parameter name="old_string">OutColor = 0;</parameter>',
+          '<parameter name="replace_all">false</parameter>',
+          '</invoke>',
+        ].join('\n'),
+      );
+      opts.onProgress?.('\n结论：已恢复正式修复。');
+      return '结论：已恢复正式修复。';
+    });
+
+    useStore.getState().sendPrompt('恢复 shader 修复');
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((m) => m.role === 'assistant' && m.text.includes('正式修复')),
+      'CLI final message with converted XML tool',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((m) => m.role === 'assistant' && m.text.includes('正式修复'));
+    expect(assistant?.text).toContain('<<UGS_TOOL>>');
+    expect(assistant?.text).not.toContain('<invoke');
+    expect(assistant?.text).not.toContain('<parameter');
+    expect(assistant?.text).not.toMatch(/^\s*count\s*$/m);
+    const files = extractSessionFiles(useStore.getState().messages);
+    expect(files.some((file) => file.path === editedPath && file.action === 'edited')).toBe(
+      true,
     );
   });
 

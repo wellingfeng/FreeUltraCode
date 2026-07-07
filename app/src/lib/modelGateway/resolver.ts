@@ -5,8 +5,8 @@ import {
   type RuntimeAdapterId,
 } from '@/lib/adapters';
 import {
+  canUseProviderDirectTransport,
   getActiveProviderId,
-  isProviderBaseUrlValid,
   providerBaseUrlHost,
   type ProviderKind,
 } from '@/lib/apiConfig';
@@ -679,7 +679,7 @@ function gatewayChannelAvailable(
   if (transport === 'anthropic' || transport === 'openai-compatible') {
     const apiKey = (channel.apiKey ?? '').trim();
     const baseUrl = (channel.route.baseUrl ?? channel.baseUrl ?? '').trim();
-    return apiKey.length > 0 && isProviderBaseUrlValid(baseUrl);
+    return canUseProviderDirectTransport(apiKey, baseUrl);
   }
   if (transport === 'cli') {
     if (!isCliAdapterAvailable(provider.adapter, getCliRuntimeSnapshot())) {

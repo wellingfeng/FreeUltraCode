@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import RawCodeBlock from './RawCodeBlock';
 import MermaidBlock from './MermaidBlock';
+import SvgBlock from './SvgBlock';
 import ComfyGraphBlock from './ComfyGraphBlock';
 import WorldModelBlock from './WorldModelBlock';
 
@@ -61,6 +62,10 @@ export default function CodeBlock({
 
   if (normalizedLang === 'mermaid' || normalizedLang === 'mmd') {
     return <MermaidBlock code={raw} />;
+  }
+
+  if (normalizedLang === 'svg') {
+    return <SvgBlock code={raw} />;
   }
 
   if (normalizedLang === 'comfyui' || normalizedLang === 'comfy') {

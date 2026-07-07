@@ -1,5 +1,6 @@
 import type { IRRunStatus } from '@/core/ir';
 import {
+  dismissSessionWaitingInputNotificationDesktop,
   focusMainWindow,
   notifySessionCompleteDesktop,
   onSessionNotificationClicked,
@@ -35,6 +36,7 @@ let tauriClickListenerPromise: Promise<void> | null = null;
 let sessionNotificationClickHandler:
   | ((payload: SessionNotificationClickPayload) => void)
   | null = null;
+const waitingInputWebNotifications = new Map<string, Notification>();
 
 export function isNotifiableCompletionStatus(
   status: IRRunStatus | undefined,
@@ -79,6 +81,10 @@ function notificationTarget(
     workspaceId: input.workspaceId ?? null,
     sessionId: input.sessionId ?? null,
   };
+}
+
+function notificationTargetKey(target: SessionNotificationClickPayload): string {
+  return `${target.workspaceId ?? ''}\u0000${target.sessionId ?? ''}`;
 }
 
 async function focusNotificationTarget(): Promise<void> {
@@ -173,13 +179,29 @@ async function notifyViaWeb(input: SessionCompletionNotificationInput): Promise<
   }
   if (NotificationCtor.permission !== 'granted') return;
   const text = sessionCompletionNotificationText(input);
+  const target = notificationTarget(input);
+  const targetKey = notificationTargetKey(target);
+  if (input.status === 'waitingInput') {
+    waitingInputWebNotifications.get(targetKey)?.close();
+  }
   const notification = new NotificationCtor(text.title, { body: text.body });
+  if (input.status === 'waitingInput') {
+    waitingInputWebNotifications.set(targetKey, notification);
+  }
   notification.onclick = () => {
     notification.close();
-    handleSessionNotificationClick(notificationTarget(input));
+    if (input.status === 'waitingInput') {
+      waitingInputWebNotifications.delete(targetKey);
+    }
+    handleSessionNotificationClick(target);
   };
   globalThis.setTimeout(
-    () => notification.close(),
+    () => {
+      notification.close();
+      if (input.status === 'waitingInput') {
+        waitingInputWebNotifications.delete(targetKey);
+      }
+    },
     WEB_NOTIFICATION_CLOSE_MS[input.status],
   );
 }
@@ -192,5 +214,20 @@ export async function notifySessionComplete(
     await notifyViaWeb(input);
   } catch {
     /* Notification is best-effort; never fail the completed session. */
+  }
+}
+
+export async function dismissSessionWaitingInputNotification(
+  target: SessionNotificationClickPayload,
+): Promise<void> {
+  try {
+    const targetKey = notificationTargetKey(target);
+    waitingInputWebNotifications.get(targetKey)?.close();
+    waitingInputWebNotifications.delete(targetKey);
+    if (tauriAvailable()) {
+      await dismissSessionWaitingInputNotificationDesktop(target);
+    }
+  } catch {
+    /* Notification cleanup is best-effort. */
   }
 }

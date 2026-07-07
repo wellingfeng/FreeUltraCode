@@ -5,6 +5,7 @@ import ProjectFileTree from '@/panels/ProjectFileTree';
 import ScheduledTaskRunner from '@/components/ScheduledTaskRunner';
 import StatusBar from '@/components/StatusBar';
 import { primeCliRuntime } from '@/lib/cliConfig';
+import { primeCliUpdateStatus } from '@/lib/cliUpdateStatus';
 import {
   migrateLegacyBrandStorage,
   onSingleInstanceWarning,
@@ -50,6 +51,7 @@ export default function App() {
     if (!startupMigration.done) return;
     initHistory();
     void primeCliRuntime();
+    void primeCliUpdateStatus();
   }, [initHistory, startupMigration.done]);
 
   useEffect(() => {

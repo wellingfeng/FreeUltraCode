@@ -526,7 +526,7 @@ function legacyProviderToGateway(provider: LegacyProvider): GatewayProvider {
     channels: [
       {
         id: 'default',
-        name: provider.model?.trim() || 'Default',
+        name: 'Default',
         apiKey: provider.apiKey ?? '',
         baseUrl: provider.baseUrl ?? '',
         model: provider.model,

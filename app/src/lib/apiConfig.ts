@@ -788,6 +788,59 @@ export function providerBaseUrlHost(baseUrl: string): string {
   }
 }
 
+export function isProviderBaseUrlLocal(baseUrl: string): boolean {
+  const raw = baseUrl.trim();
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (
+      host === 'localhost' ||
+      host.endsWith('.localhost') ||
+      host === 'host.docker.internal' ||
+      host === '::1' ||
+      host === '0:0:0:0:0:0:0:1'
+    ) {
+      return true;
+    }
+    if (
+      host.includes(':') &&
+      (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:'))
+    ) {
+      return true;
+    }
+    const octets = host.split('.').map((part) => Number(part));
+    if (
+      octets.length !== 4 ||
+      octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+    ) {
+      return false;
+    }
+    const [a, b] = octets;
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function canUseProviderDirectTransport(
+  apiKey: string | undefined,
+  baseUrl: string | undefined,
+): boolean {
+  const normalizedBaseUrl = baseUrl?.trim() ?? '';
+  if (!isProviderBaseUrlValid(normalizedBaseUrl)) return false;
+  if ((apiKey ?? '').trim()) return true;
+  return isProviderBaseUrlLocal(normalizedBaseUrl);
+}
+
 export function getProviderRuntimeInfo(
   provider: Pick<Provider, 'apiKey' | 'baseUrl'> &
     Partial<Pick<Provider, 'kind' | 'transport'>>,
@@ -798,6 +851,10 @@ export function getProviderRuntimeInfo(
   const hasApiKey = provider.apiKey.trim().length > 0;
   const hasBaseUrl = provider.baseUrl.trim().length > 0;
   const baseUrlValid = isProviderBaseUrlValid(provider.baseUrl);
+  const canUseDirect = canUseProviderDirectTransport(
+    provider.apiKey,
+    provider.baseUrl,
+  );
   const canUseCliFallback = options.canUseCliFallback === true;
   const status: ProviderRuntimeStatus =
     kind === 'anthropic'
@@ -805,7 +862,7 @@ export function getProviderRuntimeInfo(
         ? baseUrlValid && canUseCliFallback
           ? 'cli'
           : 'unavailable'
-        : hasApiKey && baseUrlValid
+        : canUseDirect
           ? 'direct'
           : !hasApiKey && baseUrlValid && canUseCliFallback
             ? 'cli'

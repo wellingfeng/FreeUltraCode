@@ -27,9 +27,55 @@ export const APP_VERSION: string =
 /** Shape of the JSON in app/version.txt. */
 export interface VersionManifest {
   version: string;
+  /** Legacy single-URL field; kept as fallback for old manifests. */
   url: string;
   notes?: string;
   pubDate?: string;
+  /** Per-platform asset URLs (v0.5.5+ manifest). */
+  platforms?: {
+    windows?: string;
+    macos?: string;
+    linux?: string;
+  };
+}
+
+/** Coarse runtime platform bucket for asset selection. */
+type PlatformBucket = 'windows' | 'macos' | 'linux' | 'other';
+
+/** Detect the host platform from navigator signals. */
+function detectPlatform(): PlatformBucket {
+  const platform = (
+    typeof navigator !== 'undefined'
+      ? navigator.platform || ''
+      : ''
+  ).toLowerCase();
+  const ua =
+    typeof navigator !== 'undefined' ? navigator.userAgent.toLowerCase() : '';
+  if (platform.startsWith('win') || ua.includes('win')) return 'windows';
+  if (platform.startsWith('mac') || ua.includes('mac')) return 'macos';
+  if (platform.startsWith('linux') || ua.includes('linux')) return 'linux';
+  return 'other';
+}
+
+/**
+ * Pick the best download URL for the current platform.
+ *
+ * Preference order:
+ *  1. `manifest.platforms.<current>` (v0.5.5+ manifest)
+ *  2. `manifest.url` (legacy single-URL manifest, or releases/latest page)
+ *  3. RELEASES_URL (last-resort web page)
+ */
+export function pickDownloadUrl(manifest: VersionManifest | null): string {
+  if (manifest?.platforms) {
+    const bucket = detectPlatform();
+    if (bucket !== 'other') {
+      const direct = manifest.platforms[bucket];
+      if (direct) return direct;
+    }
+    // Unknown platform: send to releases page so the user can pick.
+    return manifest.url || RELEASES_URL;
+  }
+  return manifest?.url || RELEASES_URL;
 }
 
 /** Result of an update check; `error` is set when the network/parse failed. */
@@ -91,6 +137,7 @@ export async function fetchVersionManifest(
     url: data.url,
     notes: data.notes,
     pubDate: data.pubDate,
+    platforms: data.platforms,
   };
 }
 

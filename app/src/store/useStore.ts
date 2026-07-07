@@ -28,6 +28,7 @@ import {
   hasToolSentinel,
   type ToolEventPatch,
 } from '@/components/ai/lib/toolEvent';
+import { legacyXmlToolsToSentinels } from '@/components/ai/lib/legacyXmlTool';
 import {
   personalInstructionsBlock,
   personalInstructionsForSelection,
@@ -60,13 +61,16 @@ import {
   timeoutPolicyForSelection,
 } from '@/lib/modelSpeed';
 import {
+  estimateGatewayUsage,
   recordEstimatedModelUsageForSelection,
   recordModelUsageForRoute,
   mergeUsageReports,
   readUsageMeterSnapshot,
   usageReportFromCliUsage,
+  usageTurnFromReport,
   usageTurnFromSnapshots,
   type ModelUsageReport,
+  type UsageTurnDelta,
 } from '@/lib/usageMeter';
 import {
   appendStartUserInputs,
@@ -93,6 +97,7 @@ import {
   projectSettingsFromMetadata,
 } from '@/lib/projectSettings';
 import {
+  dismissSessionWaitingInputNotification,
   isNotifiableCompletionStatus,
   notifySessionComplete,
   setSessionNotificationClickHandler,
@@ -235,6 +240,7 @@ import {
   buildAssetCapabilityBlock,
   shouldUseAssetCapabilityBlockForPrompt,
 } from '@/lib/anthropic';
+import { runtimeAdapterLabel, type RuntimeAdapterId } from '@/lib/adapters';
 import { renderMemorySnapshot, applyMemoryWrites } from '@/lib/memoryStore';
 import {
   MEMORY_WRITE_INSTRUCTION,
@@ -267,6 +273,7 @@ import {
   formatAnswerForPrompt,
   liveProse,
   parseInteraction,
+  stripCliProgressMarkers,
   stripInteraction,
   summarizeAnswer,
   type InteractionAnswer,
@@ -3091,7 +3098,8 @@ async function activateHistorySession(
       })();
       const fallbackPatch = !targetSession?.isWorkflow
         ? {
-            messages: [],
+            // History is still initializing; keep the visible chat transcript
+            // until the persisted record is available instead of flashing blank.
             workflow: chatWorkflow(targetSession?.title, s.locale),
             ...emptyRunProgress(),
             mode: 'design' as const,
@@ -4735,15 +4743,59 @@ ${previousReply.slice(0, 4000)}
       workspaceId: ch.workspaceId,
       sessionId: ch.sessionId ?? undefined,
     };
+    let explicitUsageInputTokens = 0;
+    let explicitUsageOutputTokens = 0;
+    let explicitUsageTotalTokens = 0;
+    let explicitUsageCachedInputTokens = 0;
+    let explicitUsageRealInputTokens = 0;
+    let explicitUsageRealCachedInputTokens = 0;
+    const rememberExplicitUsage = (
+      report: ModelUsageReport,
+      options: { estimated?: boolean },
+    ) => {
+      const delta = usageTurnFromReport(report, options);
+      if (delta.totalTokens <= 0) return;
+      explicitUsageInputTokens += delta.inputTokens;
+      explicitUsageOutputTokens += delta.outputTokens;
+      explicitUsageTotalTokens += delta.totalTokens;
+      explicitUsageCachedInputTokens += delta.cachedInputTokens;
+      if (!delta.estimated) {
+        explicitUsageRealInputTokens += delta.inputTokens;
+        explicitUsageRealCachedInputTokens += delta.cachedInputTokens;
+      }
+    };
+    const explicitUsageDelta = (): UsageTurnDelta | null => {
+      if (explicitUsageTotalTokens <= 0) return null;
+      const estimated = explicitUsageRealInputTokens <= 0;
+      return {
+        inputTokens: explicitUsageInputTokens,
+        outputTokens: explicitUsageOutputTokens,
+        totalTokens: explicitUsageTotalTokens,
+        cachedInputTokens: explicitUsageCachedInputTokens,
+        cachePercent: estimated
+          ? 0
+          : (Math.min(
+              explicitUsageRealInputTokens,
+              explicitUsageRealCachedInputTokens,
+            ) /
+              explicitUsageRealInputTokens) *
+            100,
+        estimated,
+      };
+    };
     const stampUsageOnMessage = (
       messageId: string,
       before: ReturnType<typeof readUsageMeterSnapshot>,
+      explicit?: UsageTurnDelta | null,
     ) => {
       if (!messageId) return;
-      const delta = usageTurnFromSnapshots(
+      let delta = usageTurnFromSnapshots(
         before,
         readUsageMeterSnapshot(usageMeterContext),
       );
+      if (delta.totalTokens <= 0 && explicit && explicit.totalTokens > 0) {
+        delta = explicit;
+      }
       if (delta.totalTokens <= 0) return;
       ch.messages = ch.messages.map((m) =>
         m.id === messageId ? { ...m, usage: delta } : m,
@@ -4867,6 +4919,7 @@ ${previousReply.slice(0, 4000)}
       const startedAt = Date.now();
       let firstProgressAt: number | undefined;
       const runId = makeCliRunId();
+      let realUsage: ModelUsageReport | null = null;
       ch.cliRunIds.add(runId);
       try {
         const text = await completeGatewayText({
@@ -4884,7 +4937,15 @@ ${previousReply.slice(0, 4000)}
             firstProgressAt ??= Date.now();
             request.onDelta?.(chunk);
           },
+          onUsage: (report) => {
+            realUsage = mergeUsageReports(realUsage, report);
+          },
         });
+        rememberExplicitUsage(
+          realUsage ??
+            estimateGatewayUsage(request.system, request.userContent, text),
+          { estimated: !realUsage },
+        );
         recordModelCall(gatewaySelection, {
           elapsedMs: Date.now() - startedAt,
           firstProgressMs: firstProgressAt ? firstProgressAt - startedAt : undefined,
@@ -5467,8 +5528,16 @@ ${previousReply.slice(0, 4000)}
                   languageDirective: languageDirectiveReminder(state.locale),
                   onProgress: (chunk) => {
                     live += chunk;
+                    const displayLive = legacyXmlToolsToSentinels(live, {
+                      streamingTail: true,
+                    });
                     setActive(
-                      withAiTiming(routedBody(routeLine, liveProse(live) || '⟳ 生成中…')),
+                      withAiTiming(
+                        routedBody(
+                          routeLine,
+                          liveProse(displayLive) || '⟳ 生成中…',
+                        ),
+                      ),
                     );
                   },
                 });
@@ -5502,12 +5571,22 @@ ${previousReply.slice(0, 4000)}
                 }
               }
               if (nativeSession) nativeSession.started = true;
-              if (!answer.trim() && live.trim()) answer = live;
+              if (!answer.trim() && live.trim()) {
+                // The CLI's terminal `result` was empty but the stream
+                // captured content. Fall back to `live`, but first strip
+                // ephemeral progress markers (⏳ 正在请求模型… / ⚙ 会话已
+                // 启动…) the Rust backend injected via ai-cli-progress —
+                // otherwise they leak into the finalized bubble and linger
+                // beside a parked interaction widget.
+                answer = stripCliProgressMarkers(live);
+              }
               // Preserve any tool-call sentinels the CLI streamed this round so
               // the session-files list keeps the files this turn read/edited.
-              latestCliLive = live;
-              if (hasToolSentinel(live)) {
-                const { patches } = extractToolSentinels(live);
+              latestCliLive = legacyXmlToolsToSentinels(live, {
+                streamingTail: true,
+              });
+              if (hasToolSentinel(latestCliLive)) {
+                const { patches } = extractToolSentinels(latestCliLive);
                 for (const patch of patches.filter(isPersistentToolPatch)) {
                   streamedToolSentinels += encodeToolPatch(patch);
                 }
@@ -5577,7 +5656,13 @@ ${previousReply.slice(0, 4000)}
             // The model is asking the user to choose. Show whatever prose came
             // before the block, render the clickable widget, and wait.
             setActive(
-              withAiTiming(routedBody(routeLine, stripInteraction(answer) || '（请选择）')),
+              withAiTiming(
+                routedBody(
+                  routeLine,
+                  stripCliProgressMarkers(stripInteraction(answer)) ||
+                    '（请选择）',
+                ),
+              ),
               true,
             );
             persistAiMessages();
@@ -5680,7 +5765,7 @@ ${previousReply.slice(0, 4000)}
             { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
             'success',
           );
-          stampUsageOnMessage(turnMessageId, usageBefore);
+          stampUsageOnMessage(turnMessageId, usageBefore, explicitUsageDelta());
         } catch (err) {
           const msg = (err as Error)?.message ?? String(err);
           // The CLI failed (e.g. ConnectionRefused) before the model call
@@ -5886,7 +5971,7 @@ ${previousReply.slice(0, 4000)}
       } finally {
         // Stamp the whole turn's token usage onto the final assistant bubble so
         // the blueprint-generation path also keeps per-turn tokens/cache.
-        stampUsageOnMessage(activeId, usageBefore);
+        stampUsageOnMessage(activeId, usageBefore, explicitUsageDelta());
         removeAiEditChannel(ch);
       }
     })();
@@ -5935,6 +6020,7 @@ ${previousReply.slice(0, 4000)}
     if (resolver) {
       pendingInteractionResolvers.delete(messageId);
       syncWaitingInputSessions();
+      dismissWaitingInputNotificationIfSettled(resolver.sessionKey);
       resolver.resolve(answer);
       return;
     }
@@ -5968,6 +6054,7 @@ ${previousReply.slice(0, 4000)}
     if (resolver) {
       pendingInteractionResolvers.delete(messageId);
       syncWaitingInputSessions();
+      dismissWaitingInputNotificationIfSettled(resolver.sessionKey);
       resolver.resolve(null);
     }
   },
@@ -7085,6 +7172,40 @@ function syncWaitingInputSessions(): void {
   useStore.setState({ waitingInputSessions });
 }
 
+function sessionHasPendingInteraction(sessionKey: WorkflowSessionKey | null): boolean {
+  if (!sessionKey) return false;
+  const targetId = workflowSessionKeyId(sessionKey);
+  for (const entry of pendingInteractionResolvers.values()) {
+    if (entry.sessionKey && workflowSessionKeyId(entry.sessionKey) === targetId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function dismissWaitingInputNotificationIfSettled(
+  sessionKey: WorkflowSessionKey | null,
+): void {
+  if (!sessionKey || sessionHasPendingInteraction(sessionKey)) return;
+  void dismissSessionWaitingInputNotification({
+    workspaceId: sessionKey.workspaceId ?? null,
+    sessionId: sessionKey.sessionId ?? null,
+  });
+}
+
+function dismissSettledWaitingInputNotifications(
+  sessionKeys: Array<WorkflowSessionKey | null>,
+): void {
+  const seen = new Set<string>();
+  for (const sessionKey of sessionKeys) {
+    if (!sessionKey) continue;
+    const id = workflowSessionKeyId(sessionKey);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    dismissWaitingInputNotificationIfSettled(sessionKey);
+  }
+}
+
 /** Max times a single node may ask the user before we stop re-invoking it. */
 const MAX_INTERACTION_ROUNDS = 6;
 
@@ -7101,17 +7222,34 @@ function compactRoutePart(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function routeAdapterLabel(value: unknown): string {
+  if (value === 'claude-code' || value === 'codex' || value === 'gemini') {
+    return runtimeAdapterLabel(value as RuntimeAdapterId);
+  }
+  return compactRoutePart(value);
+}
+
+function stripRouteModelSuffix(label: string, model: string): string {
+  if (!label || !model) return label;
+  const suffix = ` · ${model}`;
+  return label.toLowerCase().endsWith(suffix.toLowerCase())
+    ? label.slice(0, -suffix.length).trim()
+    : label;
+}
+
+function visibleRouteName(route: RouteDisplay, model: string): string {
+  const provider = compactRoutePart(route.providerName);
+  if (provider) return provider;
+  const fallback =
+    stripRouteModelSuffix(compactRoutePart(route.label), model) ||
+    routeAdapterLabel(route.adapter);
+  return fallback || compactRoutePart(route.channelName);
+}
+
 export function gatewayRouteLine(route: RouteDisplay | null | undefined): string {
   if (!route) return '';
-  const provider = compactRoutePart(route.providerName);
-  const channel = compactRoutePart(route.channelName);
   const model = compactRoutePart(route.model) || compactRoutePart(route.modelClass);
-  const fallback = compactRoutePart(route.label) || compactRoutePart(route.adapter);
-  const routeParts =
-    provider && channel && provider !== channel
-      ? [provider, channel]
-      : [provider || channel || fallback];
-  const routeText = routeParts.filter(Boolean).join(' · ');
+  const routeText = visibleRouteName(route, model);
   if (routeText && model) return `⚙ 路由：${routeText} · 模型：${model}`;
   if (routeText) return `⚙ 路由：${routeText}`;
   return model ? `⚙ 模型：${model}` : '';
@@ -7119,15 +7257,8 @@ export function gatewayRouteLine(route: RouteDisplay | null | undefined): string
 
 export function gatewayRouteHeader(route: RouteDisplay | null | undefined): string {
   if (!route) return '';
-  const provider = compactRoutePart(route.providerName);
-  const channel = compactRoutePart(route.channelName);
   const model = compactRoutePart(route.model) || compactRoutePart(route.modelClass);
-  const fallback = compactRoutePart(route.label) || compactRoutePart(route.adapter);
-  const routeParts =
-    provider && channel && provider !== channel
-      ? [provider, channel]
-      : [provider || channel || fallback];
-  const routeText = routeParts.filter(Boolean).join(' · ');
+  const routeText = visibleRouteName(route, model);
   return [routeText, model].filter(Boolean).join(' · ');
 }
 
@@ -7141,23 +7272,39 @@ function finalChatBodyWithStreamedTools(
   latestLive: string,
   fallbackSentinels: string,
 ): string {
-  if (!fallbackSentinels) return finalProse;
-  const ordered = orderedFinalBodyFromLiveTools(finalProse, latestLive);
-  if (!ordered) return `${fallbackSentinels}${finalProse}`;
+  const finalWithXmlTools = legacyXmlToolsToSentinels(finalProse, {
+    streamingTail: true,
+  });
+  const finalXmlPatches = hasToolSentinel(finalWithXmlTools)
+    ? extractToolSentinels(finalWithXmlTools).patches.filter(isPersistentToolPatch)
+    : [];
+  const finalCleanProse =
+    finalXmlPatches.length > 0
+      ? extractToolSentinels(finalWithXmlTools).text.trim() || '（模型没有返回内容）'
+      : finalProse;
+  const allFallbackSentinels =
+    fallbackSentinels + finalXmlPatches.map(encodeToolPatch).join('');
+  if (!allFallbackSentinels) return finalWithXmlTools;
+
+  const normalizedLatestLive = legacyXmlToolsToSentinels(latestLive, {
+    streamingTail: true,
+  });
+  const ordered = orderedFinalBodyFromLiveTools(finalCleanProse, normalizedLatestLive);
+  const base = ordered ?? finalWithXmlTools;
 
   const orderedKeys = new Set(
-    extractToolSentinels(ordered).patches.map(toolPatchIdentity),
+    extractToolSentinels(base).patches.map(toolPatchIdentity),
   );
-  const missingPatches = extractToolSentinels(fallbackSentinels).patches.filter(
+  const missingPatches = extractToolSentinels(allFallbackSentinels).patches.filter(
     (patch) => !orderedKeys.has(toolPatchIdentity(patch)),
   );
-  if (missingPatches.length === 0) return ordered;
+  if (missingPatches.length === 0) return base;
   // These sentinels were collected this turn but aren't in `latestLive` (e.g.
   // tool calls from an earlier interaction round whose stream isn't part of the
   // final round). Chronologically they ran BEFORE this round's work and the
   // conclusion the model emits last, so prepend them — appending here would
   // wrongly render those tool cards below the final answer.
-  return `${missingPatches.map(encodeToolPatch).join('')}${ordered}`;
+  return `${missingPatches.map(encodeToolPatch).join('')}${base}`;
 }
 
 function isPersistentToolPatch(patch: ToolEventPatch): boolean {
@@ -7371,12 +7518,15 @@ function awaitInteraction(
 /** Cancel in-flight interactions for one run (run stopped): resolve null, mark them. */
 function resolvePendingInteractions(ch: RunChannel | null): void {
   if (!ch) return;
+  const settledSessionKeys: Array<WorkflowSessionKey | null> = [];
   for (const [id, entry] of [...pendingInteractionResolvers]) {
     if (entry.runKey !== ch.key) continue;
     pendingInteractionResolvers.delete(id);
+    settledSessionKeys.push(entry.sessionKey);
     entry.resolve(null);
   }
   syncWaitingInputSessions();
+  dismissSettledWaitingInputNotifications(settledSessionKeys);
   const mark = (m: Message): Message =>
     m.interaction && m.interactionStatus === 'pending'
       ? { ...m, interactionStatus: 'cancelled' }
@@ -7392,12 +7542,15 @@ function resolvePendingInteractions(ch: RunChannel | null): void {
  */
 function resolvePendingAiEditInteractions(ch: AiEditChannel | null): void {
   if (!ch) return;
+  const settledSessionKeys: Array<WorkflowSessionKey | null> = [];
   for (const [id, entry] of [...pendingInteractionResolvers]) {
     if (entry.aiEditKey !== ch.key) continue;
     pendingInteractionResolvers.delete(id);
+    settledSessionKeys.push(entry.sessionKey);
     entry.resolve(null);
   }
   syncWaitingInputSessions();
+  dismissSettledWaitingInputNotifications(settledSessionKeys);
   const mark = (m: Message): Message =>
     m.interaction && m.interactionStatus === 'pending'
       ? { ...m, interactionStatus: 'cancelled' }

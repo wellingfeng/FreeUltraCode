@@ -28,6 +28,10 @@ import RemoteWorkspaceStatusBadge, {
   remoteWorkspaceConnectionLabel,
 } from '@/components/RemoteWorkspaceStatusBadge';
 import { cn } from '@/lib/cn';
+import {
+  getCliUpdateSnapshot,
+  subscribeCliUpdateStatus,
+} from '@/lib/cliUpdateStatus';
 import { pickFolder } from '@/lib/folderPicker';
 import {
   getRemoteWorkspace,
@@ -400,6 +404,10 @@ export default function Sidebar({
   const deleteSession = useStore((s) => s.deleteSession);
   const deleteWorkspaceHistory = useStore((s) => s.deleteWorkspaceHistory);
   const assets = useSyncExternalStore(subscribeAssets, getAssets);
+  const cliUpdate = useSyncExternalStore(
+    subscribeCliUpdateStatus,
+    getCliUpdateSnapshot,
+  );
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
   const setWorkflowFavoriteSession = useStore(
     (s) => s.setWorkflowFavoriteSession,
@@ -1984,14 +1992,25 @@ export default function Sidebar({
           type="button"
           onClick={() => setSettingsOpen(true)}
           title={t(locale, 'settings.openHint')}
-          className={sidebarTextButtonClassName}
+          className={cn(sidebarTextButtonClassName, 'relative')}
         >
-          <SettingsGlyph
-            size={17}
-            className="shrink-0 text-fg-faint group-hover:text-fg"
-            aria-hidden="true"
-          />
+          <span className="relative shrink-0">
+            <SettingsGlyph
+              size={17}
+              className="text-fg-faint group-hover:text-fg"
+              aria-hidden="true"
+            />
+            {cliUpdate.hasUnseenUpdate && (
+              <span
+                className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-[#ef4444] ring-2 ring-panel"
+                aria-hidden="true"
+              />
+            )}
+          </span>
           <span>{t(locale, 'settings.open')}</span>
+          {cliUpdate.hasUnseenUpdate && (
+            <span className="sr-only">{t(locale, 'settings.cliUpdate.badgeHint')}</span>
+          )}
         </button>
         <button
           type="button"

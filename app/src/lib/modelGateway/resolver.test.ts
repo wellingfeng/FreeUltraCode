@@ -207,6 +207,40 @@ describe('model gateway compatibility', () => {
     expect(route.model).toBe('custom-model');
   });
 
+  it('resolves keyless localhost Anthropic-compatible providers as direct routes', () => {
+    window.localStorage.setItem(
+      PROVIDERS_STORAGE,
+      JSON.stringify([
+        {
+          id: 'local_anthropic',
+          kind: 'anthropic',
+          transport: 'direct',
+          name: 'Local Antigravity',
+          apiKey: '',
+          baseUrl: 'http://127.0.0.1:8045',
+          model: 'gemini-3-flash',
+        },
+      ]),
+    );
+
+    const selection = {
+      adapter: 'claude-code' as const,
+      modelClass: 'sonnet' as const,
+      providerId: 'local_anthropic',
+      channelId: 'default',
+    };
+
+    const direct = resolveDirectGatewayRoute(selection);
+
+    expect(direct).toMatchObject({
+      transport: 'anthropic',
+      mode: 'direct',
+      baseUrl: 'http://127.0.0.1:8045',
+      model: 'gemini-3-flash',
+    });
+    expect(direct?.apiKey).toBe('');
+  });
+
   it('uses a session model override without rewriting the provider default model', () => {
     window.localStorage.setItem(
       PROVIDERS_STORAGE,

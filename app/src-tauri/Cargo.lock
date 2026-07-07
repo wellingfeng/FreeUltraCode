@@ -124,6 +124,7 @@ dependencies = [
  "tiny_http",
  "toml 0.8.2",
  "ureq",
+ "windows",
  "windows-sys 0.61.2",
  "zip",
 ]

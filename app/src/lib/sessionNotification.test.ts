@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  dismissSessionWaitingInputNotification,
   isNotifiableCompletionStatus,
   notifySessionComplete,
   sessionCompletionNotificationText,
@@ -138,5 +139,43 @@ describe('notifySessionComplete', () => {
     });
 
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 15000);
+    await dismissSessionWaitingInputNotification({
+      workspaceId: null,
+      sessionId: null,
+    });
+  });
+
+  it('dismisses waiting-input web notifications by session target', async () => {
+    const close = vi.fn();
+
+    class MockNotification {
+      static permission: NotificationPermission = 'granted';
+      static requestPermission = vi.fn();
+
+      onclick: (() => void) | null = null;
+      close = close;
+
+      constructor(public title: string, public options?: NotificationOptions) {}
+    }
+
+    Object.defineProperty(globalThis, 'Notification', {
+      configurable: true,
+      writable: true,
+      value: MockNotification,
+    });
+
+    await notifySessionComplete({
+      status: 'waitingInput',
+      sessionTitle: '测试',
+      detail: '请选择',
+      workspaceId: 'w_1',
+      sessionId: 's_1',
+    });
+    await dismissSessionWaitingInputNotification({
+      workspaceId: 'w_1',
+      sessionId: 's_1',
+    });
+
+    expect(close).toHaveBeenCalledTimes(1);
   });
 });

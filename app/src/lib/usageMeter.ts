@@ -696,3 +696,26 @@ export function usageTurnFromSnapshots(
     estimated,
   };
 }
+
+export function usageTurnFromReport(
+  report: ModelUsageReport,
+  options: { estimated?: boolean } = {},
+): UsageTurnDelta {
+  const usage = cleanUsage(report);
+  const cachedInputTokens = Math.min(
+    usage.inputTokens,
+    usage.cacheReadInputTokens + usage.cacheCreationInputTokens,
+  );
+  const estimated = options.estimated !== false;
+  return {
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    cachedInputTokens,
+    cachePercent:
+      !estimated && usage.inputTokens > 0
+        ? (cachedInputTokens / usage.inputTokens) * 100
+        : 0,
+    estimated,
+  };
+}

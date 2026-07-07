@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, Maximize2, Minus, Plus, RotateCcw, Workflow } from 'lucide-react';
@@ -134,15 +135,21 @@ export default function MermaidBlock({ code }: { code: string }) {
  * rendered in-place with absolute inset-0). Wheel zooms toward the cursor;
  * pointer drag pans the canvas; toolbar offers zoom in/out, fit, and close.
  */
-function MermaidOverlay({
+export function MermaidOverlay({
   svg,
   locale,
+  title,
+  icon,
   onClose,
 }: {
   svg: string;
   locale: ReturnType<typeof useStore.getState>['locale'];
+  title?: string;
+  icon?: ReactNode;
   onClose: () => void;
 }) {
+  const titleText = title ?? t(locale, 'mermaid.diagram');
+  const iconEl = icon ?? <Workflow size={15} className="shrink-0 text-accent" />;
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
@@ -310,8 +317,8 @@ function MermaidOverlay({
         style={{ flexShrink: 0, position: 'relative', zIndex: 10 }}
       >
         <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-fg">
-          <Workflow size={15} className="shrink-0 text-accent" />
-          <span className="truncate">{t(locale, 'mermaid.diagram')}</span>
+          {iconEl}
+          <span className="truncate">{titleText}</span>
           <span className="hidden text-xs font-normal text-fg-dim sm:inline">
             · {t(locale, 'mermaid.expandHint')}
           </span>

@@ -57,6 +57,34 @@ describe('streamAnthropic multimodal content', () => {
     expect(bodyOf(fetchMock).messages[0].content).toBe('hello');
   });
 
+  it('allows keyless localhost proxies without sending x-api-key', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => mockAnthropicStream('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamAnthropic({
+      baseUrl: 'http://127.0.0.1:8045',
+      model: 'gemini-3-flash',
+      system: 's',
+      userContent: 'hello',
+    });
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error('Missing fetch call');
+    const init = call[1] as RequestInit;
+    expect(call[0]).toBe('http://127.0.0.1:8045/v1/messages');
+    expect((init.headers as Record<string, string>)['x-api-key']).toBeUndefined();
+  });
+
+  it('still rejects keyless official Anthropic calls', async () => {
+    const fetchMock = vi.fn(async () => mockAnthropicStream('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      streamAnthropic({ system: 's', userContent: 'hello' }),
+    ).rejects.toThrow('NO_API_KEY');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('emits an image block for data URLs and keeps the text block', async () => {
     const fetchMock = vi.fn(async () => mockAnthropicStream('ok'));
     vi.stubGlobal('fetch', fetchMock);

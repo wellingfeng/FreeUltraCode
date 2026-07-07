@@ -10,6 +10,7 @@ import {
   getProviderRuntimeInfo,
   importDefaultChannelsConfig,
   importProviders,
+  isProviderBaseUrlLocal,
   listProviders,
   readApiKey,
   readBaseUrl,
@@ -287,6 +288,28 @@ describe('apiConfig provider compatibility', () => {
     expect(
       getProviderRuntimeInfo(provider, { canUseCliFallback: false }).status,
     ).toBe('unavailable');
+  });
+
+  it('treats keyless localhost Anthropic providers as browser-direct runtime entries', () => {
+    const provider = {
+      kind: 'anthropic',
+      transport: 'direct',
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:8045',
+    } as const;
+
+    expect(
+      getProviderRuntimeInfo(provider, { canUseCliFallback: false }),
+    ).toMatchObject({
+      status: 'direct',
+      hasApiKey: false,
+      hasBaseUrl: true,
+      baseUrlHost: '127.0.0.1:8045',
+    });
+  });
+
+  it('does not treat public hostnames that start with IPv6 private prefixes as local', () => {
+    expect(isProviderBaseUrlLocal('https://fc-example.com/v1')).toBe(false);
   });
 
   it('does not expose CLI-backed Claude providers through browser-direct API readers', () => {

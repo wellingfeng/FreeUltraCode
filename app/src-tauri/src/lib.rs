@@ -33,6 +33,7 @@ const GITHUB_REPOSITORY_URL: &str = "https://github.com/wellingfeng/UltraGameStu
 const SINGLE_INSTANCE_WARNING_EVENT: &str = "single-instance-warning";
 const SINGLE_INSTANCE_WARNING_MESSAGE: &str = "只能同时运行一个进程";
 const SESSION_NOTIFICATION_CLICKED_EVENT: &str = "session-notification-clicked";
+const WAITING_INPUT_NOTIFICATION_GROUP: &str = "ugs-wait-input";
 const SLASH_CATALOG_UPDATED_EVENT: &str = "slash-catalog-updated";
 const WORKSPACE_VCS_SCAN_PROGRESS_EVENT: &str = "workspace-vcs-scan-progress";
 const LEGACY_BRAND_MIGRATION_PROGRESS_EVENT: &str = "legacy-brand-migration-progress";
@@ -84,6 +85,19 @@ fn emit_session_notification_click<R: Runtime>(
     let _ = app.emit(SESSION_NOTIFICATION_CLICKED_EVENT, payload);
 }
 
+fn waiting_input_notification_tag(
+    workspace_id: Option<&str>,
+    session_id: Option<&str>,
+) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(workspace_id.unwrap_or("").as_bytes());
+    hasher.update([0]);
+    hasher.update(session_id.unwrap_or("").as_bytes());
+    hex::encode(&hasher.finalize()[..8])
+}
+
 #[tauri::command]
 fn focus_main_window(app: AppHandle) {
     show_main_window(&app);
@@ -109,6 +123,15 @@ fn notify_session_complete(
         payload,
         SessionNotificationKind::from_arg(kind),
     )
+}
+
+#[tauri::command]
+fn dismiss_session_waiting_input_notification(
+    app: AppHandle,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<bool, String> {
+    dismiss_waiting_input_notification(app, workspace_id, session_id)
 }
 
 #[tauri::command]
@@ -168,14 +191,15 @@ fn show_session_completion_notification(
 ) -> Result<bool, String> {
     use tauri_winrt_notification::{Duration, Toast};
 
+    if kind == SessionNotificationKind::WaitingInput {
+        return show_windows_waiting_input_notification(app, title, body, payload);
+    }
+
     let app_id = windows_notification_app_id(&app);
-    let toast = Toast::new(&app_id).title(&title).text2(&body).duration(
-        if kind == SessionNotificationKind::WaitingInput {
-            Duration::Long
-        } else {
-            Duration::Short
-        },
-    );
+    let toast = Toast::new(&app_id)
+        .title(&title)
+        .text2(&body)
+        .duration(Duration::Short);
     toast
         .on_activated(move |_| {
             emit_session_notification_click(&app, payload.clone());
@@ -183,6 +207,102 @@ fn show_session_completion_notification(
         })
         .show()
         .map_err(|err| format!("发送 Windows 通知失败: {err}"))?;
+    Ok(true)
+}
+
+#[cfg(target_os = "windows")]
+fn escape_xml_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+#[cfg(target_os = "windows")]
+fn show_windows_waiting_input_notification(
+    app: AppHandle,
+    title: String,
+    body: String,
+    payload: SessionNotificationClickPayload,
+) -> Result<bool, String> {
+    use std::time::Duration as StdDuration;
+    use windows::{
+        core::{HSTRING, IInspectable},
+        Data::Xml::Dom::XmlDocument,
+        Foundation::TypedEventHandler,
+        UI::Notifications::{ToastNotification, ToastNotificationManager},
+    };
+
+    let app_id = windows_notification_app_id(&app);
+    let tag = waiting_input_notification_tag(
+        payload.workspace_id.as_deref(),
+        payload.session_id.as_deref(),
+    );
+    let xml = XmlDocument::new().map_err(|err| format!("创建 Windows 通知 XML 失败: {err}"))?;
+    xml.LoadXml(&HSTRING::from(format!(
+        r#"<toast duration="long">
+            <visual>
+                <binding template="ToastGeneric">
+                    <text id="1">{}</text>
+                    <text id="3">{}</text>
+                </binding>
+            </visual>
+        </toast>"#,
+        escape_xml_text(&title),
+        escape_xml_text(&body),
+    )))
+    .map_err(|err| format!("解析 Windows 通知 XML 失败: {err}"))?;
+    let toast = ToastNotification::CreateToastNotification(&xml)
+        .map_err(|err| format!("创建 Windows 通知失败: {err}"))?;
+    toast
+        .SetTag(&HSTRING::from(tag))
+        .map_err(|err| format!("设置 Windows 通知标签失败: {err}"))?;
+    toast
+        .SetGroup(&HSTRING::from(WAITING_INPUT_NOTIFICATION_GROUP))
+        .map_err(|err| format!("设置 Windows 通知分组失败: {err}"))?;
+    toast
+        .Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(
+            move |_, _| {
+                emit_session_notification_click(&app, payload.clone());
+                Ok(())
+            },
+        ))
+        .map_err(|err| format!("绑定 Windows 通知点击事件失败: {err}"))?;
+
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(app_id))
+        .and_then(|notifier| notifier.Show(&toast))
+        .map_err(|err| format!("发送 Windows 通知失败: {err}"))?;
+    std::thread::sleep(StdDuration::from_millis(10));
+    Ok(true)
+}
+
+#[cfg(target_os = "windows")]
+fn dismiss_waiting_input_notification(
+    app: AppHandle,
+    workspace_id: Option<String>,
+    session_id: Option<String>,
+) -> Result<bool, String> {
+    use windows::{core::HSTRING, UI::Notifications::ToastNotificationManager};
+
+    let app_id = windows_notification_app_id(&app);
+    let tag = waiting_input_notification_tag(workspace_id.as_deref(), session_id.as_deref());
+    ToastNotificationManager::History()
+        .and_then(|history| {
+            history.RemoveGroupedTagWithId(
+                &HSTRING::from(tag),
+                &HSTRING::from(WAITING_INPUT_NOTIFICATION_GROUP),
+                &HSTRING::from(app_id),
+            )
+        })
+        .map_err(|err| format!("关闭 Windows 等待输入通知失败: {err}"))?;
     Ok(true)
 }
 
@@ -217,6 +337,15 @@ fn show_session_completion_notification(
     Ok(true)
 }
 
+#[cfg(target_os = "macos")]
+fn dismiss_waiting_input_notification(
+    _app: AppHandle,
+    _workspace_id: Option<String>,
+    _session_id: Option<String>,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn show_session_completion_notification(
     _app: AppHandle,
@@ -224,6 +353,15 @@ fn show_session_completion_notification(
     _body: String,
     _payload: SessionNotificationClickPayload,
     _kind: SessionNotificationKind,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn dismiss_waiting_input_notification(
+    _app: AppHandle,
+    _workspace_id: Option<String>,
+    _session_id: Option<String>,
 ) -> Result<bool, String> {
     Ok(false)
 }
@@ -11869,6 +12007,330 @@ async fn validate_cli_path(path: String) -> Result<cli_runtime::CliPathValidatio
         .map_err(|e| format!("CLI 路径校验任务失败: {e}"))?
 }
 
+// ---------------------------------------------------------------------------
+// Model CLI version check + one-click update (claude / codex / gemini).
+//
+// Each vendor has a different update story:
+//   - claude: native `claude update` subcommand. The ai_cli spawn path
+//     already sets DISABLE_AUTOUPDATER/DISABLE_UPDATES so a live chat/run
+//     never races a mid-session self-update (see `disable_autoupdater`
+//     below); this command is the only place that intentionally triggers one.
+//   - codex: native `codex update` subcommand.
+//   - gemini: no self-update path; refreshed via
+//     `npm install -g @google/gemini-cli@latest`.
+// "Latest version" is read from the npm registry for all three — Anthropic's
+// native-installer channel tracks the npm package version closely enough to
+// use it as a freshness signal even when `claude` itself isn't npm-installed.
+// ---------------------------------------------------------------------------
+
+const CLI_VERSION_CACHE_REL_PATH: &str = "settings/cliVersionCache.v1.json";
+const CLI_VERSION_CACHE_TTL_MS: u64 = 12 * 60 * 60 * 1000;
+
+#[derive(Debug, Clone, Copy)]
+struct CliUpdateSpec {
+    adapter: &'static str,
+    label: &'static str,
+    npm_package: &'static str,
+}
+
+const CLI_UPDATE_SPECS: &[CliUpdateSpec] = &[
+    CliUpdateSpec {
+        adapter: "claude-code",
+        label: "Claude Code",
+        npm_package: "@anthropic-ai/claude-code",
+    },
+    CliUpdateSpec {
+        adapter: "codex",
+        label: "Codex",
+        npm_package: "@openai/codex",
+    },
+    CliUpdateSpec {
+        adapter: "gemini",
+        label: "Gemini CLI",
+        npm_package: "@google/gemini-cli",
+    },
+];
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CliVersionStatus {
+    adapter: String,
+    label: String,
+    executable_path: Option<String>,
+    installed_version: Option<String>,
+    latest_version: Option<String>,
+    update_available: bool,
+    checked_at_ms: u64,
+    error: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+struct CliVersionCacheEntry {
+    latest_version: String,
+    fetched_at_ms: u64,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct CliVersionCache {
+    #[serde(default)]
+    entries: HashMap<String, CliVersionCacheEntry>,
+}
+
+fn cli_version_cache_path() -> Option<PathBuf> {
+    let root = storage_paths::global_root().ok()?;
+    Some(root.join(CLI_VERSION_CACHE_REL_PATH.replace('/', std::path::MAIN_SEPARATOR_STR)))
+}
+
+fn load_cli_version_cache() -> CliVersionCache {
+    cli_version_cache_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn save_cli_version_cache(cache: &CliVersionCache) {
+    let Some(path) = cli_version_cache_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string(cache) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+/// Extract the first `\d+(\.\d+)+` run from CLI `--version` output. Each
+/// vendor formats it differently (`2.1.197 (Claude Code)`, `codex-cli
+/// 0.142.5`, bare `0.38.2`), so scanning for the numeric pattern is more
+/// robust than three bespoke parsers.
+fn extract_semver(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            let mut j = i;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+                j += 1;
+            }
+            let mut end = j;
+            while end > start && bytes[end - 1] == b'.' {
+                end -= 1;
+            }
+            let candidate = &text[start..end];
+            let dots = candidate.matches('.').count();
+            let looks_like_version = dots >= 1
+                && candidate
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()));
+            if looks_like_version {
+                return Some(candidate.to_string());
+            }
+            i = j.max(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+fn version_parts(version: &str) -> Vec<u64> {
+    version
+        .split(|c: char| matches!(c, '.' | '-'))
+        .filter_map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+/// True when `current` is strictly older than `latest` (numeric, per-segment
+/// comparison; missing trailing segments count as 0).
+fn version_lt(current: &str, latest: &str) -> bool {
+    let a = version_parts(current);
+    let b = version_parts(latest);
+    for i in 0..a.len().max(b.len()) {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x < y;
+        }
+    }
+    false
+}
+
+fn read_cli_installed_version(executable_path: &str) -> Option<String> {
+    let mut cmd = Command::new(executable_path);
+    cmd.arg("--version");
+    let text = command_text_output_with_timeout(cmd, std::time::Duration::from_secs(10)).ok()?;
+    extract_semver(&text)
+}
+
+fn fetch_npm_latest_version(package: &str) -> Result<String, String> {
+    let url = format!("https://registry.npmjs.org/{package}/latest");
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(6))
+        .set("User-Agent", "UltraGameStudio")
+        .call()
+        .map_err(|err| match err {
+            ureq::Error::Status(code, _) => format!("HTTP {code}"),
+            other => other.to_string(),
+        })?;
+    let json: serde_json::Value = response
+        .into_json()
+        .map_err(|e| format!("解析 npm registry 响应失败：{e}"))?;
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+        .ok_or_else(|| "npm registry 响应缺少 version 字段".to_string())
+}
+
+fn cli_latest_version_cached(
+    spec: &CliUpdateSpec,
+    cache: &mut CliVersionCache,
+    now: u64,
+    dirty: &mut bool,
+) -> Option<String> {
+    if let Some(entry) = cache.entries.get(spec.npm_package) {
+        if now.saturating_sub(entry.fetched_at_ms) < CLI_VERSION_CACHE_TTL_MS {
+            return Some(entry.latest_version.clone());
+        }
+    }
+    match fetch_npm_latest_version(spec.npm_package) {
+        Ok(version) => {
+            cache.entries.insert(
+                spec.npm_package.to_string(),
+                CliVersionCacheEntry {
+                    latest_version: version.clone(),
+                    fetched_at_ms: now,
+                },
+            );
+            *dirty = true;
+            Some(version)
+        }
+        // Network hiccup: fall back to whatever we last cached (even if
+        // stale) rather than reporting "unknown" every time Wi-Fi blips.
+        Err(_) => cache
+            .entries
+            .get(spec.npm_package)
+            .map(|e| e.latest_version.clone()),
+    }
+}
+
+fn check_cli_updates_blocking() -> Vec<CliVersionStatus> {
+    let scan = cli_runtime::scan_model_clis();
+    let mut cache = load_cli_version_cache();
+    let mut dirty = false;
+    let now = now_ms();
+
+    let results = CLI_UPDATE_SPECS
+        .iter()
+        .map(|spec| {
+            let candidate = scan
+                .candidates
+                .iter()
+                .find(|c| c.adapter == spec.adapter && c.available);
+            let executable_path = candidate.and_then(|c| c.path.clone());
+            let installed_version = executable_path
+                .as_deref()
+                .and_then(read_cli_installed_version);
+            let latest_version = cli_latest_version_cached(spec, &mut cache, now, &mut dirty);
+            let update_available = match (&installed_version, &latest_version) {
+                (Some(cur), Some(latest)) => version_lt(cur, latest),
+                _ => false,
+            };
+            let error = if executable_path.is_none() {
+                Some(format!(
+                    "未检测到 {} 可执行文件，请先在设置中配置 CLI 路径。",
+                    spec.label
+                ))
+            } else if installed_version.is_none() {
+                Some("无法读取当前版本（--version 无输出或超时）。".to_string())
+            } else if latest_version.is_none() {
+                Some("无法获取最新版本，请检查网络后重试。".to_string())
+            } else {
+                None
+            };
+            CliVersionStatus {
+                adapter: spec.adapter.to_string(),
+                label: spec.label.to_string(),
+                executable_path,
+                installed_version,
+                latest_version,
+                update_available,
+                checked_at_ms: now,
+                error,
+            }
+        })
+        .collect();
+
+    if dirty {
+        save_cli_version_cache(&cache);
+    }
+    results
+}
+
+fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
+    let spec = CLI_UPDATE_SPECS
+        .iter()
+        .find(|s| s.adapter == adapter)
+        .ok_or_else(|| format!("未知的 CLI: {adapter}"))?;
+
+    let scan = cli_runtime::scan_model_clis();
+    let candidate = scan
+        .candidates
+        .iter()
+        .find(|c| c.adapter == spec.adapter && c.available)
+        .ok_or_else(|| format!("未检测到已安装的 {}，请先在设置中配置 CLI 路径。", spec.label))?;
+    let exe = candidate
+        .path
+        .clone()
+        .unwrap_or_else(|| candidate.command.clone());
+
+    // Deliberately NOT setting DISABLE_UPDATES/DISABLE_AUTOUPDATER here: those
+    // env vars only guard the ai_cli chat/run subprocess so a live session
+    // never races a background self-update. This is the one path meant to
+    // actually trigger an update.
+    let cmd = match spec.adapter {
+        "claude-code" | "codex" => {
+            let mut c = Command::new(&exe);
+            c.arg("update");
+            c
+        }
+        "gemini" => {
+            let mut c = Command::new(npm_command_name());
+            c.arg("install")
+                .arg("-g")
+                .arg(format!("{}@latest", spec.npm_package));
+            c
+        }
+        other => return Err(format!("未知的 CLI: {other}")),
+    };
+
+    let output = command_text_output_with_timeout(cmd, std::time::Duration::from_secs(180))
+        .map_err(|e| format!("更新 {} 失败：{e}", spec.label))?;
+
+    // Invalidate the cached "latest" lookup so the very next check reflects
+    // reality instead of waiting out the TTL.
+    let mut cache = load_cli_version_cache();
+    cache.entries.remove(spec.npm_package);
+    save_cli_version_cache(&cache);
+
+    Ok(output)
+}
+
+#[tauri::command]
+async fn check_cli_updates() -> Vec<CliVersionStatus> {
+    tauri::async_runtime::spawn_blocking(check_cli_updates_blocking)
+        .await
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+async fn update_cli(adapter: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_cli_update_blocking(&adapter))
+        .await
+        .map_err(|e| format!("更新任务启动失败: {e}"))?
+}
+
 /// Run an emitted workflow script through the mapped local CLI.
 ///
 /// Async: the blocking process spawn/wait runs on a blocking thread via
@@ -12542,6 +13004,24 @@ fn normalize_spawn_env(
     {
         if openai_model.as_deref().map(str::trim) != Some(model.as_str()) {
             out.insert("OPENAI_MODEL".to_string(), model);
+            changed = true;
+        }
+    }
+
+    let gemini_key = env_value(&out, "GEMINI_API_KEY")
+        .map(ToString::to_string)
+        .or_else(|| std::env::var("GEMINI_API_KEY").ok().map(|value| value.trim().to_string()))
+        .filter(|value| !value.is_empty());
+    if let Some(api_key) = gemini_key {
+        if env_value(&out, "GEMINI_API_KEY") != Some(api_key.as_str()) {
+            out.insert("GEMINI_API_KEY".to_string(), api_key.clone());
+            changed = true;
+        }
+        if env_value(&out, "GOOGLE_API_KEY") != Some(api_key.as_str()) {
+            // Gemini CLI gives GOOGLE_API_KEY precedence when both are present.
+            // Align it with GEMINI_API_KEY so a stale shell-level Google key
+            // cannot silently override the key selected in UltraGameStudio.
+            out.insert("GOOGLE_API_KEY".to_string(), api_key);
             changed = true;
         }
     }
@@ -14044,6 +14524,15 @@ async fn ai_cli(
         }
         if disable_autoupdater {
             cmd.env("DISABLE_AUTOUPDATER", "1");
+            // `DISABLE_AUTOUPDATER` alone doesn't fully suppress the npm
+            // registry check / symlink rewrite on npm-based Claude installs
+            // (see Claude Code changelog). `DISABLE_UPDATES` is the stricter
+            // switch that blocks every update path, including background
+            // daemon self-update — exactly what a mid-run chat/tool-use
+            // subprocess needs. It also blocks manual `claude update`, which
+            // is fine here because the update button spawns its own process
+            // without this env var (see `run_cli_update_blocking`).
+            cmd.env("DISABLE_UPDATES", "1");
         }
         if let Some(path) = gemini_system_settings_path.as_deref() {
             cmd.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", path);
@@ -14815,6 +15304,33 @@ async fn ai_cli(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_semver_handles_each_vendor_format() {
+        // claude
+        assert_eq!(
+            extract_semver("2.1.197 (Claude Code)"),
+            Some("2.1.197".to_string())
+        );
+        // codex
+        assert_eq!(
+            extract_semver("codex-cli 0.142.5"),
+            Some("0.142.5".to_string())
+        );
+        // gemini (bare)
+        assert_eq!(extract_semver("0.38.2\n"), Some("0.38.2".to_string()));
+        assert_eq!(extract_semver("no version here"), None);
+    }
+
+    #[test]
+    fn version_lt_compares_numeric_segments() {
+        assert!(version_lt("2.1.197", "2.1.202"));
+        assert!(!version_lt("0.142.5", "0.142.5"));
+        assert!(version_lt("0.38.2", "0.49.0"));
+        assert!(!version_lt("2.1.202", "2.1.197"));
+        // Missing trailing segments count as 0.
+        assert!(version_lt("1.2", "1.2.1"));
+    }
 
     #[test]
     fn sha256_hex_matches_known_vector() {
@@ -16312,6 +16828,20 @@ mod tests {
             Some("z-ai/glm-4.6")
         );
     }
+
+    #[test]
+    fn normalizes_spawn_env_prefers_gemini_key_over_stale_google_key() {
+        let mut env = HashMap::new();
+        env.insert("GEMINI_API_KEY".to_string(), "gemini-key".to_string());
+        env.insert("GOOGLE_API_KEY".to_string(), "stale-google-key".to_string());
+
+        let normalized = normalize_spawn_env(Some(env)).unwrap();
+
+        assert_eq!(
+            normalized.get("GOOGLE_API_KEY").map(String::as_str),
+            Some("gemini-key")
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -16418,6 +16948,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             focus_main_window,
             notify_session_complete,
+            dismiss_session_waiting_input_notification,
             migrate_legacy_brand_storage,
             ai_edit_graph,
             run_workflow,
@@ -16433,6 +16964,8 @@ pub fn run() {
             uninstall_skill,
             scan_model_clis,
             validate_cli_path,
+            check_cli_updates,
+            update_cli,
             validate_shell_path,
             free_channel_auto_keys,
             local_model_hardware,

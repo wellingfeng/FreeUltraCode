@@ -21,6 +21,7 @@
 
 import type { ModelUsageReport } from '@/lib/usageMeter';
 import { INTERACTION_PROTOCOL } from '@/core/interaction';
+import { canUseProviderDirectTransport } from '@/lib/apiConfig';
 
 /** Default Anthropic model id (kept in sync with the Rust backend). */
 export const DEFAULT_MODEL = 'claude-sonnet-4-6';
@@ -150,19 +151,23 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
     onDelta,
     onUsage,
   } = args;
-  if (!apiKey || !apiKey.trim()) throw new Error('NO_API_KEY');
+  const trimmedApiKey = apiKey?.trim() ?? '';
+  if (!canUseProviderDirectTransport(trimmedApiKey, baseUrl)) {
+    throw new Error('NO_API_KEY');
+  }
 
   const userMessageContent = anthropicUserContent(userContent, userImages);
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    // Required for direct browser (CORS) access to the Anthropic API.
+    'anthropic-dangerous-direct-browser-access': 'true',
+  };
+  if (trimmedApiKey) headers['x-api-key'] = trimmedApiKey;
 
   const res = await fetch(resolveEndpoint(baseUrl), {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey.trim(),
-      'anthropic-version': '2023-06-01',
-      // Required for direct browser (CORS) access to the Anthropic API.
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
+    headers,
     body: JSON.stringify({
       model: model ?? DEFAULT_MODEL,
       max_tokens: maxTokens ?? 4096,

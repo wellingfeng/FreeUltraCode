@@ -102,6 +102,80 @@ describe('completeGatewayText', () => {
     );
   });
 
+  it('uses browser-direct Anthropic for keyless localhost routes', async () => {
+    mocks.completeAnthropic.mockResolvedValue('local answer');
+
+    const route = {
+      selection: {
+        adapter: 'claude-code' as const,
+        modelClass: 'sonnet' as const,
+        providerId: 'local_anthropic',
+        channelId: 'default',
+      },
+      adapter: 'claude-code' as const,
+      modelClass: 'sonnet' as const,
+      model: 'gemini-3-flash',
+      providerId: 'local_anthropic',
+      channelId: 'default',
+      transport: 'anthropic' as const,
+      mode: 'direct' as const,
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:8045',
+      label: 'Claude Code · Local Antigravity',
+      source: 'global' as const,
+    };
+
+    await expect(
+      completeGatewayText({
+        route,
+        system: 'system prompt',
+        userContent: 'user prompt',
+      }),
+    ).resolves.toBe('local answer');
+
+    expect(mocks.completeAnthropic).toHaveBeenCalledWith(
+      expect.objectContaining({ route }),
+    );
+    expect(mocks.aiEditViaCli).not.toHaveBeenCalled();
+  });
+
+  it('uses browser-direct OpenAI-compatible for keyless localhost routes', async () => {
+    mocks.completeOpenAICompatible.mockResolvedValue('local openai answer');
+
+    const route = {
+      selection: {
+        adapter: 'codex' as const,
+        modelClass: 'gpt-oss' as const,
+        providerId: 'local_openai',
+        channelId: 'default',
+      },
+      adapter: 'codex' as const,
+      modelClass: 'gpt-oss' as const,
+      model: 'gpt-oss',
+      providerId: 'local_openai',
+      channelId: 'default',
+      transport: 'openai-compatible' as const,
+      mode: 'direct' as const,
+      apiKey: '',
+      baseUrl: 'http://localhost:1234/v1',
+      label: 'Codex · Local OpenAI-compatible',
+      source: 'global' as const,
+    };
+
+    await expect(
+      completeGatewayText({
+        route,
+        system: 'system prompt',
+        userContent: 'user prompt',
+      }),
+    ).resolves.toBe('local openai answer');
+
+    expect(mocks.completeOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({ route }),
+    );
+    expect(mocks.aiEditViaCli).not.toHaveBeenCalled();
+  });
+
   it('records Anthropic-style CLI cache usage through the generic CLI parser', async () => {
     mocks.aiEditViaCli.mockImplementation(async (_prompt, _adapter, opts) => {
       opts.onUsage?.({
