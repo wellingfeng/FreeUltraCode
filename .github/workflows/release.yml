@@ -29,8 +29,6 @@ jobs:
           ref: main
           fetch-depth: 1
           persist-credentials: true
-        # Override defaults.working-directory for checkout-only step.
-        working-directory: ${{ github.workspace }}
 
       - name: Extract version
         id: ver
@@ -197,7 +195,6 @@ jobs:
           ref: main
           fetch-depth: 1
           persist-credentials: true
-        working-directory: ${{ github.workspace }}
 
       - name: Resolve tag name
         id: tag
