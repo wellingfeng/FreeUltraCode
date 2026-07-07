@@ -110,6 +110,7 @@ jobs:
 
       - name: Bump version files (in-place, no commit)
         if: steps.ver.outputs.version != ''
+        shell: bash
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         working-directory: ${{ github.workspace }}
