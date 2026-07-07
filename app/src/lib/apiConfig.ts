@@ -634,8 +634,14 @@ function providerAdapter(provider: Pick<Provider, 'kind'>): RuntimeAdapterId {
 }
 
 function providerTransport(provider: Provider): GatewayTransport {
-  if (provider.transport === 'cli' || provider.kind !== 'anthropic') return 'cli';
-  return 'anthropic';
+  // Normalize first so legacy records without an explicit transport keep their
+  // per-kind default (anthropic -> direct, codex/gemini -> cli).
+  const transport = normalizeProviderTransport(provider.kind, provider.transport);
+  if (transport === 'cli') return 'cli';
+  // Direct: Anthropic speaks the Anthropic API; codex/gemini custom relays speak
+  // the OpenAI-compatible API. This lets a browser-only build reach a local or
+  // hosted OpenAI-style proxy without a desktop CLI.
+  return provider.kind === 'anthropic' ? 'anthropic' : 'openai-compatible';
 }
 
 function providerToGatewayProvider(provider: Provider): GatewayProvider {
@@ -856,27 +862,28 @@ export function getProviderRuntimeInfo(
     provider.baseUrl,
   );
   const canUseCliFallback = options.canUseCliFallback === true;
+  // Direct transport is available to any kind now: Anthropic speaks the
+  // Anthropic API, codex/gemini custom relays speak the OpenAI-compatible API.
+  // A CLI-only environment still falls back to the local CLI when reachable.
   const status: ProviderRuntimeStatus =
-    kind === 'anthropic'
-      ? transport === 'cli'
-        ? baseUrlValid && canUseCliFallback
-          ? 'cli'
-          : 'unavailable'
-        : canUseDirect
-          ? 'direct'
-          : !hasApiKey && baseUrlValid && canUseCliFallback
-            ? 'cli'
-            : 'unavailable'
-      : canUseCliFallback
+    transport === 'cli'
+      ? baseUrlValid && canUseCliFallback
         ? 'cli'
-        : 'unavailable';
+        : 'unavailable'
+      : canUseDirect
+        ? 'direct'
+        : !hasApiKey && baseUrlValid && canUseCliFallback
+          ? 'cli'
+          : 'unavailable';
 
   return {
     status,
     hasApiKey,
     hasBaseUrl,
     baseUrlValid,
-    baseUrlHost: kind === 'anthropic' ? providerBaseUrlHost(provider.baseUrl) : '',
+    baseUrlHost: provider.baseUrl.trim()
+      ? providerBaseUrlHost(provider.baseUrl)
+      : '',
     canUseCliFallback,
   };
 }

@@ -241,6 +241,44 @@ describe('model gateway compatibility', () => {
     expect(direct?.apiKey).toBe('');
   });
 
+  it('resolves codex/gemini custom providers as OpenAI-compatible direct routes', () => {
+    window.localStorage.setItem(
+      PROVIDERS_STORAGE,
+      JSON.stringify([
+        {
+          id: 'openai_relay',
+          kind: 'codex',
+          transport: 'direct',
+          name: 'OpenAI-compatible relay',
+          apiKey: 'sk-openai',
+          baseUrl: 'https://relay.example/v1',
+          model: 'gpt-5.5',
+        },
+      ]),
+    );
+
+    const selection = {
+      adapter: 'codex' as const,
+      modelClass: 'gpt-5.5',
+      providerId: 'openai_relay',
+      channelId: 'default',
+    };
+
+    const direct = resolveDirectGatewayRoute(selection);
+
+    expect(direct).toMatchObject({
+      transport: 'openai-compatible',
+      mode: 'direct',
+      baseUrl: 'https://relay.example/v1',
+      model: 'gpt-5.5',
+    });
+    expect(direct?.env).toMatchObject({
+      OPENAI_API_KEY: 'sk-openai',
+      OPENAI_BASE_URL: 'https://relay.example/v1',
+      OPENAI_MODEL: 'gpt-5.5',
+    });
+  });
+
   it('uses a session model override without rewriting the provider default model', () => {
     window.localStorage.setItem(
       PROVIDERS_STORAGE,

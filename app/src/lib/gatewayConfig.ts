@@ -504,10 +504,14 @@ function legacyKind(value: LegacyProvider): string {
 
 function legacyTransport(value: LegacyProvider): GatewayTransport {
   if (value.transport === 'cli') return 'cli';
-  if (value.transport === 'direct') {
-    return legacyKind(value) === 'anthropic' ? 'anthropic' : 'cli';
-  }
   const kind = legacyKind(value);
+  // Direct transport is available to every kind: Anthropic speaks the Anthropic
+  // API, codex/gemini custom relays speak the OpenAI-compatible API. An explicit
+  // 'direct' choice is honored; without one, anthropic defaults to direct and
+  // codex/gemini default to cli (they usually run through their own CLI).
+  if (value.transport === 'direct') {
+    return kind === 'anthropic' ? 'anthropic' : 'openai-compatible';
+  }
   return kind === 'anthropic' ? 'anthropic' : 'cli';
 }
 

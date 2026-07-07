@@ -1325,6 +1325,11 @@ const UI_FULL = {
     'settings.models.statusDirect': '直连',
     'settings.models.statusCli': 'CLI',
     'settings.models.statusUnavailable': '不可用',
+    'settings.models.runtimeMode': '运行方式',
+    'settings.models.runtimeModeDirect': '直连 API',
+    'settings.models.runtimeModeCli': '本地 CLI',
+    'settings.models.runtimeModeHelp':
+      '直连：浏览器/桌面直接调用 API（Anthropic 走 Anthropic API，Codex/Gemini 走 OpenAI 兼容 API），本地代理请填 Base URL。CLI：通过本机对应命令行运行，仅桌面版可用。',
     'settings.models.localHint': 'API Key 只保存在本机，不会显示在列表、日志或导入摘要中。',
     'settings.models.codexCliHint': '通过本机 codex CLI 运行，无需在此配置密钥。',
     'settings.models.geminiCliHint': '通过本机 gemini CLI 运行，无需在此配置密钥。',
@@ -2676,6 +2681,11 @@ const UI_FULL = {
     'settings.models.statusDirect': 'Direct',
     'settings.models.statusCli': 'CLI',
     'settings.models.statusUnavailable': 'Unavailable',
+    'settings.models.runtimeMode': 'Runtime mode',
+    'settings.models.runtimeModeDirect': 'Direct API',
+    'settings.models.runtimeModeCli': 'Local CLI',
+    'settings.models.runtimeModeHelp':
+      'Direct: call the API straight from the app (Anthropic uses the Anthropic API; Codex/Gemini use the OpenAI-compatible API) — set Base URL for a local proxy. CLI: run through the local command line; desktop only.',
     'settings.models.localHint': 'API keys are stored locally only and are never shown in cards, logs, or import summaries.',
     'settings.models.codexCliHint': 'Runs through the local codex CLI — no key configuration needed here.',
     'settings.models.geminiCliHint': 'Runs through the local gemini CLI — no key configuration needed here.',

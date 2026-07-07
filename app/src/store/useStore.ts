@@ -4569,7 +4569,12 @@ ${previousReply.slice(0, 4000)}
       if (simpleMode) {
         // Simple mode is a direct model chat — there's no local fallback.
         pushAssistant(
-          '简单模式需要可用的模型后端：请在桌面版配置本地 CLI，或切到 Claude Code 并配置 API key 后再试。',
+          [
+            '当前没有可用的模型后端，无法发送。请任选一种方式：',
+            '· 直连 API：打开「设置 → 模型渠道」添加一个渠道，来源选 Claude Code（走 Anthropic API）或 Codex / Gemini（走 OpenAI 兼容 API），填好 Base URL 与 API Key，运行方式选“直连 API”。本地代理（如 http://127.0.0.1:8045）也按这里填。',
+            '· 本地 CLI：仅桌面版可用，安装并配置好对应命令行后，运行方式选“本地 CLI”。',
+            '配置完成后，在 AI 输入框底部把该渠道选为当前运行渠道，再重新发送。',
+          ].join('\n'),
         );
         syncAndPersistSessionRunStatus(
           { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
@@ -4581,7 +4586,11 @@ ${previousReply.slice(0, 4000)}
       // [dynamic-only refactor] 本地意图引擎(applyIntent)蓝图编辑已停用。
       // 非简单模式 + 无后端：仅提示，不再做关键词改图。
       pushAssistant(
-        `当前环境无法调用所选运行时。请在桌面版中使用本地 CLI，或切回 Claude Code 并配置 API key。`,
+        [
+          '当前环境无法调用所选运行时。请在「设置 → 模型渠道」添加并选用一个可用渠道：',
+          '· 直连 API：来源选 Claude Code（Anthropic API）或 Codex / Gemini（OpenAI 兼容 API），填好 Base URL 与 API Key，运行方式选“直连 API”（本地代理同样按此填写）。',
+          '· 本地 CLI：仅桌面版可用，配置好命令行后运行方式选“本地 CLI”。',
+        ].join('\n'),
       );
       removeAiEditChannel(ch);
       return true;

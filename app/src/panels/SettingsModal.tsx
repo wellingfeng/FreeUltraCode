@@ -3435,6 +3435,42 @@ function ProviderEditor({
                 })}
               </div>
             </div>
+            <div className="block space-y-1">
+              <span className="text-[11px] font-medium text-fg-dim">
+                {t(locale, 'settings.models.runtimeMode')}
+              </span>
+              <div className="flex gap-1">
+                {(
+                  [
+                    ['direct', 'settings.models.runtimeModeDirect'],
+                    ['cli', 'settings.models.runtimeModeCli'],
+                  ] as const
+                ).map(([mode, labelKey]) => {
+                  const effective =
+                    editor.draft.transport ??
+                    (editor.draft.kind === 'anthropic' ? 'direct' : 'cli');
+                  const active = effective === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => patchDraft({ transport: mode })}
+                      className={cn(
+                        'flex-1 rounded border px-2 py-1.5 text-[11px] transition-colors',
+                        active
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-bg text-fg-dim hover:border-accent/50 hover:text-fg',
+                      )}
+                    >
+                      {t(locale, labelKey)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] leading-relaxed text-fg-faint">
+                {t(locale, 'settings.models.runtimeModeHelp')}
+              </p>
+            </div>
             <ReadonlyField
               label={t(locale, 'settings.models.authState')}
               value={
@@ -3456,7 +3492,7 @@ function ProviderEditor({
               label={t(locale, 'settings.models.baseUrl')}
               value={editor.draft.baseUrl}
               onChange={(value) => patchDraft({ baseUrl: value })}
-              placeholder="https://api.anthropic.com"
+              placeholder={providerBaseUrlPlaceholder(editor.draft.kind)}
               error={errors.baseUrl}
               mono
               fullWidth
@@ -3582,8 +3618,10 @@ function providerDraft(provider: ProviderDraft): ProviderDraft {
 function trimProviderDraft(draft: ProviderDraft): ProviderDraft {
   const model = draft.model?.trim();
   const models = uniqueStringOptions(draft.models ?? []);
-  const transport =
-    draft.kind === 'anthropic' ? draft.transport ?? 'direct' : 'cli';
+  // Any kind may run direct now: Anthropic hits the Anthropic API; codex/gemini
+  // custom relays hit the OpenAI-compatible API (see providerTransport). Keep the
+  // user's explicit choice; default anthropic to direct and the rest to cli.
+  const transport = draft.transport ?? (draft.kind === 'anthropic' ? 'direct' : 'cli');
   return {
     kind: draft.kind,
     name: draft.name.trim(),
