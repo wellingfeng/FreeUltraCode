@@ -6,7 +6,9 @@ import {
   SIMPLE_CHAT_CONTEXT_INITIAL_MESSAGE_LIMIT,
   SIMPLE_CHAT_CONTEXT_MESSAGE_LIMIT,
   estimateContextUsage,
+  estimateTokenCount,
   formatCompactTokenCount,
+  type ContextUsageEstimate,
   type ContextUsageTone,
 } from '@/lib/contextUsage';
 import { RUNTIME_ADAPTERS, type RuntimeAdapterId } from '@/lib/adapters';
@@ -16,8 +18,11 @@ import {
   rebuildSnapshotFromTurns,
   sessionCachePercent,
   subscribeUsageMeter,
+  type UsageMeterSnapshot,
+  type UsageTurnDelta,
 } from '@/lib/usageMeter';
 import { useStore } from '@/store/useStore';
+import type { Message } from '@/store/types';
 import { t } from '@/lib/i18n';
 
 function contextUsageTextColor(tone: ContextUsageTone): string {
@@ -27,15 +32,108 @@ function contextUsageTextColor(tone: ContextUsageTone): string {
 }
 
 
-function formatPercent(value: number): string {
+function formatPercent(value: number, overLimit = false): string {
   if (!Number.isFinite(value) || value <= 0) return '0%';
   if (value < 1) return '<1%';
-  return `${Math.min(999, Math.round(value))}%`;
+  if (value > 100) return overLimit ? '100%+' : '100%';
+  return `${Math.round(value)}%`;
 }
 
 function formatCachePercent(value: number | null): string {
   if (value === null) return '--';
   return formatPercent(value);
+}
+
+function formatRawPercent(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0%';
+  if (value < 1) return '<1%';
+  return `${Math.round(value)}%`;
+}
+
+function toneForPercent(percent: number): ContextUsageTone {
+  if (percent > 80) return 'danger';
+  if (percent >= 60) return 'warn';
+  return 'ok';
+}
+
+function hasSnapshotUsage(snapshot: UsageMeterSnapshot): boolean {
+  return snapshot.totals.calls > 0 || snapshot.totals.totalTokens > 0;
+}
+
+function messageTextForUsageEstimate(message: Message): string {
+  return message.text
+    .replace(/^⏱ [^\n]*(?:\n|$)/, '')
+    .replace(/^⚙ (?:(?:路由|模型)：)[^\n]*(?:\n|$)/, '')
+    .replace(/<<UGS_TOOL>>[^\n]*(?:\n|$)/g, '')
+    .trim();
+}
+
+function estimateSnapshotFromMessages(messages: Message[]): UsageMeterSnapshot {
+  const turns: UsageTurnDelta[] = [];
+  let pendingUserText = '';
+
+  for (const message of messages) {
+    if (message.localOnly || message.role === 'system') continue;
+    const text = messageTextForUsageEstimate(message);
+    if (!text) continue;
+
+    if (message.role === 'user') {
+      pendingUserText = pendingUserText
+        ? `${pendingUserText}\n\n${text}`
+        : text;
+      continue;
+    }
+
+    if (message.usage) {
+      pendingUserText = '';
+      continue;
+    }
+
+    const inputTokens = estimateTokenCount(pendingUserText);
+    const outputTokens = estimateTokenCount(text);
+    const totalTokens = inputTokens + outputTokens;
+    if (totalTokens > 0) {
+      turns.push({
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        cachedInputTokens: 0,
+        cachePercent: 0,
+        estimated: true,
+      });
+    }
+    pendingUserText = '';
+  }
+
+  return rebuildSnapshotFromTurns(turns);
+}
+
+function latestMessageInputTokens(messages: Message[]): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const usage = messages[index]?.usage;
+    if (usage && usage.inputTokens > 0) return usage.inputTokens;
+  }
+  return 0;
+}
+
+function contextUsageWithMeasuredInput(
+  estimate: ContextUsageEstimate,
+  measuredInputTokens: number,
+): ContextUsageEstimate {
+  const measured = Math.max(0, Math.round(measuredInputTokens));
+  if (measured <= estimate.usedTokens) return estimate;
+  // CLI usage can be cumulative across helper/model sub-calls. Do not let an
+  // over-window measurement replace the current-request window estimate.
+  if (estimate.limitTokens > 0 && measured > estimate.limitTokens) return estimate;
+  const percent =
+    estimate.limitTokens > 0 ? (measured / estimate.limitTokens) * 100 : 0;
+  return {
+    ...estimate,
+    usedTokens: measured,
+    percent,
+    displayPercent: formatPercent(percent, true),
+    tone: toneForPercent(percent),
+  };
 }
 
 function hostFromBaseUrl(baseUrl: string | undefined): string {
@@ -135,7 +233,10 @@ export default function StatusBar() {
     const rebuilt = rebuildSnapshotFromTurns(
       messages.map((message) => message.usage),
     );
-    return preferRicherSnapshot(liveUsage, rebuilt);
+    const recorded = preferRicherSnapshot(liveUsage, rebuilt);
+    return hasSnapshotUsage(recorded)
+      ? recorded
+      : estimateSnapshotFromMessages(messages);
   }, [liveUsage, messages]);
 
   const route = useMemo(() => {
@@ -198,7 +299,7 @@ export default function StatusBar() {
   }, [contextUsageKey, simpleChatMode]);
   // Mirror the AI-input estimate so the status bar shows the same context
   // budget percentage the composer used to render as a circular dial.
-  const contextUsage = useMemo(
+  const contextUsageEstimate = useMemo(
     () =>
       estimateContextUsage({
         messages,
@@ -218,6 +319,18 @@ export default function StatusBar() {
       effectiveContextMessageLimit,
     ],
   );
+  const measuredContextInputTokens = Math.max(
+    usage.lastCall.inputTokens,
+    latestMessageInputTokens(messages),
+  );
+  const contextUsage = useMemo(
+    () =>
+      contextUsageWithMeasuredInput(
+        contextUsageEstimate,
+        measuredContextInputTokens,
+      ),
+    [contextUsageEstimate, measuredContextInputTokens],
+  );
 
   const host = displayHost(route, t(locale, 'statusBar.model'));
   const isConfigured = route.mode === 'cli' || Boolean(route.apiKey?.trim());
@@ -228,14 +341,24 @@ export default function StatusBar() {
     ? 'text-[var(--status-success)]'
     : 'text-fg-faint';
   const cachePercent = sessionCachePercent(usage);
+  const contextRawPercent =
+    contextUsage.percent > 100
+      ? locale === 'zh-CN'
+        ? `；原始比例 ${formatRawPercent(contextUsage.percent)}`
+        : `; raw ${formatRawPercent(contextUsage.percent)}`
+      : '';
   const contextUsageTitle =
     locale === 'zh-CN'
       ? `上下文用量（估算）：已使用 ${formatCompactTokenCount(
           contextUsage.usedTokens,
-        )} / ${formatCompactTokenCount(contextUsage.limitTokens)} tokens`
+        )} / ${formatCompactTokenCount(
+          contextUsage.limitTokens,
+        )} tokens；按当前请求可见输入估算，不扣缓存，不代表账单${contextRawPercent}`
       : `Context usage (estimate): ${formatCompactTokenCount(
           contextUsage.usedTokens,
-        )} / ${formatCompactTokenCount(contextUsage.limitTokens)} tokens used`;
+        )} / ${formatCompactTokenCount(
+          contextUsage.limitTokens,
+        )} tokens used; visible input for the current request, cache is not deducted and billing differs${contextRawPercent}`;
 
   return (
     <footer className="flex h-7 shrink-0 items-center overflow-x-auto border-t border-border bg-panel px-3 text-[11px] leading-none text-fg-dim">

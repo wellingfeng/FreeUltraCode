@@ -318,6 +318,59 @@ describe('normalizeFenceLineBreaks', () => {
     expect(normalizeFenceLineBreaks(src)).toBe(src);
   });
 
+  it('splits mermaid closing fences that have a glued comment trailer', () => {
+    const src = [
+      '```mermaid',
+      'flowchart LR',
+      'A-->B',
+      '```%% 模型把 Mermaid 注释粘到了关闭围栏',
+      '后续说明',
+    ].join('\n');
+
+    expect(normalizeFenceLineBreaks(src)).toBe(
+      [
+        '```mermaid',
+        'flowchart LR',
+        'A-->B',
+        '```',
+        '后续说明',
+      ].join('\n'),
+    );
+  });
+
+  it('splits dirty non-mermaid closing fences with prose trailers', () => {
+    const src = [
+      '```powershell',
+      'powershell -ExecutionPolicy Bypass -File <解压目录>\\apply-from-repo-root.ps1',
+      '```46 · 耗时 `git apply --reverse` 48s',
+      '',
+      '✅ 重新打包完成：',
+      '',
+      '```powershell',
+      'powershell -ExecutionPolicy Bypass -File <解压目录>\\apply-from-repo-root.ps1',
+      '```',
+      '',
+      '然后 `git status` 检查再提交。',
+    ].join('\n');
+
+    expect(normalizeFenceLineBreaks(src)).toBe(
+      [
+        '```powershell',
+        'powershell -ExecutionPolicy Bypass -File <解压目录>\\apply-from-repo-root.ps1',
+        '```',
+        '46 · 耗时 `git apply --reverse` 48s',
+        '',
+        '✅ 重新打包完成：',
+        '',
+        '```powershell',
+        'powershell -ExecutionPolicy Bypass -File <解压目录>\\apply-from-repo-root.ps1',
+        '```',
+        '',
+        '然后 `git status` 检查再提交。',
+      ].join('\n'),
+    );
+  });
+
   it('does not split prose that names a fence language inline', () => {
     const src = 'Markdown 里可用```ts 语法标记 TypeScript。';
     expect(normalizeFenceLineBreaks(src)).toBe(src);

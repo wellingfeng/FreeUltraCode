@@ -25,6 +25,7 @@ export type GameSkillCategory =
   | 'mesh'
   | 'music'
   | 'video'
+  | 'animation'
   | 'speech'
   | 'worldmodel'
   | 'ui'

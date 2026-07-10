@@ -75,6 +75,7 @@ const WORKSPACES_INDEX = 'workspaces/index.json';
 const FALLBACK_PREFIX = 'ultragamestudio.history.v1:';
 const SESSION_RECORD_CACHE_LIMIT = 5;
 const SESSION_RECORD_PREWARM_LIMIT = 5;
+const SESSION_SUMMARY_ACTIVITY_VERSION = 2;
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 const sessionRecordCache = new Map<string, Map<string, SessionRecord>>();
@@ -388,7 +389,21 @@ export function isAutoTitlePlaceholder(title?: string | null): boolean {
 }
 
 export function titleFromText(text: string, fallback = '新会话'): string {
-  const compact = text.trim().replace(/\s+/g, ' ');
+  const compact = text
+    .replace(
+      /`(?:file:\/\/\/)?[a-z]:[\\/][^`]+`/gi,
+      ' ',
+    )
+    .replace(
+      /(?:file:\/\/\/)?[a-z]:[\\/][^\s`"'<>，。！？；：、,;:!?]+/gi,
+      ' ',
+    )
+    .trim()
+    .replace(
+      /^[\s`"'“”‘’「」『』《》【】[\]({（,，。;；:：、!！?？-]+/,
+      '',
+    )
+    .replace(/\s+/g, ' ');
   if (!compact) return fallback;
   return compact.length > 36 ? `${compact.slice(0, 36)}...` : compact;
 }
@@ -419,7 +434,8 @@ function sessionSummary(record: SessionRecord): SessionSummary {
     title: record.title,
     isWorkflow: record.isWorkflow,
     createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
+    updatedAt: sessionCompletionTimestamp(record.messages, record.updatedAt),
+    activityVersion: SESSION_SUMMARY_ACTIVITY_VERSION,
     preview: preview(record.messages),
     messageCount: record.messages.length,
     ...(record.workflow?.meta?.simple ? { simple: true } : {}),
@@ -486,6 +502,14 @@ function sessionIndexMatchesFiles(
   return fileIds.every((id) => indexed.has(id));
 }
 
+function sessionIndexHasCurrentActivityVersion(
+  index: SessionSummary[],
+): boolean {
+  return index.every(
+    (session) => session.activityVersion === SESSION_SUMMARY_ACTIVITY_VERSION,
+  );
+}
+
 async function readSessionIndexInternal(
   workspaceId: string,
 ): Promise<SessionSummary[] | null> {
@@ -495,6 +519,56 @@ async function readSessionIndexInternal(
 
 function finiteTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+const LEGACY_TURN_CLOCK_RE =
+  /^⏱\s*\d{1,2}:\d{2}(?::\d{2})?\s*→\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/u;
+const DAY_MS = 86_400_000;
+
+function clockTimestampOnMessageDate(
+  messageCreatedAt: number,
+  hour: number,
+  minute: number,
+  second: number,
+): number | null {
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  if (second < 0 || second > 59) return null;
+  const end = new Date(messageCreatedAt);
+  end.setHours(hour, minute, second, 0);
+  let timestamp = end.getTime();
+  if (timestamp < messageCreatedAt - 60_000) timestamp += DAY_MS;
+  return timestamp;
+}
+
+function legacyAssistantCompletedTimestamp(message: Message): number | null {
+  if (message.role !== 'assistant') return null;
+  if (!finiteTimestamp(message.createdAt)) return null;
+  const match = message.text.match(LEGACY_TURN_CLOCK_RE);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = match[3] ? Number(match[3]) : 0;
+  return clockTimestampOnMessageDate(message.createdAt, hour, minute, second);
+}
+
+function messageCompletedTimestamp(message: Message): number | null {
+  if (finiteTimestamp(message.completedAt)) return message.completedAt;
+  return legacyAssistantCompletedTimestamp(message);
+}
+
+function messagesCompletedTimestamp(messages: Message[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const timestamp = messageCompletedTimestamp(messages[i]);
+    if (timestamp != null) return timestamp;
+  }
+  return null;
+}
+
+function sessionCompletionTimestamp(
+  messages: Message[],
+  fallback: number,
+): number {
+  return messagesCompletedTimestamp(messages) ?? fallback;
 }
 
 function minTimestamp(values: number[], fallback: number): number {
@@ -669,10 +743,11 @@ async function workspaceSummaryUsesDirectoryAsSource(
 
 async function rebuildWorkspaceSessionIndexFromFilesInternal(
   workspaceId: string,
+  force = false,
 ): Promise<SessionSummary[]> {
   const list =
     (await readJson<SessionSummary[]>(sessionIndexPath(workspaceId))) ?? [];
-  if (!(await shouldRebuildWorkspaceIndexFromFilesInternal(workspaceId))) {
+  if (!force && !(await shouldRebuildWorkspaceIndexFromFilesInternal(workspaceId))) {
     return sortSessions(list);
   }
 
@@ -967,11 +1042,20 @@ async function listSessionsInternal(
   const indexed = await readSessionIndexInternal(workspaceId);
   if (indexed) {
     const fileIds = await listSessionFileIdsInternal(workspaceId);
-    if (sessionIndexMatchesFiles(indexed, fileIds)) {
+    if (
+      sessionIndexMatchesFiles(indexed, fileIds) &&
+      sessionIndexHasCurrentActivityVersion(indexed)
+    ) {
+      return indexed;
+    }
+    if (!(await shouldRebuildWorkspaceIndexFromFilesInternal(workspaceId))) {
       return indexed;
     }
   }
-  return rebuildWorkspaceSessionIndexFromFilesInternal(workspaceId);
+  if (!(await shouldRebuildWorkspaceIndexFromFilesInternal(workspaceId))) {
+    return indexed ?? [];
+  }
+  return rebuildWorkspaceSessionIndexFromFilesInternal(workspaceId, true);
 }
 
 async function writeSessionIndexInternal(
@@ -1045,7 +1129,7 @@ async function createSessionInternal(
     title,
     isWorkflow: input.isWorkflow,
     createdAt: ts,
-    updatedAt: ts,
+    updatedAt: sessionCompletionTimestamp(messages, ts),
     messages,
     ...(input.isWorkflow && input.workflow ? { workflow: input.workflow } : {}),
     ...(input.meta ? { meta: input.meta } : {}),
@@ -1066,11 +1150,16 @@ async function updateSessionInternal(
   const nextIsWorkflow =
     current.isWorkflow || patch.isWorkflow === true || !!patch.workflow;
   const messages = patch.messages ?? current.messages;
+  const updatedAt = patch.preserveUpdatedAt
+    ? current.updatedAt
+    : patch.messages
+      ? sessionCompletionTimestamp(messages, now())
+      : now();
   const next: SessionRecord = {
     ...current,
     title: patch.title ?? current.title,
     isWorkflow: nextIsWorkflow,
-    updatedAt: patch.preserveUpdatedAt ? current.updatedAt : now(),
+    updatedAt,
     messages,
     ...(nextIsWorkflow
       ? { workflow: patch.workflow ?? current.workflow }

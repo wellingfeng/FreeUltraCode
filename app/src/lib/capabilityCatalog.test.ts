@@ -31,7 +31,7 @@ describe("capability catalog", () => {
     const gameSkillNames = GAME_SKILL_CAPABILITY_MANIFESTS.map(
       (manifest) => manifest.command.name,
     );
-    expect(gameSkillNames).toHaveLength(38);
+    expect(gameSkillNames).toHaveLength(41);
     expect(gameSkillNames).toContain("/game");
     expect(gameSkillNames).toContain("/gdd-mode-start");
     expect(gameSkillNames).toContain("/gdd-mode-end");

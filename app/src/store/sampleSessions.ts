@@ -1009,6 +1009,8 @@ export const defaultComposer: ComposerSettings = {
   threeDModeStartedAt: null,
   videoMode: false,
   videoModeStartedAt: null,
+  animationMode: false,
+  animationModeStartedAt: null,
   speechMode: false,
   speechModeStartedAt: null,
   spriteMode: false,

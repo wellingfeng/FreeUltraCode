@@ -210,6 +210,6 @@ describe('completeGatewayText', () => {
     expect(snapshot.totals.inputTokens).toBe(1000);
     expect(snapshot.totals.outputTokens).toBe(40);
     expect(snapshot.totals.totalTokens).toBe(1040);
-    expect(sessionCachePercent(snapshot)).toBeCloseTo(88, 5);
+    expect(sessionCachePercent(snapshot)).toBeCloseTo(80, 5);
   });
 });

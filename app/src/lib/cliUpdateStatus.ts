@@ -1,4 +1,9 @@
-import { checkCliUpdates, isTauri, type CliVersionStatus } from '@/lib/tauri';
+import {
+  checkCliUpdates,
+  isTauri,
+  updateCli,
+  type CliVersionStatus,
+} from '@/lib/tauri';
 
 export type CliUpdateStatusPhase = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -9,6 +14,14 @@ export interface CliUpdateSnapshot {
   /** True when at least one CLI has an update the user has not yet seen. */
   hasUnseenUpdate: boolean;
   error?: string;
+  /**
+   * Adapters currently being updated. Lives at module scope (not component
+   * state) so an in-flight update keeps running -- and stays visible -- even
+   * after the settings panel is closed/unmounted.
+   */
+  updatingAdapters: string[];
+  /** Last update result message keyed by adapter, for post-update feedback. */
+  updateMessages: Record<string, { ok: boolean; detail: string; atMs: number }>;
 }
 
 const DISMISSED_STORAGE_KEY = 'ugs_cli_update_dismissed_v1';
@@ -17,7 +30,12 @@ let snapshot: CliUpdateSnapshot = {
   status: 'idle',
   statuses: [],
   hasUnseenUpdate: false,
+  updatingAdapters: [],
+  updateMessages: {},
 };
+
+/** In-flight update promises keyed by adapter, deduped across mount points. */
+const updatePromises = new Map<string, Promise<{ ok: boolean; detail: string }>>();
 let runningPromise: Promise<CliUpdateSnapshot> | null = null;
 const listeners = new Set<(next: CliUpdateSnapshot) => void>();
 
@@ -85,12 +103,73 @@ export function markCliUpdatesSeen(
   }
 }
 
+/**
+ * Kicks off a one-click CLI update and tracks it at module scope so the work
+ * -- and its "updating…" indicator plus final result -- survives the settings
+ * panel being closed. Calling again for an adapter already updating returns the
+ * existing promise instead of spawning a duplicate update. On success it
+ * automatically refreshes the version check.
+ */
+export function startCliUpdate(
+  adapter: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const existing = updatePromises.get(adapter);
+  if (existing) return existing;
+
+  if (!snapshot.updatingAdapters.includes(adapter)) {
+    const nextMessages = { ...snapshot.updateMessages };
+    delete nextMessages[adapter];
+    snapshot = {
+      ...snapshot,
+      updatingAdapters: [...snapshot.updatingAdapters, adapter],
+      updateMessages: nextMessages,
+    };
+    emit();
+  }
+
+  const promise = (async () => {
+    try {
+      const detail = await updateCli(adapter);
+      finishCliUpdate(adapter, { ok: true, detail });
+      // Re-check versions so the row flips to "up to date". Not awaited by the
+      // caller's UI branch, but awaited here to keep ordering deterministic.
+      await refreshCliUpdateStatus().catch(() => undefined);
+      return { ok: true, detail };
+    } catch (err) {
+      const detail = errorMessage(err);
+      finishCliUpdate(adapter, { ok: false, detail });
+      return { ok: false, detail };
+    } finally {
+      updatePromises.delete(adapter);
+    }
+  })();
+
+  updatePromises.set(adapter, promise);
+  return promise;
+}
+
+function finishCliUpdate(
+  adapter: string,
+  result: { ok: boolean; detail: string },
+): void {
+  snapshot = {
+    ...snapshot,
+    updatingAdapters: snapshot.updatingAdapters.filter((a) => a !== adapter),
+    updateMessages: {
+      ...snapshot.updateMessages,
+      [adapter]: { ...result, atMs: Date.now() },
+    },
+  };
+  emit();
+}
+
 async function runCheck(): Promise<CliUpdateSnapshot> {
   snapshot = { ...snapshot, status: 'loading', error: undefined };
   emit();
 
   if (!isTauri()) {
     snapshot = {
+      ...snapshot,
       status: 'ready',
       statuses: [],
       checkedAtMs: Date.now(),
@@ -103,6 +182,7 @@ async function runCheck(): Promise<CliUpdateSnapshot> {
   try {
     const statuses = await checkCliUpdates();
     snapshot = {
+      ...snapshot,
       status: 'ready',
       statuses,
       checkedAtMs: Date.now(),

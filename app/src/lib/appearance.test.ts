@@ -27,6 +27,8 @@ import {
 import { SUPPORTED_LOCALES, t } from './i18n';
 
 const NEW_PRESETS = [
+  'cherry-dark',
+  'cherry-light',
   'midnight',
   'aurora',
   'daylight',
@@ -45,6 +47,7 @@ const NEW_STREAM_SCHEMES = [
 
 // Vitest runs with cwd at the app/ root.
 const globalCss = readFileSync('src/styles/global.css', 'utf8');
+const indexHtml = readFileSync('index.html', 'utf8');
 
 // The full primitive-token contract each preset CSS block must define.
 const REQUIRED_TOKENS = [
@@ -104,9 +107,11 @@ afterEach(() => {
 });
 
 describe('appearance presets', () => {
-  it('registers Pencil plus the built-in unified style presets', () => {
+  it('registers Cherry dark default plus the built-in unified style presets', () => {
     expect(BUILTIN_STYLE_PRESETS).toEqual([
+      'cherry-dark',
       'pencil',
+      'cherry-light',
       'midnight',
       'aurora',
       'daylight',
@@ -116,7 +121,16 @@ describe('appearance presets', () => {
       'one-half-dark',
       'solarized-dark',
     ]);
-    expect(STYLE_PRESET_LIST).toHaveLength(9);
+    expect(STYLE_PRESET_LIST).toHaveLength(11);
+  });
+
+  it('uses Cherry dark as the default startup style', () => {
+    expect(DEFAULT_STYLE_PRESET_ID).toBe('cherry-dark');
+    expect(DEFAULT_APPEARANCE_SETTINGS.stylePresetId).toBe('cherry-dark');
+    expect(indexHtml).toContain("const fallback = 'cherry-dark'");
+    for (const id of BUILTIN_STYLE_PRESETS) {
+      expect(indexHtml).toContain(`'${id}'`);
+    }
   });
 
   it('keeps the legacy stream scheme registry for migration', () => {
@@ -174,13 +188,14 @@ describe('appearance presets', () => {
     }
   });
 
-  it('daylight is the light scheme; the rest are dark', () => {
+  it('cherry-light and daylight are light schemes; the rest are dark', () => {
     const byId = Object.fromEntries(
       STYLE_PRESET_LIST.map((p) => [p.id, p.colorScheme]),
     );
+    expect(byId['cherry-light']).toBe('light');
     expect(byId.daylight).toBe('light');
     for (const preset of STYLE_PRESET_LIST) {
-      if (preset.id === 'daylight') continue;
+      if (preset.id === 'cherry-light' || preset.id === 'daylight') continue;
       expect(byId[preset.id]).toBe('dark');
     }
   });
@@ -207,9 +222,12 @@ describe('appearance presets', () => {
     },
   );
 
-  it('daylight opts into the light color-scheme', () => {
-    expect(presetCssBlock('daylight')).toContain('color-scheme: light');
-  });
+  it.each(['cherry-light', 'daylight'] as const)(
+    '%s opts into the light color-scheme',
+    (id) => {
+      expect(presetCssBlock(id)).toContain('color-scheme: light');
+    },
+  );
 
   it.each(NEW_STREAM_SCHEMES)(
     'global.css defines the stream token contract for "%s"',

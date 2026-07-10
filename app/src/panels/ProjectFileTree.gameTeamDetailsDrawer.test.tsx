@@ -51,7 +51,10 @@ function toolBlock(id: string, name: string, extra: Record<string, unknown>): st
   return encodeToolPatch({ id, name, status: 'done', ...extra });
 }
 
-function resetStore(options: { messages?: Message[] } = {}): void {
+function resetStore(options: {
+  messages?: Message[];
+  workspaceFolders?: string[];
+} = {}): void {
   const workspace = {
     id: 'ws_game_team_drawer',
     path: 'E:\\UltraGameStudio',
@@ -71,7 +74,11 @@ function resetStore(options: { messages?: Message[] } = {}): void {
     workspaces: [workspace],
     activeWorkspaceId: workspace.id,
     activeSessionId: 's_game_team_drawer',
-    composer: { ...defaultComposer, workspace: workspace.path },
+    composer: {
+      ...defaultComposer,
+      workspace: workspace.path,
+      workspaceFolders: options.workspaceFolders ?? [],
+    },
     composerDraft: '',
     composerDrafts: {},
     messages: options.messages ?? [editMessage],
@@ -372,6 +379,48 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       expect(view.container.textContent).toContain('岗位视角和 Skill');
       expect(view.container.textContent).toContain('技术总监');
       expect(view.container.textContent).toContain('发起功能开发');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('uses the matching attached root for absolute session-file diffs', async () => {
+    window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
+    const p4Root = 'E:\\project_moon_ue5\\MoonEngine';
+    const filePath =
+      'E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\KuroMoonShadingPassShader.usf';
+    resetStore({
+      workspaceFolders: [p4Root],
+      messages: [
+        {
+          id: 'absolute-p4-file',
+          role: 'assistant',
+          createdAt: 10,
+          text: toolBlock('p4-edit', 'Edit', {
+            args: { file_path: filePath },
+          }),
+        },
+      ],
+    });
+    const view = await renderProjectFileTree();
+
+    try {
+      await flushAsyncSessionFiles();
+      const fileButton = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('button'),
+      ).find((btn) =>
+        (btn.textContent ?? '').includes('KuroMoonShadingPassShader.usf'),
+      );
+      expect(fileButton, 'absolute P4 session file row should exist').toBeTruthy();
+
+      await act(async () => {
+        fileButton!.click();
+      });
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(workspaceFileDiff).toHaveBeenCalledWith(p4Root, filePath);
     } finally {
       await view.cleanup();
     }

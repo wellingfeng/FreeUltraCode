@@ -15,6 +15,21 @@ function mockAnthropicStream(text: string): Response {
   return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
+function mockAnthropicUsageStream(text: string): Response {
+  const sse =
+    'data: {"type":"message_start","message":{"usage":{"input_tokens":120,"cache_read_input_tokens":800,"cache_creation_input_tokens":80}}}\n\n' +
+    `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":${JSON.stringify(text)}}}\n\n` +
+    'data: {"type":"message_delta","usage":{"output_tokens":40}}\n\n' +
+    'data: [DONE]\n\n';
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(sse));
+      controller.close();
+    },
+  });
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
 /**
  * Captain-loop guidance — the generation-layer accuracy lever. These tests pin
  * that the guidance is present, names the concrete primitives the model must
@@ -117,6 +132,27 @@ describe('streamAnthropic multimodal content', () => {
     expect(content[0]).toEqual({
       type: 'image',
       source: { type: 'url', url: 'https://example.com/a.png' },
+    });
+  });
+
+  it('reports Anthropic cache reads as hits and cache creation as visible input', async () => {
+    const fetchMock = vi.fn(async () => mockAnthropicUsageStream('ok'));
+    const onUsage = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await streamAnthropic({
+      apiKey: 'k',
+      system: 's',
+      userContent: 'hello',
+      onUsage,
+    });
+
+    expect(onUsage).toHaveBeenCalledWith({
+      inputTokens: 1000,
+      outputTokens: 40,
+      totalTokens: 1040,
+      cacheReadInputTokens: 800,
+      cacheCreationInputTokens: 80,
     });
   });
 });

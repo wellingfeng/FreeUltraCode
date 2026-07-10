@@ -1,7 +1,7 @@
 // CONTRACT: disk-backed store for small settings/config blobs (image, video,
 // music, 3D, speech generation, plus the UI-design / sprite / ComfyUI / mesh
 // channels, free-channel model overrides + proxy port, and the model-list
-// cache). It exists to lift these settings off the browser's ~5MB localStorage
+// cache, and appearance). It exists to lift these settings off the browser's ~5MB localStorage
 // quota: in the Tauri desktop shell they are persisted to disk under
 // `.ultragamestudio/settings/*.json` via the same atomic history commands the
 // session store uses, while the browser/dev build falls back to localStorage.
@@ -33,8 +33,10 @@ const SETTINGS_PROFILE_REGISTRY_KEY = 'ultragamestudio.settingsProfiles.v1';
 
 /** Every settings file managed by this store, as `(relPath, legacyLocalStorageKey)`. */
 const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: string]> = [
+  ['settings/appearance.v1.json', 'ultragamestudio.appearance.v1'],
   ['settings/imageGeneration.v1.json', 'ultragamestudio.imageGeneration.v1'],
   ['settings/videoGeneration.v1.json', 'ultragamestudio.videoGeneration.v1'],
+  ['settings/animationGeneration.v1.json', 'ultragamestudio.animationGeneration.v1'],
   ['settings/musicGeneration.v1.json', 'ultragamestudio.musicGeneration.v1'],
   ['settings/threeDGeneration.v1.json', 'ultragamestudio.threeDGeneration.v1'],
   ['settings/speechGeneration.v1.json', 'ultragamestudio.speechGeneration.v1'],
@@ -49,6 +51,7 @@ const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: stri
   ['settings/memoryConfig.v1.json', 'ultragamestudio.memoryConfig.v1'],
   ['settings/memoryReviewState.v1.json', 'ultragamestudio.memoryReviewState.v1'],
   ['settings/cacheCleanup.v1.json', 'ultragamestudio.cacheCleanup.v1'],
+  ['settings/knowledgeBase.v1.json', 'ultragamestudio.knowledgeBase.v1'],
 ];
 
 // relPath -> serialized JSON. Authoritative in-memory view once `diskReady`.

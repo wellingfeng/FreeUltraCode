@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  BookOpen,
   Box,
   Boxes,
   Check,
@@ -128,6 +129,7 @@ import { historyStore } from '@/store/history/store';
 import type { WorkspaceRecord, WorkspaceSummary } from '@/store/history/types';
 import { useStore } from '@/store/useStore';
 import { PluginStorePanel } from '@/panels/PluginStorePanel';
+import KnowledgeBaseSettings from '@/panels/settings/KnowledgeBaseSettings';
 import { type Locale } from '@/lib/i18n';
 
 /**
@@ -189,6 +191,7 @@ const PROJECT_SETTINGS_EN: Record<string, string> = {
   '开启后，输入 /sprite-mode-start 或 /sprite 会按下方参数生成可规范化的 raw sheet，并为后处理与验收准备输入。':
     'When enabled, /sprite-mode-start or /sprite generates a normalizable raw sheet with the parameters below and prepares input for postprocess and acceptance checks.',
   '可用': 'Available',
+  '知识库': 'Knowledge Base',
   '空格分隔；按 LSP stdio 启动参数填写':
     'Space-separated; follow the LSP stdio launch arguments',
   '空格分隔；工作区可用 {workspace}':
@@ -327,6 +330,7 @@ import {
 } from '@/lib/pluginStoreTranslation';
 type ProjectSettingsTab =
   | 'overview'
+  | 'knowledgeBase'
   | 'environment'
   | 'blueprint'
   | 'mcp'
@@ -336,6 +340,7 @@ type ProjectSettingsTab =
 
 const tabs: { id: ProjectSettingsTab; label: string; Icon: LucideIcon }[] = [
   { id: 'overview', label: '概览', Icon: Info },
+  { id: 'knowledgeBase', label: '知识库', Icon: BookOpen },
   { id: 'environment', label: '远程环境', Icon: Server },
   { id: 'blueprint', label: '蓝图', Icon: FileText },
   { id: 'automation', label: '权限/自动化', Icon: SlidersHorizontal },
@@ -3628,6 +3633,20 @@ export default function ProjectSettingsModal({
             </div>
           </section>
         </div>
+      );
+    }
+
+    if (tab === 'knowledgeBase') {
+      return (
+        <KnowledgeBaseSettings
+          locale={locale}
+          workspace={{
+            ...workspace,
+            path: workspacePath,
+            name: record?.name ?? workspace.name,
+            metadata: record?.metadata ?? workspace.metadata,
+          }}
+        />
       );
     }
 

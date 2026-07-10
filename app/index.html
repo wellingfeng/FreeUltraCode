@@ -16,8 +16,20 @@
     <div id="root"></div>
     <script>
       (() => {
-        const fallback = 'pencil';
-        const supported = new Set([fallback]);
+        const fallback = 'cherry-dark';
+        const supported = new Set([
+          'cherry-dark',
+          'pencil',
+          'cherry-light',
+          'midnight',
+          'aurora',
+          'daylight',
+          'ember',
+          'campbell',
+          'campbell-powershell',
+          'one-half-dark',
+          'solarized-dark',
+        ]);
         try {
           const raw =
             localStorage.getItem('ultragamestudio.appearance.v1') ??
@@ -30,13 +42,10 @@
               : fallback;
           const id = supported.has(storedId) ? storedId : fallback;
           document.documentElement.dataset.ugsStyle = id;
-          document.documentElement.classList.toggle(
-            'ugs-style-pencil',
-            id === 'pencil',
-          );
+          document.documentElement.classList.add(`ugs-style-${id}`);
         } catch {
           document.documentElement.dataset.ugsStyle = fallback;
-          document.documentElement.classList.add('ugs-style-pencil');
+          document.documentElement.classList.add(`ugs-style-${fallback}`);
         }
       })();
     </script>

@@ -27,6 +27,7 @@ import {
   friendlyImageGenerationError,
   musicResultMarkdown,
   videoResultMarkdown,
+  animationResultMarkdown,
   speechResultMarkdown,
   spriteResultMarkdown,
   threeDResultMarkdown,
@@ -86,6 +87,7 @@ import { generateImage, imageProviderById, imageProviderModel, imageProviderRead
 import { generateMusic, loadMusicGenerationSettings, musicDurationSecondsFromPrompt, musicProviderById, musicProviderModel, musicProviderReady, musicProviders, preferredReadyMusicProviderId, stripMusicCommand, type MusicProviderId, type MusicGenerationSettings } from '@/lib/musicGeneration';
 import { assessThreeDRigging, generateThreeD, loadThreeDGenerationSettings, preferredReadyThreeDProviderId, stripThreeDCommand, threeDProviderById, threeDProviderModel, threeDProviderReady, threeDProviders, threeDRiggingPromptGuidance, type ThreeDProviderId, type ThreeDGenerationSettings } from '@/lib/threeDGeneration';
 import { generateVideo, loadVideoGenerationSettings, preferredReadyVideoProviderId, stripVideoCommand, videoDurationSecondsFromPrompt, videoProviderById, videoProviderModel, videoProviderReady, videoProviders, type VideoProviderId, type VideoGenerationSettings } from '@/lib/videoGeneration';
+import { animationProviderById, animationProviderModel, animationProviderReady, animationProviders, generateAnimation, inferAnimationMode, loadAnimationGenerationSettings, preferredReadyAnimationGenerationProviderId, preferredReadyAnimationProviderId, stripAnimationCommand, type AnimationGenerationSettings, type AnimationProviderId } from '@/lib/animationGeneration';
 import { generateSpeech, loadSpeechGenerationSettings, preferredReadySpeechProviderId, speechProviderById, speechProviderModel, speechProviderReady, speechProviderVoice, speechProviders, stripSpeechCommand, type SpeechProviderId, type SpeechGenerationSettings } from '@/lib/speechGeneration';
 import { generateSprite, loadSpriteGenerationSettings, spriteSheetGridForSettings, stripSpriteCommand } from '@/lib/spriteGeneration';
 import { generateWorldModel, loadWorldModelGenerationSettings, preferredReadyWorldModelProviderId, serializeWorldModelSpec, stripWorldModelCommand, worldModelProviderById, worldModelProviderModel, worldModelProviderReady, worldModelProviders, type WorldModelGenerationSettings, type WorldModelProviderId } from '@/lib/worldModel';
@@ -196,6 +198,50 @@ function preferredReadyVideoProviderIdForProfile(
   );
 }
 
+function preferredReadyAnimationProviderIdForProfile(
+  settings: AnimationGenerationSettings,
+  profile: SettingsProfileOptions,
+): AnimationProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyAnimationProviderId(settings);
+  }
+  if (
+    animationProviderReady(settings.preferredProviderId, settings) &&
+    !animationProviderById(settings.preferredProviderId).local
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    animationProviders().find(
+      (provider) => !provider.local && animationProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
+function preferredReadyAnimationGenerationProviderIdForProfile(
+  settings: AnimationGenerationSettings,
+  profile: SettingsProfileOptions,
+): AnimationProviderId | null {
+  if (!isRemoteSettingsProfile(profile.profileId)) {
+    return preferredReadyAnimationGenerationProviderId(settings);
+  }
+  if (
+    animationProviderReady(settings.preferredProviderId, settings) &&
+    !animationProviderById(settings.preferredProviderId).local &&
+    animationProviderById(settings.preferredProviderId).capabilities.includes('generate')
+  ) {
+    return settings.preferredProviderId;
+  }
+  return (
+    animationProviders().find(
+      (provider) =>
+        !provider.local &&
+        provider.capabilities.includes('generate') &&
+        animationProviderReady(provider.id, settings),
+    )?.id ?? null
+  );
+}
+
 function preferredReadySpeechProviderIdForProfile(
   settings: SpeechGenerationSettings,
   profile: SettingsProfileOptions,
@@ -273,6 +319,17 @@ const VIDEO_PROMPT_SYSTEM = `你是专业的"视频生成提示词工程师"。�
 - 不要要求模仿在世真人、受版权角色或受保护影片；用可授权的风格描述替代。
 - 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
 - 只描述要生成什么视频，不要写"请生成/帮我拍"之类的指令性措辞。`;
+
+const ANIMATION_PROMPT_SYSTEM = `你是专业的"游戏角色动画提示词工程师"。用户会给出一句关于想要搜索或生成骨骼动画、动作剪辑、动捕、BVH/FBX/GLB 动画的描述，你要把它改写成一段可直接用于动画库搜索或 AI 动画生成的提示词。
+要求：
+- 直接输出最终提示词正文，不要任何解释、前后缀、标题、引号或代码块。
+- 聚焦动作本身：动作名称、起止姿态、身体重心、脚步/手臂/躯干/头部变化、循环方式、节奏、时长、情绪、接触物体和游戏用途。
+- 明确目标骨架或角色类型：humanoid、quadruped、creature、robot、Mixamo-compatible、UE Mannequin 等；用户未指定时默认 humanoid game character。
+- 明确期望导出或检索格式：FBX、BVH、GLB、preview MP4；用户未指定时默认 game-ready FBX/GLB with preview MP4。
+- 不要写镜头语言、摄影、景别、光照、电影画面等视频提示词内容，除非用户明确要求预览视频。
+- 保留用户明确指定的内容；用户没提到的细节由你做合理且不喧宾夺主的补充。
+- 与用户输入语言保持一致（中文需求输出中文提示词，英文需求输出英文提示词）。
+- 只描述要找/生成什么动作，不要写"请生成/帮我找"之类的指令性措辞。`;
 
 const SPEECH_PROMPT_SYSTEM = `你是专业的"配音文案撰稿人"。你的输出会被原样交给文字转语音(TTS)模型逐字朗读，所以你写出的就是要被念出来的最终台词本身，而不是对它的描述或指令。
 请先判断用户输入属于哪一类：
@@ -458,6 +515,7 @@ type GenerationPromptMode =
   | 'music'
   | 'threeD'
   | 'video'
+  | 'animation'
   | 'sprite'
   | 'speech'
   | 'world';
@@ -475,11 +533,13 @@ function generationModeStartedAt(
           ? composer.threeDModeStartedAt
           : mode === 'video'
             ? composer.videoModeStartedAt
-            : mode === 'speech'
-              ? composer.speechModeStartedAt
-              : mode === 'world'
-                ? composer.worldModeStartedAt
-                : composer.spriteModeStartedAt;
+            : mode === 'animation'
+              ? composer.animationModeStartedAt
+              : mode === 'speech'
+                ? composer.speechModeStartedAt
+                : mode === 'world'
+                  ? composer.worldModeStartedAt
+                  : composer.spriteModeStartedAt;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -495,17 +555,20 @@ function generationModeActive(
         ? composer.threeDMode
         : mode === 'video'
           ? composer.videoMode
-        : mode === 'speech'
-          ? composer.speechMode
-          : mode === 'world'
-            ? composer.worldMode
-            : composer.spriteMode;
+          : mode === 'animation'
+            ? composer.animationMode
+            : mode === 'speech'
+              ? composer.speechMode
+              : mode === 'world'
+                ? composer.worldMode
+                : composer.spriteMode;
 }
 
 function generationModeEnteredText(mode: GenerationPromptMode, text: string): boolean {
   if (mode === 'image') return /已进入生图模式|image mode on/i.test(text);
   if (mode === 'music') return /已进入音乐模式|music mode on/i.test(text);
   if (mode === 'video') return /已进入视频模式|video mode on/i.test(text);
+  if (mode === 'animation') return /已进入动画模式|animation mode on/i.test(text);
   if (mode === 'speech') return /已进入语音模式|speech mode on/i.test(text);
   if (mode === 'sprite') return /已进入\s*Sprite\s*模式|sprite mode on/i.test(text);
   if (mode === 'world') return /已进入世界模型模式|world-model mode on/i.test(text);
@@ -516,6 +579,7 @@ function generationModeExitedText(mode: GenerationPromptMode, text: string): boo
   if (mode === 'image') return /已退出生图模式|image mode off/i.test(text);
   if (mode === 'music') return /已退出音乐模式|music mode off/i.test(text);
   if (mode === 'video') return /已退出视频模式|video mode off/i.test(text);
+  if (mode === 'animation') return /已退出动画模式|animation mode off/i.test(text);
   if (mode === 'speech') return /已退出语音模式|speech mode off/i.test(text);
   if (mode === 'sprite') return /已退出\s*Sprite\s*模式|sprite mode off/i.test(text);
   if (mode === 'world') return /已退出世界模型模式|world-model mode off/i.test(text);
@@ -545,6 +609,7 @@ function stripGenerationCommand(
   if (mode === 'image') return stripImageCommand(text);
   if (mode === 'music') return stripMusicCommand(text);
   if (mode === 'video') return stripVideoCommand(text);
+  if (mode === 'animation') return stripAnimationCommand(text);
   if (mode === 'speech') return stripSpeechCommand(text);
   if (mode === 'sprite') return stripSpriteCommand(text);
   if (mode === 'world') return stripWorldModelCommand(text);
@@ -637,6 +702,18 @@ function cleanGeneratedVideoPrompt(raw: string): string {
   if (fence) text = fence[1].trim();
   text = text
     .replace(/^(?:视频提示词|分镜提示词|镜头提示词|提示词|prompt)\s*[:：]\s*/iu, '')
+    .trim();
+  const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
+  if (quoted) text = quoted[1].trim();
+  return text;
+}
+
+function cleanGeneratedAnimationPrompt(raw: string): string {
+  let text = raw.trim();
+  const fence = /^```[^\n]*\n([\s\S]*?)\n```$/.exec(text);
+  if (fence) text = fence[1].trim();
+  text = text
+    .replace(/^(?:动画提示词|动作提示词|动捕提示词|motion\s*prompt|animation\s*prompt|提示词|prompt)\s*[:：]\s*/iu, '')
     .trim();
   const quoted = /^["'「『]([\s\S]+)["'」』]$/u.exec(text);
   if (quoted) text = quoted[1].trim();
@@ -1038,6 +1115,80 @@ async function refineVideoPromptViaModel(
       );
       return {
         prompt: cleanGeneratedVideoPrompt(text || live),
+        routeLine: gatewayRouteLine(cli),
+        routeHeader: gatewayRouteHeader(cli),
+      };
+    } finally {
+      ch.cliRunIds.delete(runId);
+    }
+  }
+  return null;
+}
+
+async function refineAnimationPromptViaModel(
+  ch: AiEditChannel,
+  userText: string,
+  codingSelection: GatewaySelection,
+  permission: string,
+  onProgress: (live: string) => void,
+): Promise<{ prompt: string; routeLine: string; routeHeader: string } | null> {
+  const userContent = `请把下面的游戏角色动画/动作需求改写成一段高质量的动画库搜索或 AI 动画生成提示词：\n\n${userText}`;
+  const projectMcpGuidance = projectMcpGuidanceForState(useStore.getState(), {
+    workspaceId: ch.workspaceId,
+    sessionId: ch.sessionId,
+  });
+  const preferCliForProjectMcp = isTauri() && !!projectMcpGuidance;
+  const system = `${ANIMATION_PROMPT_SYSTEM}${projectMcpGuidance}`;
+  const direct = resolveDirectGatewayRoute(codingSelection);
+  if (direct && !preferCliForProjectMcp) {
+    let full = '';
+    const text = await completeGatewayText({
+      route: direct,
+      system,
+      userContent,
+      maxTokens: 1024,
+      signal: ch.abortController.signal,
+      usageContext: { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+      permission,
+      cwd: ch.workspaceRootPath ?? undefined,
+      onDelta: (chunk) => {
+        full += chunk;
+        onProgress(full);
+      },
+    });
+    return {
+      prompt: cleanGeneratedAnimationPrompt(full || text),
+      routeLine: gatewayRouteLine(direct),
+      routeHeader: gatewayRouteHeader(direct),
+    };
+  }
+  if (isTauri()) {
+    if (isFreeChannelSelection(codingSelection)) {
+      await ensureFreeProxy(freeProxyOptionsForSelection(codingSelection));
+    }
+    const cli = await resolveCliGatewayRoute(codingSelection);
+    const runId = makeCliRunId();
+    ch.cliRunIds.add(runId);
+    try {
+      let live = '';
+      const text = await aiEditViaCli(
+        `${system}\n\n${userContent}`,
+        cli.adapter,
+        {
+          permission,
+          model: cli.model,
+          cliCommand: cli.cliCommand,
+          env: cli.env,
+          cwd: ch.workspaceRootPath ?? undefined,
+          runId,
+          onProgress: (chunk) => {
+            live += chunk;
+            onProgress(live);
+          },
+        },
+      );
+      return {
+        prompt: cleanGeneratedAnimationPrompt(text || live),
         routeLine: gatewayRouteLine(cli),
         routeHeader: gatewayRouteHeader(cli),
       };
@@ -2246,6 +2397,246 @@ export function startVideoGenerationTurn(
       if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
       setAssistant(
         `${elapsed()} · 失败\n✗ 视频生成失败: ${msg}\n\n请在设置 > 视频渠道中配置可用的商用或免费 Provider。`,
+        true,
+      );
+      syncAndPersistSessionRunStatus(sessionKey, 'error');
+    } finally {
+      removeAiEditChannel(ch);
+    }
+  })();
+}
+
+export function startAnimationGenerationTurn(
+  text: string,
+  options: { providerId?: AnimationProviderId; model?: string } = {},
+): void {
+  const prompt = stripAnimationCommand(text);
+  if (!prompt) return;
+  const state = useStore.getState();
+  if (isWorkflowReadOnly(state)) return;
+  const generationPrompt = modeContextPrompt(state, 'animation', prompt);
+  const sessionKey = activeWorkflowSessionKey(state);
+  const settingsProfile = generationSettingsProfileForState(state);
+  const settings = loadAnimationGenerationSettings(settingsProfile);
+  const requestedProviderId = options.providerId;
+  const inferredMode = inferAnimationMode(generationPrompt);
+  const requestedProvider =
+    requestedProviderId &&
+    (!isRemoteSettingsProfile(settingsProfile.profileId) ||
+      !animationProviderById(requestedProviderId).local)
+      ? requestedProviderId
+      : null;
+  const providerId =
+    requestedProvider ??
+    (inferredMode === 'generate'
+      ? preferredReadyAnimationGenerationProviderIdForProfile(settings, settingsProfile) ??
+        preferredReadyAnimationProviderIdForProfile(settings, settingsProfile)
+      : preferredReadyAnimationProviderIdForProfile(settings, settingsProfile));
+  if (!providerId) {
+    useStore
+      .getState()
+      .appendChatNote('✗ 当前项目没有可用的动画渠道。请在设置 > 动画渠道中启用 Mixamo 或配置 AI 动画 Provider。', 'system');
+    return;
+  }
+  const codingSelection = workflowDefaultGatewaySelection(
+    state.workflow,
+    state.composer.model,
+  );
+  const codingPermission = state.composer.permission || 'full';
+
+  if (state.blockedSendTip) useStore.setState({ blockedSendTip: null });
+
+  const now = Date.now();
+  const provider = animationProviderById(providerId);
+  const providerLabel = provider.label;
+  const model = options.model?.trim() || animationProviderModel(providerId, settings);
+  const userMsg: Message = {
+    id: shortId('m'),
+    role: 'user',
+    text,
+    createdAt: now,
+  };
+  linkMessageManagedAssets(userMsg, sessionKey);
+  const assistantId = shortId('m');
+  const assistantMsg: Message = {
+    id: assistantId,
+    role: 'assistant',
+    text: `⚙ 动画：${providerLabel}${model ? ` · 模型：${model}` : ''}\n① 正在整理动作提示词…`,
+    routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+    createdAt: now + 1,
+  };
+  const promptUpdate = applyPromptTitle(state, prompt, now);
+  const activeSession = sessionForKey(state, sessionKey);
+  const simpleMode = promptUpdate.workflow.meta?.simple === true;
+  const baseMessages = state.messages;
+  const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
+  const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
+  const ch: AiEditChannel = {
+    key: chatTurnKey(chSessionKey, userMsg.id),
+    sessionKey: chSessionKey,
+    workspaceId: sessionKey.workspaceId,
+    sessionId: sessionKey.sessionId,
+    workspaceRootPath,
+    workflow: promptUpdate.workflow,
+    messages: [...baseMessages, userMsg, assistantMsg],
+    cliRunIds: new Set<string>(),
+    abortController: new AbortController(),
+    workflowSession: activeSession?.isWorkflow ?? !simpleMode,
+    chat: true,
+    ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
+  };
+
+  const setAssistant = (textValue: string, persist: boolean) => {
+    if (!aiEditRegistered(ch)) return;
+    ch.messages = ch.messages.map((message) =>
+      message.id === assistantId
+        ? {
+            ...message,
+            text: textValue,
+            routeLabel: model ? `${providerLabel} · ${model}` : providerLabel,
+          }
+        : message,
+    );
+    aiEditCommitMessages(ch, persist);
+  };
+
+  addAiEditChannel(ch);
+  if (aiEditViewActive(ch)) {
+    useStore.setState({
+      messages: ch.messages,
+      sessions: promptUpdate.sessions,
+      sessionTree: promptUpdate.sessionTree,
+      workflow: ch.workflow,
+    });
+  }
+  updateAiEditSessionSummary(ch);
+  if (ch.workspaceId && ch.sessionId) {
+    void historyStore
+      .updateSession(ch.workspaceId, ch.sessionId, {
+        messages: ch.messages,
+        ...(ch.workflowSession ? { workflow: ch.workflow } : {}),
+        meta: { runStatus: 'running' },
+      })
+      .catch(() => {});
+  }
+  syncAndPersistSessionRunStatus(sessionKey, 'running');
+
+  void (async () => {
+    const startedAt = Date.now();
+    const elapsed = () =>
+      `⏱ ${formatClock(startedAt)} → ${formatClock(Date.now())} · 耗时 ${formatDuration(
+        Date.now() - startedAt,
+      )}`;
+    try {
+      let animationPrompt = generationPrompt;
+      let refineHeader = '';
+      try {
+        const refined = await refineAnimationPromptViaModel(
+          ch,
+          generationPrompt,
+          codingSelection,
+          codingPermission,
+          (live) => {
+            if (!aiEditRegistered(ch)) return;
+            setAssistant(
+              `${elapsed()}\n① 撰写动画提示词中…\n\n${live.trim() || '⟳ 生成中…'}`,
+              false,
+            );
+          },
+        );
+        if (refined && refined.prompt) {
+          animationPrompt = refined.prompt;
+          refineHeader = refined.routeHeader;
+        }
+      } catch {
+        if (ch.abortController.signal.aborted || !aiEditRegistered(ch)) return;
+        animationPrompt = generationPrompt;
+      }
+      if (!aiEditRegistered(ch)) return;
+      const mode = inferredMode;
+      const promptModelLine = refineHeader
+        ? `✎ 提示词模型：${refineHeader}\n`
+        : '';
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}② 正在${
+          mode === 'search'
+            ? '搜索动作库'
+            : provider.local
+              ? '调用本地动画模型'
+              : '调用动画 API'
+        }…\n\n动画需求：${animationPrompt}`,
+        false,
+      );
+      const result = await generateAnimation(
+        {
+          prompt: animationPrompt,
+          providerId,
+          model,
+          mode,
+          signal: ch.abortController.signal,
+        },
+        settings,
+      );
+      setAssistant(
+        `${elapsed()}\n${promptModelLine}${animationResultMarkdown(result)}`,
+        true,
+      );
+      const origin = animationProviderById(result.providerId).local ? 'local' : 'remote';
+      if (result.videos.length) {
+        void captureGeneratedAssets({
+          kind: 'video',
+          sources: result.videos,
+          origin,
+          provider: result.providerLabel,
+          model: result.model,
+          prompt: result.prompt,
+          sessionId: ch.sessionId ?? undefined,
+          workspaceId: ch.workspaceId,
+          messageId: assistantId,
+          cwd: ch.workspaceRootPath ?? undefined,
+          titlePrefix: 'animation-preview',
+        });
+      }
+      const animationAssets = [...result.models, ...result.clips];
+      if (animationAssets.length) {
+        void captureGeneratedAssets({
+          kind: 'mesh',
+          sources: animationAssets,
+          origin,
+          provider: result.providerLabel,
+          model: result.model,
+          prompt: result.prompt,
+          sessionId: ch.sessionId ?? undefined,
+          workspaceId: ch.workspaceId,
+          messageId: assistantId,
+          cwd: ch.workspaceRootPath ?? undefined,
+          titlePrefix: 'animation',
+          meta: { animationMode: result.mode },
+        });
+      }
+      if (result.metadata.length) {
+        void captureGeneratedAssets({
+          kind: 'file',
+          sources: result.metadata,
+          origin,
+          provider: result.providerLabel,
+          model: result.model,
+          prompt: result.prompt,
+          sessionId: ch.sessionId ?? undefined,
+          workspaceId: ch.workspaceId,
+          messageId: assistantId,
+          cwd: ch.workspaceRootPath ?? undefined,
+          titlePrefix: 'animation-metadata',
+          meta: { animationMode: result.mode },
+        });
+      }
+      commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
+      syncAndPersistSessionRunStatus(sessionKey, 'success');
+    } catch (err) {
+      if (!aiEditRegistered(ch)) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setAssistant(
+        `${elapsed()} · 失败\n✗ 动画处理失败: ${msg}\n\n请在设置 > 动画渠道中启用 Mixamo 搜索，或配置 KIMODO / Meshy / DeepMotion / 本地动画服务。`,
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');

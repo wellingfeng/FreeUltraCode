@@ -23,6 +23,12 @@ import {
   type VideoGenerationSettings,
 } from '@/lib/videoGeneration';
 import {
+  animationProviderById,
+  animationProviderReady,
+  loadAnimationGenerationSettings,
+  type AnimationGenerationSettings,
+} from '@/lib/animationGeneration';
+import {
   loadSpeechGenerationSettings,
   speechProviderById,
   speechProviderReady,
@@ -48,6 +54,7 @@ export type SlashGuardChannel =
   | 'music'
   | 'threeD'
   | 'video'
+  | 'animation'
   | 'speech'
   | 'sprite'
   | 'comfyui'
@@ -65,6 +72,7 @@ export interface SlashCommandGuardSettings {
   music?: MusicGenerationSettings;
   threeD?: ThreeDGenerationSettings;
   video?: VideoGenerationSettings;
+  animation?: AnimationGenerationSettings;
   speech?: SpeechGenerationSettings;
   sprite?: SpriteGenerationSettings;
   ui?: UiDesignChannelSettings;
@@ -86,6 +94,10 @@ const GENERATION_COMMANDS: Array<{
   {
     channel: 'video',
     pattern: /^\/(?:video|movie|film|clip|视频|生成视频|短片|video-mode-start)(?:\s|$)/iu,
+  },
+  {
+    channel: 'animation',
+    pattern: /^\/(?:anim|animation|motion|mocap|动画|动作|动作库|anim-mode-start)(?:\s|$)/iu,
   },
   {
     channel: 'speech',
@@ -125,6 +137,7 @@ function modeChannelFromComposer(composer: {
   musicMode?: boolean;
   threeDMode?: boolean;
   videoMode?: boolean;
+  animationMode?: boolean;
   speechMode?: boolean;
   spriteMode?: boolean;
   comfyMode?: boolean;
@@ -134,6 +147,7 @@ function modeChannelFromComposer(composer: {
   if (composer.musicMode) return 'music';
   if (composer.threeDMode) return 'threeD';
   if (composer.videoMode) return 'video';
+  if (composer.animationMode) return 'animation';
   if (composer.speechMode) return 'speech';
   if (composer.spriteMode) return 'sprite';
   if (composer.comfyMode) return 'comfyui';
@@ -204,6 +218,19 @@ function videoGuard(
   return blocked(
     'video',
     `当前指令需要视频渠道（${provider.label} 未配置完成），请先到设置 > 视频渠道 配置可用 Provider。`,
+  );
+}
+
+function animationGuard(
+  settings = loadAnimationGenerationSettings(),
+): SlashCommandGuardResult {
+  if (animationProviderReady(settings.preferredProviderId, settings)) {
+    return readyResult('animation');
+  }
+  const provider = animationProviderById(settings.preferredProviderId);
+  return blocked(
+    'animation',
+    `当前指令需要动画渠道（${provider.label} 未配置完成），请先到设置 > 动画渠道启用 Mixamo 或配置可用 Provider。`,
   );
 }
 
@@ -281,6 +308,8 @@ export function guardSlashCommandChannel(
       return threeDGuard(settings.threeD);
     case 'video':
       return videoGuard(settings.video);
+    case 'animation':
+      return animationGuard(settings.animation);
     case 'speech':
       return speechGuard(settings.speech);
     case 'sprite':

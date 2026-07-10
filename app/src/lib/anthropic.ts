@@ -19,7 +19,11 @@
  *     prompt) — used by the "apply advice to graph" step.
  */
 
-import type { ModelUsageReport } from '@/lib/usageMeter';
+import {
+  mergeUsageReports,
+  usageReportFromAnthropic,
+  type ModelUsageReport,
+} from '@/lib/usageMeter';
 import { INTERACTION_PROTOCOL } from '@/core/interaction';
 import { canUseProviderDirectTransport } from '@/lib/apiConfig';
 
@@ -27,49 +31,6 @@ import { canUseProviderDirectTransport } from '@/lib/apiConfig';
 export const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-
-function usageNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    return value;
-  }
-  return undefined;
-}
-
-function usageReportFromAnthropic(value: unknown): ModelUsageReport | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const raw = value as Record<string, unknown>;
-  const report: ModelUsageReport = {
-    inputTokens: usageNumber(raw.input_tokens),
-    outputTokens: usageNumber(raw.output_tokens),
-    cacheReadInputTokens:
-      usageNumber(raw.cache_read_input_tokens) ??
-      usageNumber(raw.cache_read_tokens),
-    cacheCreationInputTokens:
-      usageNumber(raw.cache_creation_input_tokens) ??
-      usageNumber(raw.cache_creation_tokens),
-  };
-  const input = report.inputTokens ?? 0;
-  const output = report.outputTokens ?? 0;
-  if (input || output) report.totalTokens = input + output;
-  return Object.values(report).some((item) => item !== undefined) ? report : null;
-}
-
-function mergeUsageReports(
-  current: ModelUsageReport | null,
-  next: ModelUsageReport | null,
-): ModelUsageReport | null {
-  if (!next) return current;
-  if (!current) return next;
-  return {
-    inputTokens: next.inputTokens ?? current.inputTokens,
-    outputTokens: next.outputTokens ?? current.outputTokens,
-    totalTokens: next.totalTokens ?? current.totalTokens,
-    cacheReadInputTokens:
-      next.cacheReadInputTokens ?? current.cacheReadInputTokens,
-    cacheCreationInputTokens:
-      next.cacheCreationInputTokens ?? current.cacheCreationInputTokens,
-  };
-}
 
 export interface StreamArgs {
   apiKey?: string;
@@ -373,7 +334,7 @@ ${INTERACTION_PROTOCOL}`;
  * CONTRACT: which built-in asset-generation channels are configured + ready.
  *
  * UltraGameStudio ships dedicated generation channels (image / music / 3D mesh /
- * video / speech / sprite, plus a ComfyUI node-graph mode). Each is driven by a
+ * video / animation / speech / sprite, plus a ComfyUI node-graph mode). Each is driven by a
  * slash command and a user-configured provider; the model cannot run them
  * itself. A `true` flag means at least one provider for that channel is
  * configured and ready, so the model should route asset needs there instead of
@@ -384,6 +345,7 @@ export interface AssetChannelAvailability {
   music: boolean;
   threeD: boolean;
   video: boolean;
+  animation: boolean;
   speech: boolean;
   sprite: boolean;
 }
@@ -416,6 +378,10 @@ const ASSET_CHANNEL_LINES: Array<{
     key: 'video',
     line: '· 视频：需要短视频、动态片段时，用 /video（或 /video-mode-start 进入视频模式）。给出可直接使用的视频提示词。',
   },
+  {
+    key: 'animation',
+    line: '· 动画：需要骨骼动作、角色动作剪辑、动捕、BVH/FBX/GLB 动画、Mixamo/KIMODO 类动作搜索或生成时，用 /anim（或 /anim-mode-start 进入动画模式）。给出动作名称、目标骨架、导出格式和可直接使用的动画提示词。',
+  },
 ];
 
 /**
@@ -440,7 +406,7 @@ export function buildAssetCapabilityBlock(channels: AssetChannelAvailability): s
   return (
     '\n\n【本应用内置生成渠道（重要）】UltraGameStudio 自带由 slash 命令触发的资产生成渠道，' +
     '后台调用用户已配置的真实 Provider。你无法自己执行这些命令，但当用户的需求会产生下列素材时，' +
-    '仅在本轮用户明确要求生成、制作、编辑、转换或查找图片/音频/视频/3D/精灵图等具体素材时启用本段；' +
+    '仅在本轮用户明确要求生成、制作、编辑、转换或查找图片/音频/视频/动画/3D/精灵图等具体素材时启用本段；' +
     '若用户是在讨论资产中心、资产列表、展示规则、产品需求、bug、偏题原因或代码修改，忽略本段并直接处理用户问题。' +
     '请优先推荐对应命令并附上一段可直接使用的提示词，让用户一键调用，' +
     '而不是一上来就用 PIL、Pillow、matplotlib、ffmpeg、canvas、SVG 等手写代码去“画”或“合成”，' +
@@ -453,7 +419,7 @@ export function buildAssetCapabilityBlock(channels: AssetChannelAvailability): s
 }
 
 const EXPLICIT_ASSET_COMMAND_RE =
-  /\/(?:image|生图|image-mode-start|comfyui-mode-start|sprite|sprite-mode-start|music|music-mode-start|mesh-mode-start|video|video-mode-start|speech|speech-mode-start|tts)(?:\s|$)/iu;
+  /\/(?:image|生图|image-mode-start|comfyui-mode-start|sprite|sprite-mode-start|music|music-mode-start|mesh-mode-start|video|video-mode-start|anim|animation|motion|mocap|anim-mode-start|speech|speech-mode-start|tts)(?:\s|$)/iu;
 
 const ASSET_ADMIN_CONTEXT_RE =
   /(?:资产中心|资产列表|资产库|资产管理|素材中心|下载中心|展示规则|显示规则|列表规则|主列表|原始(?:发送|上传)|上传内容|产品需求|偏题|跑题|无关内容|无关的内容|修改代码|代码修改|以后不要)/iu;
@@ -462,7 +428,7 @@ const ASSET_ACTION_RE =
   /(?:生成|制作|做|创建|创作|画|绘制|设计|合成|转换|转成|转为|改成|变成|编辑|修改|去背|抠图|扩图|高清化|修复|建模|渲染|配音|朗读|查找|搜索|compose|create|design|draw|edit|generate|make|model|render|search|voice)/iu;
 
 const CONCRETE_ASSET_RE =
-  /(?:图片|图像|插画|海报|头像|图标|贴图|UI\s*草图|概念图|照片|配图|精灵图|序列帧|spritesheet|sprite|音乐|BGM|配乐|音效|歌曲|语音|配音|旁白|朗读|视频|短片|动画|3D|三维|模型|mesh|glb|gltf|素材|资产|asset)/iu;
+  /(?:图片|图像|插画|海报|头像|图标|贴图|UI\s*草图|概念图|照片|配图|精灵图|序列帧|spritesheet|sprite|音乐|BGM|配乐|音效|歌曲|语音|配音|旁白|朗读|视频|短片|动画|动作|动捕|mocap|motion|bvh|fbx|3D|三维|模型|mesh|glb|gltf|素材|资产|asset)/iu;
 
 /**
  * Simple chat should not carry the slash-channel routing block unless the

@@ -3,6 +3,7 @@ import { deriveWorkspaceId } from './paths';
 import {
   __resetHistorySessionCacheForTests,
   historyStore,
+  titleFromText,
 } from './store';
 import type {
   HistoryConfig,
@@ -70,6 +71,132 @@ afterEach(() => {
   __resetHistorySessionCacheForTests();
   vi.useRealTimers();
   window.localStorage.clear();
+});
+
+describe('historyStore session title derivation', () => {
+  it('drops leading pasted image paths from prompt-derived titles', () => {
+    const title = titleFromText(
+      '`E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1783578658027-52db4c04aa12e57d-0.png`，这里的失败是因为什么，好像我不应该失败才对，是因为超时吗，还是什么原因',
+    );
+
+    expect(title).toContain('这里的失败是因为什么');
+    expect(title).not.toContain('clipboard-images');
+    expect(title).not.toContain('UltraGameStudio');
+  });
+
+  it('falls back when the prompt only contains a local path', () => {
+    expect(titleFromText('E:\\UltraGameStudio\\shot.png', '新会话')).toBe(
+      '新会话',
+    );
+  });
+});
+
+describe('historyStore session activity timestamps', () => {
+  it('uses assistant completion time when replacing session messages', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
+    const workspace: WorkspaceRecord = {
+      id: workspaceId,
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
+      createdAt: 1,
+      updatedAt: 1,
+      sessionCount: 0,
+    };
+    writeHistoryJson('workspaces/index.json', [workspaceSummary(workspace)]);
+    writeHistoryJson(`workspaces/${workspaceId}/meta.json`, workspace);
+
+    const userMessage = {
+      id: 'm_user',
+      role: 'user' as const,
+      text: 'start',
+      createdAt: 1_000,
+    };
+    const created = await historyStore.createSession({
+      workspaceId,
+      isWorkflow: false,
+      messages: [userMessage],
+    });
+
+    const updated = await historyStore.updateSession(workspaceId, created.id, {
+      messages: [
+        userMessage,
+        {
+          id: 'm_assistant',
+          role: 'assistant',
+          text: 'done',
+          createdAt: 1_001,
+          completedAt: 5_000,
+        },
+      ],
+    });
+    const sessions = await historyStore.listSessions(workspaceId);
+
+    expect(updated.updatedAt).toBe(5_000);
+    expect(sessions[0]?.updatedAt).toBe(5_000);
+  });
+
+  it('rebuilds legacy indexes using assistant elapsed end time', async () => {
+    const workspaceId = await deriveWorkspaceId('E:\\UltraGameStudio');
+    const workspace: WorkspaceRecord = {
+      id: workspaceId,
+      path: 'E:\\UltraGameStudio',
+      name: 'UltraGameStudio',
+      createdAt: 1,
+      updatedAt: 1,
+      sessionCount: 2,
+    };
+    const longStart = new Date(2026, 0, 1, 14, 18, 53).getTime();
+    const longEnd = new Date(2026, 0, 1, 15, 3, 25).getTime();
+    const shortStart = new Date(2026, 0, 1, 14, 21, 0).getTime();
+    const longSession: SessionRecord = {
+      id: 's_long',
+      workspaceId,
+      title: 'long first turn',
+      isWorkflow: false,
+      createdAt: longStart,
+      updatedAt: longStart,
+      messages: [
+        {
+          id: 'm_long',
+          role: 'assistant',
+          text: '⏱ 14:18:53 → 15:03:25 · 耗时 44m 32s\n完成。',
+          createdAt: longStart,
+        },
+      ],
+    };
+    const shortSession = sessionRecord(
+      workspaceId,
+      's_short',
+      'short later start',
+      shortStart,
+    );
+
+    writeHistoryJson('workspaces/index.json', [workspaceSummary(workspace)]);
+    writeHistoryJson(`workspaces/${workspaceId}/meta.json`, workspace);
+    writeHistoryJson(`workspaces/${workspaceId}/sessions/index.json`, [
+      sessionSummary(shortSession),
+      sessionSummary(longSession),
+    ]);
+    writeHistoryJson(
+      `workspaces/${workspaceId}/sessions/${longSession.id}.json`,
+      longSession,
+    );
+    writeHistoryJson(
+      `workspaces/${workspaceId}/sessions/${shortSession.id}.json`,
+      shortSession,
+    );
+
+    const sessions = await historyStore.listSessions(workspaceId);
+
+    expect(sessions.map((session) => session.id)).toEqual([
+      longSession.id,
+      shortSession.id,
+    ]);
+    expect(sessions[0]?.updatedAt).toBe(longEnd);
+    expect(sessions[0]?.activityVersion).toBe(2);
+  });
 });
 
 describe('historyStore lone surrogate sanitization', () => {

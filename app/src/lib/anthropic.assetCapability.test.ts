@@ -10,6 +10,7 @@ const none: AssetChannelAvailability = {
   music: false,
   threeD: false,
   video: false,
+  animation: false,
   speech: false,
   sprite: false,
 };
@@ -47,6 +48,7 @@ describe('buildAssetCapabilityBlock', () => {
       music: true,
       threeD: true,
       video: true,
+      animation: true,
       speech: true,
       sprite: true,
     });
@@ -56,6 +58,7 @@ describe('buildAssetCapabilityBlock', () => {
     expect(text).toContain('/music');
     expect(text).toContain('/speech');
     expect(text).toContain('/video');
+    expect(text).toContain('/anim');
   });
 
   it('states that asset-center/product-rule requests must not trigger channel routing', () => {

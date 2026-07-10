@@ -80,6 +80,80 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/已折叠后续文件引用|More file references folded/);
   });
 
+  it('keeps backticked file names visible after file chip budget is exhausted', () => {
+    const paths = Array.from(
+      { length: MESSAGE_FILE_CHIP_LIMIT + 4 },
+      (_, i) => `src/generated/file-${i}.ts`,
+    ).join('\n');
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: [
+          paths,
+          '',
+          '最终本地只剩这些待提交文件：',
+          '- `Cargo.lock`：同步 app 版本到 `0.5.6`',
+          '- `lib.rs`',
+          '- `i18n.ts`',
+          '- `ProjectFileTree.tsx`',
+        ].join('\n'),
+        streaming: false,
+      }),
+    );
+
+    expect(html).toMatch(/Cargo\.lock/);
+    expect(html).toMatch(/lib\.rs/);
+    expect(html).toMatch(/i18n\.ts/);
+    expect(html).toMatch(/ProjectFileTree\.tsx/);
+    expect(html).toMatch(/ai-inline-code/);
+  });
+
+  it('expands folded file references in the message stream', async () => {
+    const paths = Array.from(
+      { length: MESSAGE_FILE_CHIP_LIMIT + 3 },
+      (_, i) => `src/generated/file-${i}.ts`,
+    ).join('\n');
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(MessageContent, {
+            text: `本地文件：\n${paths}`,
+            streaming: false,
+            onOpenFile: () => {},
+          }),
+        );
+      });
+
+      expect(container.querySelectorAll('.ai-file-chip')).toHaveLength(
+        MESSAGE_FILE_CHIP_LIMIT,
+      );
+      expect(container.querySelector('.ai-file-chip-limit')).not.toBeNull();
+      expect(container.textContent).not.toContain(
+        `file-${MESSAGE_FILE_CHIP_LIMIT + 2}.ts`,
+      );
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('.ai-file-chip-limit')?.click();
+      });
+
+      expect(container.querySelector('.ai-file-chip-limit')).toBeNull();
+      expect(container.querySelectorAll('.ai-file-chip')).toHaveLength(
+        MESSAGE_FILE_CHIP_LIMIT + 3,
+      );
+      expect(container.textContent).toContain(
+        `file-${MESSAGE_FILE_CHIP_LIMIT + 2}.ts`,
+      );
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('renders highlighted code, table, and file chip', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, { text: sample, streaming: false }),

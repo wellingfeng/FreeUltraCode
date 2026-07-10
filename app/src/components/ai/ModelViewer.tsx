@@ -20,6 +20,7 @@ type AnimationClip = import('three').AnimationClip;
 type AnimationMixer = import('three').AnimationMixer;
 type OrbitControls = import('three/addons/controls/OrbitControls.js').OrbitControls;
 type GLTF = import('three/addons/loaders/GLTFLoader.js').GLTF;
+type BVHLoadResult = { skeleton: import('three').Skeleton; clip: AnimationClip };
 
 type ViewerStatus = 'loading' | 'ready' | 'unsupported' | 'error';
 type LoadedModel = { object: Object3D; animations: AnimationClip[] };
@@ -104,6 +105,7 @@ export default function ModelViewer({
           stlModule,
           fbxModule,
           plyModule,
+          bvhModule,
         ] = await Promise.all([
           import('three'),
           import('three/addons/controls/OrbitControls.js'),
@@ -112,6 +114,7 @@ export default function ModelViewer({
           import('three/addons/loaders/STLLoader.js'),
           import('three/addons/loaders/FBXLoader.js'),
           import('three/addons/loaders/PLYLoader.js'),
+          import('three/addons/loaders/BVHLoader.js'),
         ]);
         if (disposed) return;
 
@@ -183,6 +186,7 @@ export default function ModelViewer({
             stl: stlModule,
             fbx: fbxModule,
             ply: plyModule,
+            bvh: bvhModule,
           },
           previewSrc,
           src,
@@ -407,6 +411,7 @@ async function loadModel(
     stl: typeof import('three/addons/loaders/STLLoader.js');
     fbx: typeof import('three/addons/loaders/FBXLoader.js');
     ply: typeof import('three/addons/loaders/PLYLoader.js');
+    bvh: typeof import('three/addons/loaders/BVHLoader.js');
   },
   src: string,
   extensionSrc = src,
@@ -428,6 +433,17 @@ async function loadModel(
   if (ext === 'fbx') {
     const object = await loadFromLoader<Object3D>(new modules.fbx.FBXLoader(), src);
     return { object, animations: object.animations ?? [] };
+  }
+  if (ext === 'bvh') {
+    const result = await loadFromLoader<BVHLoadResult>(new modules.bvh.BVHLoader(), src);
+    const rootBone = result.skeleton.bones[0];
+    const container = new THREE.Group();
+    if (rootBone) container.add(rootBone);
+    const helper = new THREE.SkeletonHelper(rootBone ?? container);
+    (helper as typeof helper & { skeleton: import('three').Skeleton }).skeleton =
+      result.skeleton;
+    container.add(helper);
+    return { object: container, animations: result.clip ? [result.clip] : [] };
   }
   if (ext === 'stl') {
     const geometry = await loadFromLoader<BufferGeometry>(

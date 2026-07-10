@@ -29,7 +29,7 @@
   --ugs-status-draft-contrast: #1a0a2a;
   --ugs-status-interrupted: #d995a6;
   --ugs-status-interrupted-contrast: #2a0a1a;
-  --ugs-font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --ugs-font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   --ugs-mono-font-family: 'JetBrains Mono', ui-monospace, monospace;
   --ugs-font-size: 16px;
 
@@ -155,15 +155,131 @@ html.ugs-style-pencil {
   --ugs-status-interrupted-contrast: #2a0a1a;
 }
 
+html[data-ugs-style='cherry-dark'],
+html.ugs-style-cherry-dark {
+  color-scheme: dark;
+  --ugs-color-bg: #171717;
+  --ugs-color-bg-alt: #1d1d1d;
+  --ugs-color-panel: #202020;
+  --ugs-color-panel-2: #272727;
+  --ugs-color-border: #343434;
+  --ugs-color-border-soft: #292929;
+  --ugs-color-text: #f0f0f0;
+  --ugs-color-text-muted: #b8b8b8;
+  --ugs-color-text-faint: #737373;
+  --ugs-color-accent: #f05265;
+  --ugs-color-accent-2: #18c782;
+  --ugs-color-accent-3: #d7a84f;
+  --ugs-color-accent-4: #6aa7ff;
+  --ugs-status-ai-edit: #6aa7ff;
+  --ugs-status-ai-edit-contrast: #07111f;
+  --ugs-status-running: #d7a84f;
+  --ugs-status-running-contrast: #201600;
+  --ugs-status-success: #18c782;
+  --ugs-status-success-contrast: #031d12;
+  --ugs-status-error: #f05265;
+  --ugs-status-error-contrast: #25050b;
+  --ugs-status-draft: #b98cff;
+  --ugs-status-draft-contrast: #160824;
+  --ugs-status-interrupted: #777777;
+  --ugs-status-interrupted-contrast: #0c0c0c;
+  --node-glass: var(--panel);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, var(--fg) 9%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.035);
+  --node-tint: rgba(255, 255, 255, 0.012);
+  --node-blur: 0;
+  --node-shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 10px 20px -18px rgba(0, 0, 0, 0.82);
+  --node-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 26px -20px rgba(0, 0, 0, 0.9);
+  --shadow-accent: color-mix(in oklab, var(--accent) 22%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 20%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 20%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 20%, transparent);
+  --header-tail: color-mix(in oklab, var(--panel-2) 92%, transparent);
+  --header-fg: #f7f7f7;
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 36%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 34%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 30%, transparent);
+  --canvas-dot: color-mix(in oklab, var(--border) 58%, transparent);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    color-mix(in oklab, var(--bg) 100%, #000 8%) 100%
+  );
+  --ugs-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 72%,
+    var(--fg-faint)
+  );
+}
+
+html[data-ugs-style='cherry-light'],
+html.ugs-style-cherry-light {
+  color-scheme: light;
+  --ugs-color-bg: #f7f7f8;
+  --ugs-color-bg-alt: #f2f2f4;
+  --ugs-color-panel: #ffffff;
+  --ugs-color-panel-2: #efeff1;
+  --ugs-color-border: #dedee3;
+  --ugs-color-border-soft: #ececef;
+  --ugs-color-text: #1f1f22;
+  --ugs-color-text-muted: #606066;
+  --ugs-color-text-faint: #96969d;
+  --ugs-color-accent: #f05265;
+  --ugs-color-accent-2: #18b978;
+  --ugs-color-accent-3: #c9902f;
+  --ugs-color-accent-4: #4f87e8;
+  --ugs-status-ai-edit: #4f87e8;
+  --ugs-status-ai-edit-contrast: #ffffff;
+  --ugs-status-running: #c9902f;
+  --ugs-status-running-contrast: #221600;
+  --ugs-status-success: #18a86f;
+  --ugs-status-success-contrast: #ffffff;
+  --ugs-status-error: #e5485b;
+  --ugs-status-error-contrast: #ffffff;
+  --ugs-status-draft: #8b5cf6;
+  --ugs-status-draft-contrast: #ffffff;
+  --ugs-status-interrupted: #a0a0a7;
+  --ugs-status-interrupted-contrast: #202024;
+  --node-glass: var(--panel);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, #1f1f22 10%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.95);
+  --node-tint: rgba(31, 31, 34, 0.018);
+  --node-blur: 0;
+  --node-shadow: 0 1px 1px rgba(31, 31, 34, 0.04), 0 8px 20px -14px rgba(31, 31, 34, 0.18);
+  --node-shadow-hover: 0 1px 2px rgba(31, 31, 34, 0.06), 0 12px 24px -14px rgba(31, 31, 34, 0.22);
+  --shadow-accent: color-mix(in oklab, var(--accent) 18%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 18%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 18%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 18%, transparent);
+  --header-tail: color-mix(in oklab, var(--panel-2) 92%, transparent);
+  --header-fg: #1f1f22;
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 28%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 28%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 24%, transparent);
+  --canvas-dot: rgba(31, 31, 34, 0.08);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    rgba(31, 31, 34, 0.035) 100%
+  );
+  --ugs-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 78%,
+    var(--panel)
+  );
+}
+
 html[data-ugs-style='midnight'],
 html.ugs-style-midnight {
   color-scheme: dark;
-  --ugs-color-bg: #0b0e1a;
-  --ugs-color-bg-alt: #11152a;
-  --ugs-color-panel: #171c38;
-  --ugs-color-panel-2: #1f2547;
-  --ugs-color-border: #2e3563;
-  --ugs-color-border-soft: #222845;
+  --ugs-color-bg: #0c0e16;
+  --ugs-color-bg-alt: #101322;
+  --ugs-color-panel: #161a2c;
+  --ugs-color-panel-2: #1e2340;
+  --ugs-color-border: #28304f;
+  --ugs-color-border-soft: #1f2540;
   --ugs-color-text: #eef1fb;
   --ugs-color-text-muted: #a7aecb;
   --ugs-color-text-faint: #6e7699;
@@ -181,34 +297,90 @@ html.ugs-style-midnight {
   --ugs-status-error-contrast: #2c0710;
   --ugs-status-interrupted: #6b7194;
   --ugs-status-interrupted-contrast: #0a0d18;
+  --node-glass: var(--panel);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, var(--fg) 9%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.035);
+  --node-tint: rgba(124, 108, 255, 0.02);
+  --node-blur: 0;
+  --node-shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 10px 20px -18px rgba(0, 0, 0, 0.85);
+  --node-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 26px -20px rgba(0, 0, 0, 0.92);
+  --shadow-accent: color-mix(in oklab, var(--accent) 24%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 22%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 20%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 20%, transparent);
+  --header-tail: color-mix(in oklab, var(--panel-2) 92%, transparent);
+  --header-fg: #eef1fb;
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 38%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 36%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 32%, transparent);
+  --canvas-dot: color-mix(in oklab, var(--border) 62%, transparent);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    color-mix(in oklab, var(--bg) 100%, #000 8%) 100%
+  );
+  --ugs-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 72%,
+    var(--fg-faint)
+  );
 }
 
 html[data-ugs-style='aurora'],
 html.ugs-style-aurora {
   color-scheme: dark;
-  --ugs-color-bg: #2e3440;
-  --ugs-color-bg-alt: #323846;
-  --ugs-color-panel: #3b4252;
-  --ugs-color-panel-2: #434c5e;
-  --ugs-color-border: #4c566a;
-  --ugs-color-border-soft: #3b4252;
+  --ugs-color-bg: #232831;
+  --ugs-color-bg-alt: #282e38;
+  --ugs-color-panel: #2f3641;
+  --ugs-color-panel-2: #39424f;
+  --ugs-color-border: #454f60;
+  --ugs-color-border-soft: #343c48;
   --ugs-color-text: #eceff4;
-  --ugs-color-text-muted: #c5cddb;
-  --ugs-color-text-faint: #8a93a6;
-  --ugs-color-accent: #88c0d0;
+  --ugs-color-text-muted: #c0c8d6;
+  --ugs-color-text-faint: #838ca0;
+  --ugs-color-accent: #8fbcbb;
   --ugs-color-accent-2: #a3be8c;
   --ugs-color-accent-3: #ebcb8b;
   --ugs-color-accent-4: #b48ead;
   --ugs-status-ai-edit: #81a1c1;
-  --ugs-status-ai-edit-contrast: #1c2128;
+  --ugs-status-ai-edit-contrast: #14181f;
   --ugs-status-running: #ebcb8b;
-  --ugs-status-running-contrast: #2e3440;
+  --ugs-status-running-contrast: #232831;
   --ugs-status-success: #a3be8c;
-  --ugs-status-success-contrast: #2e3440;
+  --ugs-status-success-contrast: #232831;
   --ugs-status-error: #bf616a;
   --ugs-status-error-contrast: #fdf2f3;
   --ugs-status-interrupted: #6b7080;
-  --ugs-status-interrupted-contrast: #1c2026;
+  --ugs-status-interrupted-contrast: #14181f;
+  --node-glass: var(--panel);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, var(--fg) 10%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.04);
+  --node-tint: rgba(143, 188, 187, 0.015);
+  --node-blur: 0;
+  --node-shadow: 0 1px 0 rgba(255, 255, 255, 0.025), 0 10px 20px -18px rgba(0, 0, 0, 0.8);
+  --node-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.035), 0 14px 26px -20px rgba(0, 0, 0, 0.88);
+  --shadow-accent: color-mix(in oklab, var(--accent) 22%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 20%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 20%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 20%, transparent);
+  --header-tail: color-mix(in oklab, var(--panel-2) 92%, transparent);
+  --header-fg: #eceff4;
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 36%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 34%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 30%, transparent);
+  --canvas-dot: color-mix(in oklab, var(--border) 60%, transparent);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    color-mix(in oklab, var(--bg) 100%, #000 8%) 100%
+  );
+  --ugs-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 72%,
+    var(--fg-faint)
+  );
 }
 
 html[data-ugs-style='daylight'],
@@ -277,12 +449,12 @@ html.ugs-style-ember {
   --ugs-color-bg-alt: #221a15;
   --ugs-color-panel: #2b211a;
   --ugs-color-panel-2: #352920;
-  --ugs-color-border: #473628;
-  --ugs-color-border-soft: #352a20;
+  --ugs-color-border: #4f3a29;
+  --ugs-color-border-soft: #38291d;
   --ugs-color-text: #f5e9dc;
   --ugs-color-text-muted: #c2a890;
   --ugs-color-text-faint: #8c7461;
-  --ugs-color-accent: #ff8c42;
+  --ugs-color-accent: #f5843e;
   --ugs-color-accent-2: #3fb8a8;
   --ugs-color-accent-3: #f0b429;
   --ugs-color-accent-4: #e06b8b;
@@ -296,6 +468,34 @@ html.ugs-style-ember {
   --ugs-status-error-contrast: #2a0810;
   --ugs-status-interrupted: #8c7461;
   --ugs-status-interrupted-contrast: #1c1510;
+  --node-glass: var(--panel);
+  --node-glass-solid: var(--panel);
+  --node-border: color-mix(in oklab, var(--fg) 9%, transparent);
+  --node-highlight: rgba(255, 255, 255, 0.03);
+  --node-tint: rgba(245, 132, 62, 0.02);
+  --node-blur: 0;
+  --node-shadow: 0 1px 0 rgba(255, 255, 255, 0.02), 0 10px 20px -18px rgba(0, 0, 0, 0.85);
+  --node-shadow-hover: 0 1px 0 rgba(255, 255, 255, 0.03), 0 14px 26px -20px rgba(0, 0, 0, 0.92);
+  --shadow-accent: color-mix(in oklab, var(--accent) 22%, transparent);
+  --shadow-accent-2: color-mix(in oklab, var(--accent-2) 20%, transparent);
+  --shadow-accent-3: color-mix(in oklab, var(--accent-3) 20%, transparent);
+  --shadow-accent-4: color-mix(in oklab, var(--accent-4) 20%, transparent);
+  --header-tail: color-mix(in oklab, var(--panel-2) 92%, transparent);
+  --header-fg: #f5e9dc;
+  --pin-glow-exec: color-mix(in oklab, var(--accent) 36%, transparent);
+  --pin-glow-data: color-mix(in oklab, var(--accent-2) 34%, transparent);
+  --edge-glow: color-mix(in oklab, var(--accent) 30%, transparent);
+  --canvas-dot: color-mix(in oklab, var(--border) 58%, transparent);
+  --canvas-vignette: radial-gradient(
+    ellipse 120% 90% at 50% 40%,
+    transparent 0%,
+    color-mix(in oklab, var(--bg) 100%, #000 8%) 100%
+  );
+  --ugs-composer-chat-border: color-mix(
+    in oklab,
+    var(--border) 72%,
+    var(--fg-faint)
+  );
 }
 
 html[data-ugs-style='campbell'],
@@ -456,6 +656,29 @@ pre,
   background: var(--fg-faint);
 }
 
+/* Auto-hide scrollbar: thumb hidden by default; shown only while scrolling
+   or when the cursor is near the scrollbar edge (CherryStudio-style). */
+.ugs-autohide-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+.ugs-autohide-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  transition: background 0.3s ease;
+}
+.ugs-autohide-scroll.is-edge,
+.ugs-autohide-scroll.is-scrolling {
+  scrollbar-color: var(--border) transparent;
+}
+.ugs-autohide-scroll.is-edge::-webkit-scrollbar-thumb,
+.ugs-autohide-scroll.is-scrolling::-webkit-scrollbar-thumb {
+  background: var(--border);
+}
+.ugs-autohide-scroll.is-edge::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+}
+
 .ugs-ai-input,
 .ugs-ai-input-card {
   background: color-mix(in oklab, var(--bg) 74%, transparent);
@@ -523,6 +746,15 @@ pre,
 
 .ugs-ai-input--video:focus-within {
   border-color: var(--accent-2);
+}
+
+.ugs-ai-input--animation {
+  background: color-mix(in oklab, var(--status-ai-edit) 8%, var(--bg));
+  border-color: color-mix(in oklab, var(--status-ai-edit) 48%, var(--border));
+}
+
+.ugs-ai-input--animation:focus-within {
+  border-color: var(--status-ai-edit);
 }
 
 .ugs-ai-input--sprite {
@@ -1242,12 +1474,13 @@ html.ugs-stream-scheme-solarized-dark {
   color: var(--stream-fg-muted);
 }
 
-/* Prose blocks. Tight vertical rhythm to suit a chat surface. */
+/* Prose blocks. Relaxed vertical rhythm for readable long-form chat. */
 .ai-stream-text,
 .ai-stream-markdown {
   min-width: 0;
   max-width: 100%;
   color: var(--stream-fg);
+  line-height: 1.7;
 }
 .ai-message,
 .ai-markdown {
@@ -1265,7 +1498,7 @@ html.ugs-stream-scheme-solarized-dark {
 }
 .ai-markdown > :first-child { margin-top: 0; }
 .ai-markdown > :last-child { margin-bottom: 0; }
-.ai-markdown p { margin: 0.5em 0; }
+.ai-markdown p { margin: 0.65em 0; line-height: 1.7; }
 .ai-markdown h1,
 .ai-markdown h2,
 .ai-markdown h3,
@@ -1279,6 +1512,14 @@ html.ugs-stream-scheme-solarized-dark {
 .ai-markdown h2 { font-size: 1.18em; }
 .ai-markdown h3 { font-size: 1.06em; }
 .ai-markdown h4 { font-size: 1em; }
+/* 小节分隔线：每个二/三级标题上方画一条淡横线，首个标题不加 */
+.ai-markdown h1:not(:first-child),
+.ai-markdown h2:not(:first-child),
+.ai-markdown h3:not(:first-child) {
+  margin-top: 1.3em;
+  padding-top: 1.1em;
+  border-top: 1px solid var(--stream-surface-border);
+}
 .ai-markdown ul,
 .ai-markdown ol { margin: 0.5em 0; padding-left: 1.4em; }
 .ai-markdown ul { list-style: disc; }

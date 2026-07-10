@@ -11,8 +11,9 @@
  * Pure + synchronous so it can run on every render of the streaming bubble.
  */
 
-const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE_LINE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const MARKDOWN_WRAPPER_INFO = /^(?:markdown|md|mdx)$/i;
+const MERMAID_FENCE_INFO = /^(?:mermaid|mmd)$/i;
 const SAFE_MARKDOWN_WRAPPER_PREFIX = /^(?:⚙|⏱|✓|✗|耗时|路由|模型)/u;
 const LOOSE_DIFF_LINE = /^ {0,3}[+-](?: {4,}|\t+)\S/;
 const LOOSE_DIFF_HUNK = /^ {0,3}@@\s.+@@/;
@@ -20,16 +21,30 @@ const FENCE_RUN = /(`{3,}|~{3,})/g;
 const FENCE_INFO_HEAD = /^[A-Za-z][\w.+#-]*$/;
 const FENCE_INFO_ATTR = /^\{\.?[A-Za-z][\w.+#-]*\}$/;
 
-function fenceToken(line: string): { mark: string; len: number; info: string } | null {
+type FenceToken = {
+  indent: string;
+  sequence: string;
+  mark: string;
+  len: number;
+  info: string;
+};
+
+function fenceToken(line: string): FenceToken | null {
   const match = FENCE_LINE.exec(line);
   if (!match) return null;
-  const mark = match[1];
-  return { mark: mark[0], len: mark.length, info: match[2].trim() };
+  const sequence = match[2];
+  return {
+    indent: match[1],
+    sequence,
+    mark: sequence[0],
+    len: sequence.length,
+    info: match[3].trim(),
+  };
 }
 
-function isFenceClose(line: string, open: { mark: string; len: number }): boolean {
+function isFenceClose(line: string, open: FenceToken): boolean {
   const token = fenceToken(line);
-  return !!token && token.mark === open.mark && token.len >= open.len;
+  return !!token && token.mark === open.mark && token.len >= open.len && token.info === '';
 }
 
 function isFenceLine(line: string): boolean {
@@ -39,6 +54,32 @@ function isFenceLine(line: string): boolean {
 function looksLikeFenceInfo(info: string): boolean {
   const trimmed = info.trim();
   return FENCE_INFO_HEAD.test(trimmed) || FENCE_INFO_ATTR.test(trimmed);
+}
+
+function isMermaidFenceInfo(info: string): boolean {
+  return MERMAID_FENCE_INFO.test(info.trim().split(/\s+/u)[0] ?? '');
+}
+
+function splitDirtyClosingFence(line: string, open: FenceToken): string[] | null {
+  const token = fenceToken(line);
+  if (!token || token.mark !== open.mark || token.len < open.len || !token.info) {
+    return null;
+  }
+
+  const trailer = token.info.trim();
+  if (!trailer) return null;
+
+  // CommonMark does not accept text after a closing fence. Models often emit
+  // ```%% ... for Mermaid comments; treat it as a close and drop the comment.
+  if (isMermaidFenceInfo(open.info) && trailer.startsWith('%%')) {
+    return [token.indent + token.sequence];
+  }
+
+  // A valid info string (` ```ts`, ` ```powershell`, `{.js}`) is more likely a
+  // literal nested fence mention. Non-info trailers are usually prose/status
+  // text glued to the close, e.g. "```46 · 耗时 ...".
+  if (looksLikeFenceInfo(trailer)) return null;
+  return [token.indent + token.sequence, trailer];
 }
 
 function splitGluedOpeningFence(line: string): string[] | null {
@@ -69,10 +110,17 @@ function splitGluedOpeningFence(line: string): string[] | null {
 export function normalizeFenceLineBreaks(md: string): string {
   const lines = md.split('\n');
   const out: string[] = [];
-  let openFence: { mark: string; len: number } | null = null;
+  let openFence: FenceToken | null = null;
 
   for (const line of lines) {
     if (openFence) {
+      const splitClose = splitDirtyClosingFence(line, openFence);
+      if (splitClose) {
+        out.push(...splitClose);
+        openFence = null;
+        continue;
+      }
+
       out.push(line);
       if (isFenceClose(line, openFence)) openFence = null;
       continue;
@@ -80,7 +128,7 @@ export function normalizeFenceLineBreaks(md: string): string {
 
     const token = fenceToken(line);
     if (token) {
-      openFence = { mark: token.mark, len: token.len };
+      openFence = token;
       out.push(line);
       continue;
     }
@@ -93,7 +141,7 @@ export function normalizeFenceLineBreaks(md: string): string {
 
     out.push(...split);
     const opened = fenceToken(split[1]);
-    if (opened) openFence = { mark: opened.mark, len: opened.len };
+    if (opened) openFence = opened;
   }
 
   return out.join('\n');
@@ -163,7 +211,7 @@ function looseDiffLineLooksLikeCode(line: string): boolean {
 export function fenceLooseDiffBlocks(md: string): string {
   const lines = md.split('\n');
   const out: string[] = [];
-  let openFence: { mark: string; len: number } | null = null;
+  let openFence: FenceToken | null = null;
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
@@ -174,7 +222,7 @@ export function fenceLooseDiffBlocks(md: string): string {
       continue;
     }
     if (token) {
-      openFence = { mark: token.mark, len: token.len };
+      openFence = token;
       out.push(line);
       continue;
     }
@@ -221,12 +269,12 @@ function normalizeMarkdownContainers(md: string): string {
 }
 
 function danglingFenceClose(md: string): string | null {
-  let openFence: { mark: string; len: number } | null = null;
+  let openFence: FenceToken | null = null;
   for (const line of md.split('\n')) {
     const token = fenceToken(line);
     if (!token) continue;
     if (!openFence) {
-      openFence = { mark: token.mark, len: token.len };
+      openFence = token;
     } else if (isFenceClose(line, openFence)) {
       openFence = null;
     }
@@ -236,7 +284,7 @@ function danglingFenceClose(md: string): string | null {
 
 function stripFencedBlocks(md: string): string {
   const out: string[] = [];
-  let openFence: { mark: string; len: number } | null = null;
+  let openFence: FenceToken | null = null;
   for (const line of md.split('\n')) {
     const token = fenceToken(line);
     if (openFence) {
@@ -244,7 +292,7 @@ function stripFencedBlocks(md: string): string {
       continue;
     }
     if (token) {
-      openFence = { mark: token.mark, len: token.len };
+      openFence = token;
       continue;
     }
     out.push(line);

@@ -350,6 +350,8 @@ export type SessionSummary = Pick<
   favorite?: boolean;
   /** Derived from meta.scheduledTask for lightweight schedule rendering. */
   scheduledTask?: ScheduledTaskConfig;
+  /** Internal migration marker for completion-time based ordering. */
+  activityVersion?: number;
 
   // Forward-compatible canonical fields.
   sessionId?: SessionId;

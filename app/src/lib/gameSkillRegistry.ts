@@ -576,7 +576,61 @@ export const GAME_SKILLS: GameSkill[] = [
       "en-US": "Leave video mode and return to AI coding",
     },
   }),
-  // ===== 七、语音 =====
+  // ===== 七、动画 =====
+  new GameSkill({
+    name: "/anim",
+    category: "animation",
+    label: { "zh-CN": "搜索/生成动画", "en-US": "Search / Generate Animation" },
+    detail: {
+      "zh-CN":
+        "按名称搜索 Mixamo/动作库，或调用 KIMODO、Meshy、DeepMotion、本地服务等生成骨骼动作",
+      "en-US":
+        "Search Mixamo-style motion libraries by name, or call KIMODO, Meshy, DeepMotion, or local services for skeletal motion",
+    },
+    insertText: { "zh-CN": "/anim ", "en-US": "/anim " },
+    protocol: {
+      triggers: "/anim、/animation、/motion、/mocap、动画、动作、动作库",
+      allowedTools: "设置 > 动画渠道；Mixamo/KIMODO/Meshy/DeepMotion/本地动画服务",
+      steps: [
+        "判断需求是按名称搜索动作库还是直接生成动作",
+        "搜索请求返回动作库链接、目标骨架和格式",
+        "生成请求调用已配置 Provider，输出预览视频、GLB/FBX/BVH 或元数据",
+      ],
+      outputFormat: "动画预览视频 + 模型/剪辑链接 + Provider/模型/格式信息",
+      stopConditions: "搜索结果或生成资产已返回；无生成 Provider 时降级为动作库搜索",
+      verification: "产物可播放或可下载，目标骨架和格式与请求一致",
+    },
+  }),
+  new ModeStartSkill({
+    name: "/anim-mode-start",
+    category: "animation",
+    label: { "zh-CN": "开始动画模式", "en-US": "Start Animation Mode" },
+    detail: {
+      "zh-CN":
+        "进入动画模式：之后每条消息都会按动作库搜索或 AI 动画生成处理",
+      "en-US":
+        "Enter animation mode: every message is routed to motion-library search or AI animation generation",
+    },
+    protocol: {
+      triggers: "/anim-mode-start、进入动画模式、进入动作模式",
+      allowedTools: "设置 > 动画渠道；编程模型整理动作提示词",
+      steps: ["开启后每条消息先整理动作需求，再搜索库或调用默认动画 Provider"],
+      outputFormat: "动作库结果或动画预览/FBX/BVH/GLB 资产",
+      stopConditions: "本条动画搜索/生成完成即结束",
+      verification: "动作名称、骨架目标和导出格式明确",
+    },
+  }),
+  new ModeEndSkill({
+    name: "/anim-mode-end",
+    category: "animation",
+    modeNameZh: "动画模式",
+    label: { "zh-CN": "结束动画模式", "en-US": "End Animation Mode" },
+    detail: {
+      "zh-CN": "退出动画模式，回到 AI 编程",
+      "en-US": "Leave animation mode and return to AI coding",
+    },
+  }),
+  // ===== 八、语音 =====
   new GameSkill({
     name: "/tts",
     category: "speech",

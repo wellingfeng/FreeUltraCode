@@ -62,6 +62,7 @@ import {
 } from '@/lib/modelSpeed';
 import {
   estimateGatewayUsage,
+  estimateUsageForText,
   recordEstimatedModelUsageForSelection,
   recordModelUsageForRoute,
   mergeUsageReports,
@@ -130,6 +131,10 @@ import {
   preferredReadyVideoProviderId,
 } from '@/lib/videoGeneration';
 import {
+  loadAnimationGenerationSettings,
+  preferredReadyAnimationProviderId,
+} from '@/lib/animationGeneration';
+import {
   loadSpeechGenerationSettings,
   preferredReadySpeechProviderId,
 } from '@/lib/speechGeneration';
@@ -193,6 +198,7 @@ import {
   startThreeDGenerationTurn,
   startWorldModelGenerationTurn,
   startVideoGenerationTurn,
+  startAnimationGenerationTurn,
   startSpeechGenerationTurn,
   startSpriteGenerationTurn,
   startMeshSearchTurn,
@@ -242,6 +248,7 @@ import {
 } from '@/lib/anthropic';
 import { runtimeAdapterLabel, type RuntimeAdapterId } from '@/lib/adapters';
 import { renderMemorySnapshot, applyMemoryWrites } from '@/lib/memoryStore';
+import { renderKnowledgeBaseContextForPrompt } from '@/lib/knowledgeBase';
 import {
   MEMORY_WRITE_INSTRUCTION,
   parseMemoryWrites,
@@ -351,6 +358,7 @@ import {
   isAutoTitlePlaceholder,
   titleFromText,
 } from './history/store';
+import { generateSessionTitle } from './sessionTitleNaming';
 import {
   type SessionMeta,
   type SessionPatch,
@@ -1018,6 +1026,9 @@ export function normalizeComposerSettings(value: Partial<ComposerSettings> | und
     videoMode: source.videoMode ?? defaultComposer.videoMode,
     videoModeStartedAt:
       source.videoModeStartedAt ?? defaultComposer.videoModeStartedAt,
+    animationMode: source.animationMode ?? defaultComposer.animationMode,
+    animationModeStartedAt:
+      source.animationModeStartedAt ?? defaultComposer.animationModeStartedAt,
     speechMode: source.speechMode ?? defaultComposer.speechMode,
     speechModeStartedAt:
       source.speechModeStartedAt ?? defaultComposer.speechModeStartedAt,
@@ -1324,6 +1335,58 @@ export function videoResultMarkdown(result: {
     .map((src, index) => `[播放视频 ${index + 1}](${src})`)
     .join('\n\n');
   return `${routeLine}\n✓ 视频生成完成\n\n提示词：${result.prompt}\n\n${videoLines}`;
+}
+
+export function animationResultMarkdown(result: {
+  providerLabel: string;
+  model: string;
+  prompt: string;
+  mode: string;
+  fallbackReason?: string;
+  videos: string[];
+  models: string[];
+  clips: string[];
+  metadata: string[];
+  searchResults: Array<{
+    providerLabel: string;
+    title: string;
+    url: string;
+    use?: string;
+    targets: string[];
+    formats: string[];
+  }>;
+}): string {
+  const routeLine = `⚙ 路由：${result.providerLabel} · 模型：${result.model}`;
+  const modeLine = result.mode === 'search' ? '动作库搜索完成' : '动画生成完成';
+  const fallbackLine = result.fallbackReason ? `\n⚠ ${result.fallbackReason}` : '';
+  const videoLines = result.videos
+    .map((src, index) => `[播放动画预览 ${index + 1}](${src})`)
+    .join('\n\n');
+  const modelLines = result.models
+    .map((src, index) => `[预览动画模型 ${index + 1}](${modelAssetHref(src)})`)
+    .join('\n\n');
+  const clipLines = result.clips
+    .map((src, index) => `[动画剪辑 ${index + 1}](${modelAssetHref(src)})`)
+    .join('\n\n');
+  const metadataLines = result.metadata
+    .map((src, index) => `[动画元数据 ${index + 1}](${src})`)
+    .join('\n\n');
+  const searchLines = result.searchResults
+    .map((item) => {
+      const target = item.targets.length ? ` · 目标：${item.targets.join(', ')}` : '';
+      const formats = item.formats.length ? ` · 格式：${item.formats.join(', ')}` : '';
+      const note = item.use ? ` · 说明：${item.use}` : '';
+      return `- [${item.title}](${item.url})${target}${formats}${note}`;
+    })
+    .join('\n');
+  const assets = [
+    videoLines ? `预览：\n\n${videoLines}` : '',
+    modelLines ? `模型：\n\n${modelLines}` : '',
+    clipLines ? `剪辑：\n\n${clipLines}` : '',
+    metadataLines ? `元数据：\n\n${metadataLines}` : '',
+    searchLines ? `搜索结果：\n${searchLines}` : '',
+  ].filter(Boolean);
+  return `${routeLine}\n✓ ${modeLine}${fallbackLine}\n\n需求：${result.prompt}\n\n${assets.join('\n\n')}`;
 }
 
 export function speechResultMarkdown(result: {
@@ -1853,17 +1916,46 @@ export function sessionFromSummary(summary: SessionSummary): Session {
   };
 }
 
+const LEGACY_TURN_CLOCK_RE =
+  /^⏱\s*\d{1,2}:\d{2}(?::\d{2})?\s*→\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/u;
+const DAY_MS = 86_400_000;
+
+function legacyAssistantCompletedTimestamp(message: Message): number | null {
+  if (message.role !== 'assistant') return null;
+  if (!Number.isFinite(message.createdAt)) return null;
+  const match = message.text.match(LEGACY_TURN_CLOCK_RE);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = match[3] ? Number(match[3]) : 0;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  if (second < 0 || second > 59) return null;
+  const end = new Date(message.createdAt);
+  end.setHours(hour, minute, second, 0);
+  let timestamp = end.getTime();
+  if (timestamp < message.createdAt - 60_000) timestamp += DAY_MS;
+  return timestamp;
+}
+
 export function summaryFromRecord(record: SessionRecord): SessionSummary {
   const last = record.messages[record.messages.length - 1]?.text?.trim();
   const runStatus = record.meta?.runStatus;
   const scheduledTask = normalizeScheduledTask(record.meta?.scheduledTask);
+  const completedAt = [...record.messages]
+    .reverse()
+    .map((message) =>
+      typeof message.completedAt === 'number' && Number.isFinite(message.completedAt)
+        ? message.completedAt
+        : legacyAssistantCompletedTimestamp(message),
+    )
+    .find((timestamp) => typeof timestamp === 'number' && Number.isFinite(timestamp));
   return {
     id: record.id,
     workspaceId: record.workspaceId,
     title: record.title,
     isWorkflow: record.isWorkflow,
     createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
+    updatedAt: completedAt ?? record.updatedAt,
     ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     preview: last ? last.slice(0, 80) : undefined,
     messageCount: record.messages.length,
@@ -2023,6 +2115,7 @@ function scheduleCanvasViewportPersist(
       void historyStore
         .updateSession(workspaceId, sessionId, {
           meta: { canvasViewport: nextViewport },
+          preserveUpdatedAt: true,
         })
         .catch(() => undefined);
     }, CANVAS_VIEWPORT_PERSIST_DEBOUNCE_MS),
@@ -2507,6 +2600,198 @@ export function applyPromptTitle(
     : state.workflow;
 
   return { sessions, sessionTree, workflow };
+}
+
+type SessionTitleNamingPhase = 'intent' | 'summary';
+
+const sessionTitleNamingInFlight = new Set<string>();
+const sessionIntentAutoTitles = new Map<string, Set<string>>();
+let sessionTitleNamingEpoch = 0;
+
+function firstUserMessageId(messages: Message[]): string | null {
+  return (
+    messages.find(
+      (message) =>
+        message.role === 'user' && !message.localOnly && message.text.trim(),
+    )?.id ?? null
+  );
+}
+
+function canAutoReplaceSessionTitle(
+  title: string | undefined,
+  allowedAutoTitles: Set<string>,
+): boolean {
+  const trimmed = title?.trim();
+  return !trimmed || isAutoTitlePlaceholder(trimmed) || allowedAutoTitles.has(trimmed);
+}
+
+function canAutoNameSession(record: SessionRecord): boolean {
+  return !record.isWorkflow || record.workflow?.meta?.simple === true;
+}
+
+function sessionTitleNamingSessionKey(workspaceId: string, sessionId: string): string {
+  return `${workspaceId}\u0000${sessionId}`;
+}
+
+function rememberSessionIntentAutoTitle(sessionKey: string, title: string): void {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  const titles = sessionIntentAutoTitles.get(sessionKey) ?? new Set<string>();
+  titles.add(trimmed);
+  sessionIntentAutoTitles.set(sessionKey, titles);
+}
+
+function buildAllowedSessionAutoTitles(args: {
+  record: SessionRecord;
+  sessionKey: string;
+  phase: SessionTitleNamingPhase;
+  fallbackTitle: string;
+  userText: string;
+}): Set<string> {
+  const titles = new Set([
+    args.fallbackTitle.trim(),
+    titleFromText(args.userText).trim(),
+    args.record.workflow?.meta.name?.trim() ?? '',
+  ]);
+  if (args.phase === 'summary') {
+    for (const title of sessionIntentAutoTitles.get(args.sessionKey) ?? []) {
+      titles.add(title);
+    }
+  }
+  titles.delete('');
+  return titles;
+}
+
+async function resolveSessionTitleNamingRoute(
+  selection: GatewaySelection,
+  directRoute: ResolvedGatewayRoute | null,
+): Promise<ResolvedGatewayRoute | null> {
+  if (directRoute) return directRoute;
+  if (!isTauri()) return null;
+  if (isFreeChannelSelection(selection)) {
+    await ensureFreeProxy(freeProxyOptionsForSelection(selection));
+  }
+  return resolveCliGatewayRoute(selection);
+}
+
+function applyGeneratedSessionTitleToState(
+  workspaceId: string,
+  record: SessionRecord,
+): void {
+  const updatedSession = sessionFromRecord(record);
+  useStore.setState((state) => {
+    const update = (session: Session): Session =>
+      session.id === record.id && session.workspaceId === workspaceId
+        ? updatedSession
+        : session;
+    const sessionTree = state.sessionTree[workspaceId]
+      ? {
+          ...state.sessionTree,
+          [workspaceId]: state.sessionTree[workspaceId].map(update),
+        }
+      : state.sessionTree;
+    return {
+      sessions: state.sessions.map(update),
+      sessionTree,
+      workflow:
+        state.activeWorkspaceId === workspaceId &&
+        state.activeSessionId === record.id &&
+        record.workflow
+          ? record.workflow
+          : state.workflow,
+    };
+  });
+}
+
+function scheduleFirstTurnSessionTitleNaming(args: {
+  phase: SessionTitleNamingPhase;
+  workspaceId: string | null;
+  sessionId: string | null;
+  userMessageId: string;
+  userText: string;
+  assistantText?: string;
+  fallbackTitle: string;
+  locale: Locale;
+  gatewaySelection: GatewaySelection;
+  directRoute: ResolvedGatewayRoute | null;
+  cwd?: string;
+}): void {
+  const { workspaceId, sessionId } = args;
+  if (!workspaceId || !sessionId || !args.userText.trim()) return;
+  if (args.phase === 'summary' && !args.assistantText?.trim()) return;
+
+  const sessionKey = sessionTitleNamingSessionKey(workspaceId, sessionId);
+  const inFlightKey = `${sessionKey}\u0000${args.phase}`;
+  if (sessionTitleNamingInFlight.has(inFlightKey)) return;
+  sessionTitleNamingInFlight.add(inFlightKey);
+  const epoch = sessionTitleNamingEpoch;
+
+  void (async () => {
+    try {
+      const initial = await historyStore.getSession(workspaceId, sessionId);
+      if (!initial || !canAutoNameSession(initial)) return;
+      const initialFirstUserId = firstUserMessageId(initial.messages);
+      if (initialFirstUserId && initialFirstUserId !== args.userMessageId) return;
+
+      const allowedAutoTitles = buildAllowedSessionAutoTitles({
+        record: initial,
+        sessionKey,
+        phase: args.phase,
+        fallbackTitle: args.fallbackTitle,
+        userText: args.userText,
+      });
+      if (!canAutoReplaceSessionTitle(initial.title, allowedAutoTitles)) return;
+
+      const route = await resolveSessionTitleNamingRoute(
+        args.gatewaySelection,
+        args.directRoute,
+      );
+      if (!route || sessionTitleNamingEpoch !== epoch) return;
+
+      const title = await generateSessionTitle({
+        route,
+        userText: args.userText,
+        assistantText: args.assistantText,
+        fallbackTitle: args.fallbackTitle,
+        locale: args.locale,
+        cwd: args.cwd,
+      });
+      if (!title.trim() || title.trim() === initial.title.trim()) return;
+
+      const latest = await historyStore.getSession(workspaceId, sessionId);
+      if (!latest || !canAutoNameSession(latest) || sessionTitleNamingEpoch !== epoch) {
+        return;
+      }
+      const latestFirstUserId = firstUserMessageId(latest.messages);
+      if (latestFirstUserId && latestFirstUserId !== args.userMessageId) return;
+      const latestAllowedAutoTitles = buildAllowedSessionAutoTitles({
+        record: latest,
+        sessionKey,
+        phase: args.phase,
+        fallbackTitle: args.fallbackTitle,
+        userText: args.userText,
+      });
+      if (!canAutoReplaceSessionTitle(latest.title, latestAllowedAutoTitles)) return;
+
+      const workflow = latest.workflow
+        ? { ...latest.workflow, meta: { ...latest.workflow.meta, name: title } }
+        : undefined;
+      const updated = await historyStore.updateSession(workspaceId, sessionId, {
+        title,
+        ...(workflow ? { workflow } : {}),
+        preserveUpdatedAt: true,
+      });
+      if (sessionTitleNamingEpoch !== epoch) return;
+      if (args.phase === 'intent') {
+        rememberSessionIntentAutoTitle(sessionKey, title);
+      }
+      applyGeneratedSessionTitleToState(workspaceId, updated);
+    } catch {
+      /* best-effort: title naming must never disturb chat completion */
+    } finally {
+      sessionTitleNamingInFlight.delete(inFlightKey);
+    }
+  })();
 }
 
 function messagesThroughAssistantReply(
@@ -4155,6 +4440,10 @@ export const useStore = create<StoreState>((set, get) => ({
     startVideoGenerationTurn(text, options);
   },
 
+  generateAnimationPrompt: (text, options = {}) => {
+    startAnimationGenerationTurn(text, options);
+  },
+
   generateSpeechPrompt: (text, options = {}) => {
     startSpeechGenerationTurn(text, options);
   },
@@ -4517,6 +4806,20 @@ export const useStore = create<StoreState>((set, get) => ({
       !!workspaceRootPath &&
       isRemoteWorkspacePath(workspaceRootPath) &&
       remoteProvider.workspaceId === remoteWorkspaceIdFromPath(workspaceRootPath);
+    if (simpleMode && !selectedRemoteWorkspaceConfig && directRoute) {
+      scheduleFirstTurnSessionTitleNaming({
+        phase: 'intent',
+        workspaceId: ch.workspaceId,
+        sessionId: ch.sessionId,
+        userMessageId: userMsg.id,
+        userText: trimmed,
+        fallbackTitle: titleFromText(trimmed),
+        locale: state.locale,
+        gatewaySelection,
+        directRoute,
+        cwd: ch.workspaceRootPath ?? undefined,
+      });
+    }
 
     const pushAssistant = (txt: string, routeLabel?: string) => {
       const msg: Message = {
@@ -4903,6 +5206,9 @@ ${previousReply.slice(0, 4000)}
             },
           );
         }
+        rememberExplicitUsage(realUsage ?? estimateUsageForText(prompt, text), {
+          estimated: !realUsage,
+        });
         return text;
       } catch (err) {
         const failure = describeRunFailure(err);
@@ -5105,6 +5411,10 @@ ${previousReply.slice(0, 4000)}
       video:
         preferredReadyVideoProviderId(loadVideoGenerationSettings(settingsProfile)) !=
         null,
+      animation:
+        preferredReadyAnimationProviderId(
+          loadAnimationGenerationSettings(settingsProfile),
+        ) != null,
       speech:
         preferredReadySpeechProviderId(loadSpeechGenerationSettings(settingsProfile)) !=
         null,
@@ -5123,6 +5433,7 @@ ${previousReply.slice(0, 4000)}
       music: gameAssetChannels.music,
       threeD: gameAssetChannels.threeD,
       video: gameAssetChannels.video,
+      animation: gameAssetChannels.animation,
       speech: gameAssetChannels.speech,
       sprite: gameAssetChannels.sprite,
     });
@@ -5409,6 +5720,11 @@ ${previousReply.slice(0, 4000)}
         const memorySnapshot = memoryConfig.snapshotEnabled
           ? await renderMemorySnapshot(workspaceMemoryId).catch(() => '')
           : '';
+        const knowledgeContext = await renderKnowledgeBaseContextForPrompt({
+          workspaceId: ch.workspaceId,
+          workspacePath: workspaceRootPath,
+          query: turnText,
+        }).catch(() => '');
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
@@ -5421,6 +5737,7 @@ ${previousReply.slice(0, 4000)}
           gameExpertBlock,
           simpleAssetCapabilityBlock,
           projectEngineGuidance,
+          knowledgeContext,
           useCli ? projectMcpGuidance : '',
         ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
@@ -5774,6 +6091,19 @@ ${previousReply.slice(0, 4000)}
             { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
             'success',
           );
+          scheduleFirstTurnSessionTitleNaming({
+            phase: 'summary',
+            workspaceId: ch.workspaceId,
+            sessionId: ch.sessionId,
+            userMessageId: userMsg.id,
+            userText: turnText,
+            assistantText: finalProse,
+            fallbackTitle: titleFromText(turnText),
+            locale: state.locale,
+            gatewaySelection,
+            directRoute,
+            cwd: ch.workspaceRootPath ?? undefined,
+          });
           stampUsageOnMessage(turnMessageId, usageBefore, explicitUsageDelta());
         } catch (err) {
           const msg = (err as Error)?.message ?? String(err);
@@ -6387,6 +6717,9 @@ function clearChatTurnQueue(sessionKey: string): void {
 export function __resetSimpleChatRuntimeForTests(): void {
   chatTurnQueues.clear();
   chatTurnQueueEntries.clear();
+  sessionTitleNamingInFlight.clear();
+  sessionIntentAutoTitles.clear();
+  sessionTitleNamingEpoch += 1;
   syncQueuedChatMessageIds();
   chatNativeSessions.clear();
 }
@@ -7006,9 +7339,35 @@ function persistAiEditWorkflow(ch: AiEditChannel, messages: Message[]): void {
   scheduleAiEditPersist(ch, patch);
 }
 
+function completeLatestAiEditAssistantMessage(
+  ch: AiEditChannel,
+  messages: Message[],
+  completedAt: number,
+): Message[] {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'assistant') continue;
+    if (ch.ownedMessageIds && !ch.ownedMessageIds.has(message.id)) continue;
+    if (
+      typeof message.completedAt === 'number' &&
+      Number.isFinite(message.completedAt)
+    ) {
+      return messages;
+    }
+    const next = [...messages];
+    next[index] = { ...message, completedAt };
+    return next;
+  }
+  return messages;
+}
+
 export function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean): void {
   if (!aiEditRegistered(ch)) return;
-  const messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  let messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  if (persist) {
+    messages = completeLatestAiEditAssistantMessage(ch, messages, Date.now());
+    ch.messages = messages;
+  }
   rememberAiEditSnapshot(ch);
   if (aiEditViewActive(ch)) {
     useStore.setState({ messages });
@@ -7021,7 +7380,11 @@ export function aiEditCommitMessages(ch: AiEditChannel | null, persist: boolean)
 
 function aiEditCommitWorkflow(ch: AiEditChannel | null, persist: boolean): void {
   if (!aiEditRegistered(ch)) return;
-  const messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  let messages = ch.chat ? mergeAiEditChatMessages(ch) : ch.messages;
+  if (persist) {
+    messages = completeLatestAiEditAssistantMessage(ch, messages, Date.now());
+    ch.messages = messages;
+  }
   rememberAiEditSnapshot(ch);
   if (aiEditViewActive(ch)) {
     useStore.setState({

@@ -74,11 +74,14 @@ import {
   openLocalPath,
   engineRevealAsset,
   previewLocalFile,
+  collectWorkspacePathsToP4PendingList,
   type WorkspaceChanges,
   type WorkspaceTreeEntry,
 } from '@/lib/tauri';
 import { useResizableWidth } from '@/lib/useResizableWidth';
+import { useAutoHideScroll } from '@/hooks/useAutoHideScroll';
 import {
+  normalizeWorkspacePath,
   uniqueWorkspaceHistory,
   workspacePathKey,
 } from '@/lib/workspaceHistory';
@@ -126,6 +129,8 @@ type ProjectEntryContextMenuState =
       x: number;
       y: number;
       entry: WorkspaceTreeEntry;
+      cwd?: string;
+      collectP4Paths?: string[];
     };
 
 const EMPTY_SESSION_FILE_COUNTS: SessionFileChangeCounts = {
@@ -134,6 +139,8 @@ const EMPTY_SESSION_FILE_COUNTS: SessionFileChangeCounts = {
   deleted: 0,
   renamed: 0,
 };
+const EMPTY_SESSION_FILES: SessionFileEntry[] = [];
+const EMPTY_SESSION_FILE_TREE: SessionFileTreeNode[] = [];
 
 function emptySessionFilesViewState(
   key = '',
@@ -282,7 +289,7 @@ const THUMBNAIL_CACHE_LIMIT = 96;
 const THUMBNAIL_LOAD_BATCH_SIZE = 12;
 const THUMBNAIL_ROOT_MARGIN = '280px 0px';
 const CONTEXT_MENU_WIDTH = 176;
-const CONTEXT_MENU_HEIGHT = 36;
+const CONTEXT_MENU_HEIGHT = 108;
 const CONTEXT_MENU_MARGIN = 8;
 function projectRightPanelVisible(): boolean {
   if (typeof window === 'undefined') return false;
@@ -599,17 +606,23 @@ function ProjectEntryContextMenu({
   y,
   revealLabel,
   engineLabel,
+  collectToP4Label,
   showEngineItem,
+  showCollectToP4Item,
   onReveal,
   onRevealInEngine,
+  onCollectToP4PendingList,
 }: {
   x: number;
   y: number;
   revealLabel: string;
   engineLabel: string;
+  collectToP4Label: string;
   showEngineItem: boolean;
+  showCollectToP4Item: boolean;
   onReveal: () => void;
   onRevealInEngine: () => void;
+  onCollectToP4PendingList: () => void;
 }) {
   return (
     <div
@@ -636,6 +649,17 @@ function ProjectEntryContextMenu({
         >
           <Crosshair size={13} className="shrink-0 text-fg-faint" />
           <span className="truncate">{engineLabel}</span>
+        </button>
+      )}
+      {showCollectToP4Item && (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onCollectToP4PendingList}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
+        >
+          <FilePen size={13} className="shrink-0 text-fg-faint" />
+          <span className="truncate">{collectToP4Label}</span>
         </button>
       )}
       <button
@@ -676,6 +700,46 @@ function buildRenderEntries(entries: WorkspaceTreeEntry[]): ProjectTreeRenderEnt
   return entries
     .map((entry) => ({ entry, virtualDeleted: false }))
     .sort((a, b) => compareTreeEntries(a.entry, b.entry));
+}
+
+function collectSessionTreeFilePaths(node: SessionFileTreeNode): string[] {
+  if (node.type === 'file') return [node.entry.path];
+  return node.children.flatMap(collectSessionTreeFilePaths);
+}
+
+function isP4WorkspaceChanges(snapshot: WorkspaceChanges | null | undefined): boolean {
+  return snapshot?.source?.toLocaleLowerCase() === 'p4';
+}
+
+function isAbsoluteLocalPath(path: string): boolean {
+  const slashPath = path.trim().replace(/\\/g, '/');
+  return (
+    /^[A-Za-z]:\//.test(slashPath) ||
+    /^\/\/[^/]+\/[^/]+/.test(slashPath) ||
+    slashPath.startsWith('/')
+  );
+}
+
+function pathIsInsideRoot(path: string, root: string): boolean {
+  const pathKey = workspacePathKey(path);
+  const rootKey = workspacePathKey(root);
+  if (!pathKey || !rootKey) return false;
+  if (pathKey === rootKey) return true;
+  const rootPrefix = rootKey.endsWith('/') ? rootKey : `${rootKey}/`;
+  return pathKey.startsWith(rootPrefix);
+}
+
+function sessionFileCwdForPath(
+  path: string,
+  roots: readonly string[],
+  fallback: string | undefined,
+): string | undefined {
+  if (!isAbsoluteLocalPath(path)) return fallback;
+  const matches = roots
+    .map((root) => normalizeWorkspacePath(root))
+    .filter((root) => root && pathIsInsideRoot(path, root))
+    .sort((a, b) => workspacePathKey(b).length - workspacePathKey(a).length);
+  return matches[0] || fallback;
 }
 
 function sessionFileBadgeLabel(locale: Locale, entry: SessionFileEntry): string {
@@ -823,6 +887,14 @@ export default function ProjectFileTree() {
     remoteWorkspaceSelected,
   ]);
   const sessionChangesRootPath = rootFolders[0] ?? '';
+  const sessionFileCwd = useMemo(
+    () =>
+      composerWorkspace?.trim() ||
+      sessionChangesRootPath?.trim() ||
+      rootFolders[0] ||
+      undefined,
+    [composerWorkspace, sessionChangesRootPath, rootFolders],
+  );
   const activeSessionChangesCacheKey = useMemo(
     () =>
       sessionChangesCacheKey(
@@ -1001,16 +1073,25 @@ export default function ProjectFileTree() {
     sessionChangesSnapshot,
   ]);
   const sessionFilesReady = sessionFilesState.key === sessionFilesViewKey;
-  const sessionFiles = sessionFilesReady ? sessionFilesState.files : [];
+  const sessionFiles = sessionFilesReady
+    ? sessionFilesState.files
+    : EMPTY_SESSION_FILES;
   const sessionFileChangeCounts = sessionFilesReady
     ? sessionFilesState.counts
     : EMPTY_SESSION_FILE_COUNTS;
-  const sessionFileTree = sessionFilesReady ? sessionFilesState.tree : [];
+  const sessionFileTree = sessionFilesReady
+    ? sessionFilesState.tree
+    : EMPTY_SESSION_FILE_TREE;
   const sessionFilesStatus: SessionFilesStatus = sessionFilesReady
     ? sessionFilesState.status
     : panelTab === 'session'
       ? 'loading'
       : 'idle';
+  const sessionFilesP4CollectEnabled = isP4WorkspaceChanges(sessionChangesSnapshot);
+  const cwdForSessionPath = useCallback(
+    (path: string) => sessionFileCwdForPath(path, rootFolders, sessionFileCwd),
+    [rootFolders, sessionFileCwd],
+  );
   const [selectedRootKey, setSelectedRootKey] = useState<string>('');
   const selectedRootPath = useMemo(() => {
     if (rootFolders.length === 0) return '';
@@ -1049,6 +1130,7 @@ export default function ProjectFileTree() {
     max: projectFileTreeMaxWidth(),
     edge: 'left',
   });
+  const fileScrollRef = useAutoHideScroll<HTMLDivElement>(900, 24, 'both');
 
   const loadDirectory = useCallback(
     async (
@@ -1195,21 +1277,12 @@ export default function ProjectFileTree() {
 
   const openSessionFile = useCallback(
     (entry: SessionFileEntry) => {
-      // 会话文件的路径是 AI 工具调用原样上报的（可能是相对路径）。解析相对路径
-      // 时必须用会话自己运行的工作目录，而不是右侧「文件」标签那个会被用户切换的
-      // selectedRootPath，否则会拼出错误的绝对路径导致点击打不开。优先用会话主
-      // 工作目录（composer.workspace），回退到会话改动根目录或首个根文件夹。
-      const sessionCwd =
-        composerWorkspace?.trim() ||
-        sessionChangesRootPath?.trim() ||
-        rootFolders[0] ||
-        undefined;
       setTeamDetailsPreview(null);
-      setPreviewCwd(sessionCwd || undefined);
+      setPreviewCwd(cwdForSessionPath(entry.path) || undefined);
       setPreviewDiffEnabled(true);
       setPreviewRef({ path: entry.path, basename: entry.basename });
     },
-    [composerWorkspace, sessionChangesRootPath, rootFolders],
+    [cwdForSessionPath],
   );
 
   const toggleSessionDirectory = useCallback((key: string) => {
@@ -1380,12 +1453,18 @@ export default function ProjectFileTree() {
   }, []);
 
   const openEntryContextMenu = useCallback(
-    (event: ReactMouseEvent<HTMLElement>, entry: WorkspaceTreeEntry) => {
+    (
+      event: ReactMouseEvent<HTMLElement>,
+      entry: WorkspaceTreeEntry,
+      options: { cwd?: string; collectP4Paths?: string[] } = {},
+    ) => {
       event.preventDefault();
       event.stopPropagation();
       setContextMenu({
         ...contextMenuPosition(event),
         entry,
+        cwd: options.cwd,
+        collectP4Paths: options.collectP4Paths,
       });
     },
     [],
@@ -1394,9 +1473,10 @@ export default function ProjectFileTree() {
   const revealContextMenuEntry = useCallback(() => {
     if (!contextMenu) return;
     const targetPath = contextMenu.entry.path;
+    const cwd = contextMenu.cwd || selectedRootPath || undefined;
     setContextMenu(null);
     void openLocalPath(targetPath, {
-      cwd: selectedRootPath || undefined,
+      cwd,
       reveal: true,
     }).then((opened) => {
       if (!opened && typeof window !== 'undefined') {
@@ -1408,14 +1488,15 @@ export default function ProjectFileTree() {
   const revealContextMenuEntryInEngine = useCallback(() => {
     if (!contextMenu) return;
     const targetPath = contextMenu.entry.path;
+    const cwd = contextMenu.cwd || selectedRootPath;
     setContextMenu(null);
-    if (!selectedRootPath) {
+    if (!cwd) {
       if (typeof window !== 'undefined') {
         window.alert(t(locale, 'projectTree.revealInEngineUnsupported'));
       }
       return;
     }
-    void engineRevealAsset(selectedRootPath, targetPath).then((result) => {
+    void engineRevealAsset(cwd, targetPath).then((result) => {
       // Only nag with a dialog when the jump did not happen; a successful
       // sync is self-evident in the editor and needs no popup.
       if (!result.ok && typeof window !== 'undefined') {
@@ -1423,6 +1504,46 @@ export default function ProjectFileTree() {
       }
     });
   }, [selectedRootPath, contextMenu, locale]);
+
+  const collectContextMenuEntryToP4PendingList = useCallback(() => {
+    if (!contextMenu) return;
+    const paths = contextMenu.collectP4Paths ?? [];
+    const rootPath =
+      contextMenu.cwd ||
+      sessionChangesSnapshot?.rootPath ||
+      sessionChangesRootPath ||
+      undefined;
+    setContextMenu(null);
+
+    if (!rootPath || paths.length === 0) {
+      if (typeof window !== 'undefined') {
+        window.alert(t(locale, 'projectTree.collectToP4PendingListUnsupported'));
+      }
+      return;
+    }
+
+    void collectWorkspacePathsToP4PendingList(rootPath, paths)
+      .then((result) => {
+        if (typeof window === 'undefined') return;
+        const message =
+          result.openedCount > 0
+            ? t(locale, 'projectTree.collectToP4PendingListDone')
+                .replace('{opened}', String(result.openedCount))
+                .replace('{requested}', String(result.requestedCount))
+            : t(locale, 'projectTree.collectToP4PendingListEmpty');
+        window.alert(message);
+      })
+      .catch((err) => {
+        if (typeof window !== 'undefined') {
+          window.alert(errorMessage(err));
+        }
+      });
+  }, [
+    contextMenu,
+    locale,
+    sessionChangesRootPath,
+    sessionChangesSnapshot?.rootPath,
+  ]);
 
   const toggleDirectory = useCallback(
     (entry: WorkspaceTreeEntry, options: { skipLoad?: boolean } = {}) => {
@@ -1828,6 +1949,26 @@ export default function ProjectFileTree() {
               <button
                 type="button"
                 onClick={() => toggleSessionDirectory(node.key)}
+                onContextMenu={(event) =>
+                  openEntryContextMenu(
+                    event,
+                    {
+                      name: node.name,
+                      path: node.path,
+                      relativePath: node.path,
+                      kind: 'directory',
+                      hidden: false,
+                      sizeBytes: null,
+                      modifiedAtMs: null,
+                    },
+                    {
+                      cwd: cwdForSessionPath(node.path),
+                      collectP4Paths: sessionFilesP4CollectEnabled
+                        ? collectSessionTreeFilePaths(node)
+                        : undefined,
+                    },
+                  )
+                }
                 title={node.path}
                 className="group flex h-7 w-full min-w-0 items-center gap-1.5 px-2 text-left text-xs text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg"
                 style={{ paddingLeft: 8 + level * 14 }}
@@ -1877,7 +2018,14 @@ export default function ProjectFileTree() {
             onDragStart={(event) => startEntryDrag(event, dragEntry)}
             onDrag={trackEntryDrag}
             onDragEnd={finishEntryDrag}
-            onContextMenu={(event) => openEntryContextMenu(event, dragEntry)}
+            onContextMenu={(event) =>
+              openEntryContextMenu(event, dragEntry, {
+                cwd: cwdForSessionPath(entry.path),
+                collectP4Paths: sessionFilesP4CollectEnabled
+                  ? [entry.path]
+                  : undefined,
+              })
+            }
             onClick={() => openSessionFile(entry)}
             title={entry.path}
             className={
@@ -1932,9 +2080,11 @@ export default function ProjectFileTree() {
     );
   }, [
     collapsedSessionDirs,
+    cwdForSessionPath,
     locale,
     sessionFileTree,
     sessionFiles,
+    sessionFilesP4CollectEnabled,
     sessionFilesStatus,
     startEntryDrag,
     trackEntryDrag,
@@ -2010,7 +2160,7 @@ export default function ProjectFileTree() {
             <div
               role="tablist"
               aria-label="右侧项目面板"
-              className="flex min-w-0 flex-1 rounded-md border border-border-soft bg-panel-2 p-0.5"
+              className="flex min-w-0 flex-1 gap-0.5 rounded-md bg-panel-2/40 p-0.5"
             >
               <button
                 type="button"
@@ -2019,7 +2169,7 @@ export default function ProjectFileTree() {
                 onClick={() => updatePanelTab('files')}
                 className={
                   'flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs transition-colors hover:text-fg ' +
-                  (panelTab === 'files' ? 'bg-panel text-fg' : 'text-fg-faint')
+                  (panelTab === 'files' ? 'bg-panel-2 text-fg' : 'text-fg-faint')
                 }
               >
                 <FolderOpen size={13} className="shrink-0 text-accent-2" />
@@ -2034,7 +2184,7 @@ export default function ProjectFileTree() {
                 onClick={() => updatePanelTab('session')}
                 className={
                   'flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded px-2 text-xs transition-colors hover:text-fg ' +
-                  (panelTab === 'session' ? 'bg-panel text-fg' : 'text-fg-faint')
+                  (panelTab === 'session' ? 'bg-panel-2 text-fg' : 'text-fg-faint')
                 }
               >
                 <History size={13} className="shrink-0 text-accent" />
@@ -2047,7 +2197,7 @@ export default function ProjectFileTree() {
               </button>
             </div>
             {panelTab === 'files' && (
-              <div className="ml-auto flex shrink-0 rounded-md border border-border-soft bg-panel-2 p-0.5">
+              <div className="ml-auto flex shrink-0 gap-0.5 rounded-md bg-panel-2/40 p-0.5">
                 <button
                   type="button"
                   aria-pressed={viewMode === 'tree'}
@@ -2055,7 +2205,7 @@ export default function ProjectFileTree() {
                   onClick={() => updateViewMode('tree')}
                   className={
                     'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
-                    (viewMode === 'tree' ? 'bg-panel text-fg' : '')
+                    (viewMode === 'tree' ? 'bg-panel-2 text-fg' : '')
                   }
                 >
                   <List size={13} />
@@ -2067,7 +2217,7 @@ export default function ProjectFileTree() {
                   onClick={() => updateViewMode('preview')}
                   className={
                     'flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-fg ' +
-                    (viewMode === 'preview' ? 'bg-panel text-fg' : '')
+                    (viewMode === 'preview' ? 'bg-panel-2 text-fg' : '')
                   }
                 >
                   <LayoutGrid size={13} />
@@ -2132,9 +2282,10 @@ export default function ProjectFileTree() {
         )}
 
         <div
+          ref={fileScrollRef}
           className={
             'min-h-0 flex-1 ' +
-            'overflow-auto py-1'
+            'overflow-auto py-1 ugs-autohide-scroll'
           }
         >
           {panelTab === 'session' ? (
@@ -2183,11 +2334,14 @@ export default function ProjectFileTree() {
           y={contextMenu.y}
           revealLabel={t(locale, 'projectTree.revealInExplorer')}
           engineLabel={t(locale, 'projectTree.revealInEngine')}
+          collectToP4Label={t(locale, 'projectTree.collectToP4PendingList')}
           showEngineItem={
             contextMenu.entry.kind === 'file' && projectEngine !== 'generic'
           }
+          showCollectToP4Item={Boolean(contextMenu.collectP4Paths?.length)}
           onReveal={revealContextMenuEntry}
           onRevealInEngine={revealContextMenuEntryInEngine}
+          onCollectToP4PendingList={collectContextMenuEntryToP4PendingList}
         />
       )}
 

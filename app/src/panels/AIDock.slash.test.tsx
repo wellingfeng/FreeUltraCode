@@ -1504,6 +1504,41 @@ describe("AIDock slash suggestions", () => {
     }
   });
 
+  it("enters animation mode and generates when text follows /anim-mode-start", async () => {
+    resetStore();
+    const generateAnimationPrompt = vi.fn();
+    const sendPrompt = vi.fn(() => true);
+    useStore.setState({ generateAnimationPrompt, sendPrompt });
+    const view = await renderDock();
+
+    try {
+      const input = textarea(view.container);
+
+      await act(async () => {
+        typeTextarea(input, "/anim-mode-start 搜索 walk cycle FBX");
+        input.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            ctrlKey: true,
+            bubbles: true,
+          }),
+        );
+      });
+
+      expect(useStore.getState().composer.animationMode).toBe(true);
+      expect(
+        useStore.getState().composer.animationModeStartedAt,
+      ).toBeGreaterThan(0);
+      expect(generateAnimationPrompt).toHaveBeenCalledWith(
+        "搜索 walk cycle FBX",
+      );
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(input.value).toBe("");
+    } finally {
+      await view.cleanup();
+    }
+  });
+
   it("switches the bottom channel/model selectors to image providers in image mode", async () => {
     resetStore();
     useStore.setState({ composer: { ...defaultComposer, imageMode: true } });

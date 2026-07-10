@@ -19,8 +19,12 @@ import {
   preferredReadyVideoProviderId,
 } from '@/lib/videoGeneration';
 import {
+  preferredReadyAnimationProviderId,
+} from '@/lib/animationGeneration';
+import {
   listProviders,
 } from '@/lib/apiConfig';
+import { renderKnowledgeBaseContextForPrompt } from '@/lib/knowledgeBase';
 import {
   getRemoteWorkspace,
   ensureRemoteWorkspaceProject,
@@ -545,15 +549,20 @@ function extractRemoteAssistantMessages(
   return clipRemoteFinalOutput(messages.join('').trim());
 }
 
-function buildRemotePrompt(options: StartRemoteChatTurnOptions): string {
+async function buildRemotePrompt(options: StartRemoteChatTurnOptions): Promise<string> {
   const assetCapabilityBlock = buildAssetCapabilityBlock({
     image: preferredReadyImageProviderId() != null,
     music: preferredReadyMusicProviderId() != null,
     threeD: preferredReadyThreeDProviderId() != null,
     video: preferredReadyVideoProviderId() != null,
+    animation: preferredReadyAnimationProviderId() != null,
     speech: preferredReadySpeechProviderId() != null,
     sprite: preferredReadySpriteProviderId() != null,
   });
+  const knowledgeContext = await renderKnowledgeBaseContextForPrompt({
+    workspacePath: options.workspacePath,
+    query: options.prompt,
+  }).catch(() => '');
   const system = [
     SIMPLE_CHAT_SYSTEM,
     languageAdaptationPrompt(isLocale(options.locale) ? options.locale : 'zh-CN'),
@@ -561,6 +570,7 @@ function buildRemotePrompt(options: StartRemoteChatTurnOptions): string {
     options.gameExpertBlock,
     assetCapabilityBlock,
     options.projectEngineGuidance,
+    knowledgeContext,
     '\n你运行在云端项目工作区。可以修改该项目仓库；回答需总结改动、风险、验证。不要输出 workflow 蓝图。',
   ].join('');
   const locale = isLocale(options.locale) ? options.locale : 'zh-CN';
@@ -868,7 +878,7 @@ export function startRemoteChatTurn(options: StartRemoteChatTurnOptions): void {
       model: route.model,
     });
     const job = await client.createJob({
-      prompt: buildRemotePrompt(options),
+      prompt: await buildRemotePrompt(options),
       projectId: config.projectId,
       repoUrl: config.projectId ? undefined : config.repoUrl,
       branch: config.branch,

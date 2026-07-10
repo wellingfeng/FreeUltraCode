@@ -45,6 +45,27 @@ function quoteLabel(inner: string): string {
   return `"${inner.replace(/"/g, '#quot;')}"`;
 }
 
+function stripInlineMermaidCommentLine(line: string): string {
+  let inQuote = false;
+  for (let i = 0; i < line.length - 1; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (inQuote || ch !== '%' || line[i + 1] !== '%') continue;
+
+    const before = line.slice(0, i);
+    if (!before.trim()) return line;
+    return before.trimEnd();
+  }
+  return line;
+}
+
+function stripInlineMermaidComments(code: string): string {
+  return code.split('\n').map(stripInlineMermaidCommentLine).join('\n');
+}
+
 /**
  * Wrap unquoted flowchart node labels in quotes so special characters (`:`, `"`,
  * `/`, parentheses, …) inside them no longer break mermaid's parser. Non-flowchart
@@ -52,6 +73,8 @@ function quoteLabel(inner: string): string {
  */
 export function sanitizeMermaid(code: string): string {
   if (!FLOWCHART_HEADER.test(code)) return code;
+
+  code = stripInlineMermaidComments(code);
 
   let out = '';
   let i = 0;

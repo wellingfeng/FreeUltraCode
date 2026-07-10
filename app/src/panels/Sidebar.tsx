@@ -73,6 +73,7 @@ import {
   type ProjectEnvironmentScan,
 } from '@/lib/tauri';
 import { useResizableWidth } from '@/lib/useResizableWidth';
+import { useAutoHideScroll } from '@/hooks/useAutoHideScroll';
 import { t } from '@/lib/i18n';
 import {
   assetMatchesWorkspace,
@@ -146,8 +147,8 @@ function sessionLiveRank(
   );
   if (liveStatus === 'running') return 0;
   if (liveStatus === 'waiting') return 0;
-  if (liveStatus === 'aiEditing') return 1;
-  return 2;
+  if (liveStatus === 'aiEditing') return 0;
+  return 1;
 }
 
 /**
@@ -171,14 +172,16 @@ function sortHistorySessions(
   draftKeys: ReadonlySet<string>,
 ): Session[] {
   return [...sessions].sort((a, b) => {
-    const liveDiff =
-      sessionLiveRank(a, workspaceId, liveState) -
-      sessionLiveRank(b, workspaceId, liveState);
+    const aLiveRank = sessionLiveRank(a, workspaceId, liveState);
+    const bLiveRank = sessionLiveRank(b, workspaceId, liveState);
+    const liveDiff = aLiveRank - bLiveRank;
     if (liveDiff !== 0) return liveDiff;
-    const draftDiff =
-      sessionDraftRank(a, workspaceId, draftKeys) -
-      sessionDraftRank(b, workspaceId, draftKeys);
-    if (draftDiff !== 0) return draftDiff;
+    if (aLiveRank > 0) {
+      const draftDiff =
+        sessionDraftRank(a, workspaceId, draftKeys) -
+        sessionDraftRank(b, workspaceId, draftKeys);
+      if (draftDiff !== 0) return draftDiff;
+    }
     return sessionSortTimestamp(b) - sessionSortTimestamp(a);
   });
 }
@@ -206,6 +209,13 @@ function workspaceDraftRank(
   )
     ? 0
     : 1;
+}
+
+function workspaceGroupSortTimestamp(
+  sessions: Session[],
+  workspace: WorkspaceSummary,
+): number {
+  return sessions[0] ? sessionSortTimestamp(sessions[0]) : workspace.updatedAt;
 }
 
 function clampPercent(percent: number | null | undefined): number | null {
@@ -385,9 +395,9 @@ export default function Sidebar({
   const sessionTree = useStore((s) => s.sessionTree);
   const activeWorkspaceId = useStore((s) => s.activeWorkspaceId);
   const selectedWorkspaceIdRaw = useStore((s) => s.selectedWorkspaceId);
-  // The top switcher and workspace ordering follow an explicit, navigation-only
-  // selection that does NOT change when the user opens a session in another
-  // workspace. Fall back to the active workspace before history init populates it.
+  // The top switcher follows an explicit, navigation-only selection that does
+  // NOT change when the user opens a session in another workspace. Fall back to
+  // the active workspace before history init populates it.
   const selectedWorkspaceId = selectedWorkspaceIdRaw ?? activeWorkspaceId;
   const scopedWorkspaceId = projectScoped ? selectedWorkspaceId : null;
   const activeSessionId = useStore((s) => s.activeSessionId);
@@ -691,20 +701,16 @@ export default function Sidebar({
     [openWorkspaceMenu],
   );
 
-  const handleOpenWorkspaceDirectory = useCallback(() => {
-    if (!workspaceMenu) return;
-    const path = workspaceMenu.workspace.path.trim();
-    if (!path) {
-      setWorkspaceMenu(null);
-      return;
-    }
+  const handleOpenWorkspaceDirectory = useCallback((path: string) => {
+    const trimmed = path.trim();
     setWorkspaceMenu(null);
-    void openWorkspaceDirectory(path).then((opened) => {
+    if (!trimmed || isRemoteWorkspacePath(trimmed)) return;
+    void openWorkspaceDirectory(trimmed).then((opened) => {
       if (!opened && typeof window !== 'undefined') {
         window.alert(t(locale, 'sidebar.cannotOpenBrowser'));
       }
     });
-  }, [workspaceMenu]);
+  }, [locale]);
 
   const handleOpenWorkspaceSettings = useCallback(() => {
     if (!workspaceMenu) return;
@@ -1135,7 +1141,12 @@ export default function Sidebar({
         sidebarLiveState,
         draftSessionKeys,
       ),
-    [activeTab, sessions, sidebarLiveState, draftSessionKeys],
+    [
+      activeTab,
+      sessions,
+      sidebarLiveState,
+      draftSessionKeys,
+    ],
   );
 
   const hasHistory =
@@ -1188,10 +1199,10 @@ export default function Sidebar({
           return group.tabSessions.length > 0;
         })
         .sort((a, b) => {
-          const activeDiff =
+          const selectedDiff =
             (a.workspace.id === selectedWorkspaceId ? 0 : 1) -
             (b.workspace.id === selectedWorkspaceId ? 0 : 1);
-          if (activeDiff !== 0) return activeDiff;
+          if (selectedDiff !== 0) return selectedDiff;
           const liveDiff =
             workspaceLiveRank(a.sessions, a.workspace.id, sidebarLiveState) -
             workspaceLiveRank(b.sessions, b.workspace.id, sidebarLiveState);
@@ -1200,7 +1211,11 @@ export default function Sidebar({
             workspaceDraftRank(a.sessions, a.workspace.id, draftSessionKeys) -
             workspaceDraftRank(b.sessions, b.workspace.id, draftSessionKeys);
           if (draftDiff !== 0) return draftDiff;
-          return b.workspace.updatedAt - a.workspace.updatedAt;
+          const timeDiff =
+            workspaceGroupSortTimestamp(b.sessions, b.workspace) -
+            workspaceGroupSortTimestamp(a.sessions, a.workspace);
+          if (timeDiff !== 0) return timeDiff;
+          return a.workspace.name.localeCompare(b.workspace.name);
         }),
     [
       activeTab,
@@ -1281,6 +1296,7 @@ export default function Sidebar({
     max: 480,
     edge: 'right',
   });
+  const historyScrollRef = useAutoHideScroll<HTMLDivElement>();
   const showFlatCollapse =
     !isSearching &&
     flatLimit > WORKFLOW_HISTORY_PAGE_SIZE &&
@@ -1304,7 +1320,7 @@ export default function Sidebar({
       </div>
 
       {/* Brand */}
-      <div className="flex items-center gap-2 border-b border-border-soft px-4 py-3.5">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-1">
         <span className="text-accent-2">◆</span>
         <span className="text-sm font-semibold tracking-tight text-fg">
           UltraGameStudio
@@ -1312,7 +1328,7 @@ export default function Sidebar({
       </div>
 
       {!projectScoped && (
-        <div className="border-b border-border-soft px-3 py-2.5">
+        <div className="px-3 pt-1 pb-0.5">
           <WorkspaceListSelect
             workspaces={workspaces}
             activeWorkspaceId={selectedWorkspaceId}
@@ -1328,7 +1344,7 @@ export default function Sidebar({
       )}
 
       {/* Primary actions */}
-      <div className="flex flex-col gap-1 px-3 pt-3 pb-2.5">
+      <div className="mt-1 flex flex-col gap-1 border-t border-border-soft px-3 pb-2 pt-2">
         <button
           type="button"
           onClick={newSession}
@@ -1341,11 +1357,11 @@ export default function Sidebar({
 
       {/* Session history */}
       <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-        <div className="px-2 pb-2 pt-0">
+        <div className="-mx-2 mb-2 border-b border-border-soft px-4">
           <div
             role="tablist"
             aria-label={t(locale, 'sidebar.historyTabs')}
-            className="grid grid-cols-2 rounded-md border border-border-soft bg-bg p-0.5"
+            className="flex gap-5"
           >
             {(['history', 'favorites'] as const).map((tab) => (
               <button
@@ -1355,10 +1371,10 @@ export default function Sidebar({
                 aria-selected={activeTab === tab}
                 onClick={() => setActiveTab(tab)}
                 className={
-                  'min-w-0 rounded px-2 py-1.5 text-xs font-medium transition-colors ' +
+                  'relative -mb-px min-w-0 border-b-2 px-0.5 pb-2 pt-1 text-xs font-medium transition-colors ' +
                   (activeTab === tab
-                    ? 'bg-panel-2 text-fg shadow-sm'
-                    : 'text-fg-faint hover:bg-border-soft hover:text-fg-dim')
+                    ? 'border-accent text-fg'
+                    : 'border-transparent text-fg-faint hover:text-fg-dim')
                 }
               >
                 <span className="block truncate">
@@ -1393,7 +1409,7 @@ export default function Sidebar({
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onKeyDown={handleSearchKeyDown}
                 spellCheck={false}
-                className="h-8 w-full min-w-0 appearance-none rounded-md border border-border-soft bg-bg pl-7 pr-7 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent disabled:cursor-wait disabled:opacity-60"
+                className="h-8 w-full min-w-0 appearance-none rounded-md border border-transparent bg-panel-2/40 pl-7 pr-7 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-border-soft focus:bg-panel-2/60 disabled:cursor-wait disabled:opacity-60"
               />
               {searchQuery.length > 0 && (
                 <button
@@ -1410,7 +1426,7 @@ export default function Sidebar({
             </div>
           </div>
         )}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={historyScrollRef} className="min-h-0 flex-1 overflow-y-auto ugs-autohide-scroll">
           {!historyReady ? (
             <div
               role="status"
@@ -1516,7 +1532,7 @@ export default function Sidebar({
                     <div
                       onContextMenu={(e) => onWorkspaceContextMenu(e, workspace)}
                       className={
-                        'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-2.5 py-1.5 transition-colors ' +
+                        'group/ws grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 rounded-md border px-2.5 py-1.5 transition-colors ' +
                         (workspaceActive
                           ? 'border-border bg-panel-2'
                           : 'border-border-soft bg-panel hover:border-border hover:bg-panel-2/60')
@@ -1697,7 +1713,7 @@ export default function Sidebar({
                                           cancelRename();
                                         }
                                       }}
-                                      className="min-w-0 rounded border border-border bg-bg px-1.5 py-0.5 text-sm text-fg outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-60"
+                                      className="min-w-0 rounded border border-border bg-panel px-1.5 py-0.5 text-sm text-fg outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-60"
                                     />
                                     <StatusIndicator
                                       label={statusLabel}
@@ -1884,7 +1900,7 @@ export default function Sidebar({
                                 cancelRename();
                               }
                             }}
-                            className="min-w-0 rounded border border-border bg-bg px-1.5 py-0.5 text-sm text-fg outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-60"
+                            className="min-w-0 rounded border border-border bg-panel px-1.5 py-0.5 text-sm text-fg outline-none transition-colors focus:border-accent disabled:cursor-wait disabled:opacity-60"
                           />
                           <StatusIndicator label={statusLabel} tone={status} />
                         </span>
@@ -2081,11 +2097,13 @@ export default function Sidebar({
           x={workspaceMenu.x}
           y={workspaceMenu.y}
           locale={locale}
+          directoryItems={workspaceHeaderPaths(workspaceMenu.workspace).map(
+            (path) => ({
+              path,
+              disabled: isRemoteWorkspacePath(path),
+            }),
+          )}
           onOpenDirectory={handleOpenWorkspaceDirectory}
-          openDirectoryDisabled={
-            !workspaceMenu.workspace.path?.trim() ||
-            isRemoteWorkspacePath(workspaceMenu.workspace.path)
-          }
           onOpenSettings={handleOpenWorkspaceSettings}
           onRemoveHistory={handleRemoveWorkspaceHistory}
           removeDisabledReason={workspaceMenuDeleteDisabledReason}
@@ -2222,8 +2240,8 @@ function WorkspaceContextMenu({
   x,
   y,
   locale,
+  directoryItems,
   onOpenDirectory,
-  openDirectoryDisabled,
   onOpenSettings,
   onRemoveHistory,
   removeDisabledReason,
@@ -2232,13 +2250,18 @@ function WorkspaceContextMenu({
   x: number;
   y: number;
   locale: Locale;
-  onOpenDirectory: () => void;
-  openDirectoryDisabled: boolean;
+  directoryItems: Array<{ path: string; disabled: boolean }>;
+  onOpenDirectory: (path: string) => void;
   onOpenSettings: () => void;
   onRemoveHistory: () => void;
   removeDisabledReason: string | null;
   onClose: () => void;
 }) {
+  const openDirectoryLabel = t(locale, 'sidebar.openWorkspaceDirectory');
+  const showDirectoryPath = directoryItems.length > 1;
+  const directoryButtonClassName =
+    'flex w-full max-w-[360px] items-start gap-2 px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-fg-dim';
+
   return (
     <>
       <div
@@ -2253,15 +2276,42 @@ function WorkspaceContextMenu({
         className="absolute z-40 min-w-[196px] overflow-hidden rounded-md border border-border bg-panel shadow-2xl"
         style={{ left: x, top: y }}
       >
-        <button
-          type="button"
-          disabled={openDirectoryDisabled}
-          onClick={onOpenDirectory}
-          className="flex w-full items-center gap-2 whitespace-nowrap px-3 py-2 text-left text-sm text-fg-dim transition-colors hover:bg-panel-2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-fg-dim"
-        >
-          <FolderOpen size={13} className="shrink-0 text-fg-faint" />
-          <span>{t(locale, 'sidebar.openWorkspaceDirectory')}</span>
-        </button>
+        {directoryItems.length > 0 ? (
+          directoryItems.map((item) => (
+            <button
+              key={item.path}
+              type="button"
+              disabled={item.disabled}
+              title={item.path}
+              aria-label={
+                showDirectoryPath
+                  ? `${openDirectoryLabel}: ${item.path}`
+                  : openDirectoryLabel
+              }
+              onClick={() => onOpenDirectory(item.path)}
+              className={directoryButtonClassName}
+            >
+              <FolderOpen size={13} className="mt-0.5 shrink-0 text-fg-faint" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{openDirectoryLabel}</span>
+                {showDirectoryPath && (
+                  <span className="mt-0.5 block max-w-[300px] truncate text-xs text-fg-faint">
+                    {item.path}
+                  </span>
+                )}
+              </span>
+            </button>
+          ))
+        ) : (
+          <button
+            type="button"
+            disabled
+            className={directoryButtonClassName}
+          >
+            <FolderOpen size={13} className="mt-0.5 shrink-0 text-fg-faint" />
+            <span>{openDirectoryLabel}</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={onOpenSettings}

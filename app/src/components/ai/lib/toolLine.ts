@@ -20,7 +20,9 @@ export interface ToolLine {
 }
 
 // 🔧 Name: detail   (emoji optional)
-const WITH_EMOJI = /^\s*🔧\s*([^\s:][^:]*?)\s*(?::\s*(.*))?$/u;
+// Keep the name ASCII/token-shaped. Models also use 🔧 as a prose bullet; those
+// lines must stay ordinary markdown instead of shrinking into ToolLine chrome.
+const WITH_EMOJI = /^\s*🔧\s*([A-Za-z][A-Za-z0-9_.-]{0,80})\s*(?::\s*(.*))?$/u;
 // Bare "name: detail" where name is a plausible tool token and detail is non-empty.
 const BARE = /^\s*([a-z][a-z0-9_]*[a-z0-9]|[A-Z][A-Za-z0-9]+)\s*:\s*(.+)$/;
 

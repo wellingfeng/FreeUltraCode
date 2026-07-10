@@ -10,7 +10,9 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  Activity,
   Bone,
+  BookOpen,
   Box,
   Brain,
   Boxes,
@@ -110,13 +112,13 @@ import {
   type SkillInstallTarget,
   uninstallSkill,
   validateShellPath,
-  updateCli,
 } from '@/lib/tauri';
 import {
   getCliUpdateSnapshot,
   markCliUpdatesSeen,
   primeCliUpdateStatus,
   refreshCliUpdateStatus,
+  startCliUpdate,
   subscribeCliUpdateStatus,
 } from '@/lib/cliUpdateStatus';
 import LocalModelSetupDialog from '@/components/LocalModelSetupDialog';
@@ -258,6 +260,18 @@ import {
   type VideoProviderId,
 } from '@/lib/videoGeneration';
 import {
+  animationProviderBaseUrl,
+  animationProviderModel,
+  animationProviderReady,
+  animationProviders,
+  loadAnimationGenerationSettings,
+  saveAnimationGenerationSettings,
+  type AnimationGenerationSettings,
+  type AnimationProviderCategory,
+  type AnimationProviderDefinition,
+  type AnimationProviderId,
+} from '@/lib/animationGeneration';
+import {
   loadWorldModelGenerationSettings,
   saveWorldModelGenerationSettings,
   worldModelProviders,
@@ -360,6 +374,7 @@ import {
 } from '@/panels/settings/controls';
 import CommandsSettings from '@/panels/settings/CommandsSettings';
 import MemorySettings from '@/panels/settings/MemorySettings';
+import KnowledgeBaseSettings from '@/panels/settings/KnowledgeBaseSettings';
 import {
   UI_DESIGN_CHANNELS,
   loadUiDesignChannelSettings,
@@ -399,10 +414,12 @@ import {
   | 'general'
   | 'personalization'
   | 'memory'
+  | 'knowledgeBase'
   | 'models'
   | 'imageGeneration'
   | 'musicGeneration'
   | 'videoGeneration'
+  | 'animationGeneration'
   | 'worldModelGeneration'
   | 'speechGeneration'
   | 'threeDGeneration'
@@ -431,10 +448,12 @@ const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = 
   { id: 'general', labelKey: 'settings.tabs.general', Icon: SlidersHorizontal },
   { id: 'personalization', labelKey: 'settings.tabs.personalization', Icon: FileText },
   { id: 'memory', labelKey: 'settings.tabs.memory', Icon: Brain },
+  { id: 'knowledgeBase', labelKey: 'settings.tabs.knowledgeBase', Icon: BookOpen },
   { id: 'models', labelKey: 'settings.tabs.models', Icon: Cpu },
   { id: 'imageGeneration', labelKey: 'settings.tabs.imageGeneration', Icon: Sparkles },
   { id: 'musicGeneration', labelKey: 'settings.tabs.musicGeneration', Icon: Music },
   { id: 'videoGeneration', labelKey: 'settings.tabs.videoGeneration', Icon: Video },
+  { id: 'animationGeneration', labelKey: 'settings.tabs.animationGeneration', Icon: Activity },
   { id: 'worldModelGeneration', labelKey: 'settings.tabs.worldModelGeneration', Icon: Globe },
   { id: 'speechGeneration', labelKey: 'settings.tabs.speechGeneration', Icon: Volume2 },
   { id: 'threeDGeneration', labelKey: 'settings.tabs.threeDGeneration', Icon: Box },
@@ -841,6 +860,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     remoteProfile={remoteSettingsProfile}
                   />
                 </ErrorBoundary>
+              ) : tab === 'animationGeneration' ? (
+                <ErrorBoundary label={t(locale, 'settings.tabs.animationGeneration')}>
+                  <AnimationGenerationSettingsPanel
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
+                </ErrorBoundary>
               ) : tab === 'worldModelGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.worldModelGeneration')}>
                   <WorldModelGenerationSettingsPanel
@@ -906,6 +934,14 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               ) : tab === 'memory' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.memory')}>
                   <MemorySettings locale={locale} workspaceId={activeWorkspaceId} />
+                </ErrorBoundary>
+              ) : tab === 'knowledgeBase' ? (
+                <ErrorBoundary label={t(locale, 'settings.tabs.knowledgeBase')}>
+                  <KnowledgeBaseSettings
+                    key={settingsWorkspace?.id ?? settingsWorkspace?.path ?? 'global'}
+                    locale={locale}
+                    workspace={settingsWorkspace}
+                  />
                 </ErrorBoundary>
               ) : tab === 'mcp' || tab === 'lsp' || tab === 'skills' ? (
                 <ErrorBoundary label={t(locale, `settings.tabs.${tab}`)}>
@@ -1409,8 +1445,6 @@ function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
 
 function CliUpdatePanel({ locale }: { locale: Locale }) {
   const [snapshot, setSnapshot] = useState(() => getCliUpdateSnapshot());
-  const [updatingAdapter, setUpdatingAdapter] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeCliUpdateStatus(setSnapshot);
@@ -1440,27 +1474,14 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
   const loaded = snapshot.status === 'ready' || snapshot.status === 'error';
 
   const runCheck = useCallback(() => {
-    setMessage(null);
     void refreshCliUpdateStatus();
   }, []);
 
-  const runUpdate = useCallback(
-    async (adapter: string) => {
-      setUpdatingAdapter(adapter);
-      setMessage(null);
-      try {
-        await updateCli(adapter);
-        setMessage(t(locale, 'settings.cliUpdate.updateSucceeded'));
-        await refreshCliUpdateStatus();
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        setMessage(`${t(locale, 'settings.cliUpdate.updateFailedPrefix')}${detail}`);
-      } finally {
-        setUpdatingAdapter(null);
-      }
-    },
-    [locale],
-  );
+  const runUpdate = useCallback((adapter: string) => {
+    // Fire-and-forget: the store owns the in-flight state so the update keeps
+    // running (and stays visible) even if this panel unmounts on close.
+    void startCliUpdate(adapter);
+  }, []);
 
   if (!isTauri()) {
     return (
@@ -1480,7 +1501,7 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
         ) : (
           statuses.map((status) => {
             const label = cliUpdateAdapterLabel(status.adapter, status.label);
-            const isUpdating = updatingAdapter === status.adapter;
+            const isUpdating = snapshot.updatingAdapters.includes(status.adapter);
             const current = status.installedVersion ?? t(locale, 'settings.cliUpdate.unknown');
             const latest = status.latestVersion ?? t(locale, 'settings.cliUpdate.unknown');
             return (
@@ -1545,9 +1566,19 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
             ? t(locale, 'settings.cliUpdate.checking')
             : t(locale, 'settings.cliUpdate.refresh')}
         </button>
-        {message && (
-          <p className="min-w-0 flex-1 truncate text-right text-[11px] text-fg-faint">{message}</p>
-        )}
+        {(() => {
+          const entries = Object.values(snapshot.updateMessages);
+          if (entries.length === 0) return null;
+          const latest = entries.reduce((a, b) => (b.atMs > a.atMs ? b : a));
+          const message = latest.ok
+            ? t(locale, 'settings.cliUpdate.updateSucceeded')
+            : `${t(locale, 'settings.cliUpdate.updateFailedPrefix')}${latest.detail}`;
+          return (
+            <p className="min-w-0 flex-1 truncate text-right text-[11px] text-fg-faint">
+              {message}
+            </p>
+          );
+        })()}
       </div>
     </div>
   );
@@ -5411,6 +5442,321 @@ function VideoGenerationSettingsPanel({
           onSave={addCustomProvider}
         />
       )}
+    </div>
+  );
+}
+
+function AnimationGenerationSettingsPanel({
+  locale,
+  settingsProfile,
+  remoteProfile = false,
+}: {
+  locale: Locale;
+  settingsProfile?: SettingsProfileOptions;
+  remoteProfile?: boolean;
+}) {
+  const [settings, setSettings] = useState<AnimationGenerationSettings>(() =>
+    loadAnimationGenerationSettings(settingsProfile),
+  );
+  const [category, setCategory] = useState<AnimationProviderCategory>('library');
+
+  const commit = (next: AnimationGenerationSettings) => {
+    saveAnimationGenerationSettings(next, settingsProfile);
+    setSettings(loadAnimationGenerationSettings(settingsProfile));
+  };
+  const update = (patch: Partial<AnimationGenerationSettings>) => {
+    commit({ ...settings, ...patch });
+  };
+
+  const providers = animationProviders().filter(
+    (provider) => !remoteProfile || !provider.local,
+  );
+  const providerOptions = providers.map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    hint: `${animationProviderCategoryLabel(provider.category, locale)} · ${animationProviderStatusLabel(
+      provider,
+      settings,
+      locale,
+    )}`,
+    group: animationProviderCategoryLabel(provider.category, locale),
+  }));
+  const activeProviders = providers.filter(
+    (provider) => provider.category === category,
+  );
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-lg font-semibold text-fg">
+          {t(locale, 'settings.animationGeneration.title')}
+        </h3>
+        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+          {t(locale, 'settings.animationGeneration.description')}
+        </p>
+      </div>
+
+      <SettingRow
+        title={t(locale, 'settings.animationGeneration.defaultProviderLabel')}
+        description={t(locale, 'settings.animationGeneration.defaultProviderDesc')}
+      >
+        <div className="grid w-full gap-3 md:grid-cols-[minmax(14rem,1fr)_8rem]">
+          <SelectControl
+            value={settings.preferredProviderId}
+            options={providerOptions}
+            onChange={(id) =>
+              update({ preferredProviderId: id as AnimationProviderId })
+            }
+            icon={<Activity size={15} strokeWidth={2.1} />}
+          />
+          <label className="grid gap-1 text-xs text-fg-faint">
+            <span>{t(locale, 'settings.animationGeneration.defaultSearchCountLabel')}</span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={settings.defaultSearchCount}
+              onChange={(event) =>
+                update({ defaultSearchCount: Number(event.currentTarget.value) })
+              }
+              className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        </div>
+      </SettingRow>
+
+      <div>
+        <div
+          role="tablist"
+          aria-orientation="horizontal"
+          className={SETTINGS_INNER_TABLIST_CLASS}
+        >
+          {animationProviderCategoryOrder.map((item) => {
+            const active = category === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setCategory(item)}
+                className={cn(
+                  SETTINGS_INNER_TAB_CLASS,
+                  active
+                    ? '-mb-px border-b-2 border-accent text-fg'
+                    : 'text-fg-faint hover:text-fg',
+                )}
+              >
+                {t(locale, animationProviderCategoryTitleKey(item))}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <h4 className="text-sm font-semibold text-fg">
+              {t(locale, animationProviderCategoryTitleKey(category))}
+            </h4>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, animationProviderCategoryDescKey(category))}
+            </p>
+          </div>
+          <StatusBadge state="default" label={String(activeProviders.length)} />
+        </div>
+        <div className={SETTINGS_PROVIDER_GRID_CLASS}>
+          {activeProviders.map((provider) => (
+            <AnimationProviderSettingsRow
+              key={provider.id}
+              provider={provider}
+              settings={settings}
+              locale={locale}
+              onChange={commit}
+            />
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const animationProviderCategoryOrder: AnimationProviderCategory[] = [
+  'library',
+  'ai',
+  'local',
+];
+
+function animationProviderCategoryTitleKey(
+  category: AnimationProviderCategory,
+): TranslationKey {
+  if (category === 'library') return 'settings.animationGeneration.libraryProviders';
+  if (category === 'ai') return 'settings.animationGeneration.aiProviders';
+  return 'settings.animationGeneration.localProviders';
+}
+
+function animationProviderCategoryDescKey(
+  category: AnimationProviderCategory,
+): TranslationKey {
+  if (category === 'library') return 'settings.animationGeneration.libraryProvidersDesc';
+  if (category === 'ai') return 'settings.animationGeneration.aiProvidersDesc';
+  return 'settings.animationGeneration.localProvidersDesc';
+}
+
+function animationProviderCategoryLabel(
+  category: AnimationProviderCategory,
+  locale: Locale,
+): string {
+  if (category === 'library') return t(locale, 'settings.animationGeneration.categoryLibrary');
+  if (category === 'ai') return t(locale, 'settings.animationGeneration.categoryAi');
+  return t(locale, 'settings.animationGeneration.categoryLocal');
+}
+
+function animationProviderStatusLabel(
+  provider: AnimationProviderDefinition,
+  settings: AnimationGenerationSettings,
+  locale: Locale,
+): string {
+  if (animationProviderReady(provider.id, settings)) {
+    return t(locale, 'settings.animationGeneration.ready');
+  }
+  if (provider.local) return t(locale, 'settings.animationGeneration.localNeedsSetup');
+  if (provider.needsKey) return t(locale, 'settings.animationGeneration.needsKey');
+  return t(locale, 'settings.animationGeneration.noKeyRequired');
+}
+
+function AnimationProviderSettingsRow({
+  provider,
+  settings,
+  locale,
+  onChange,
+}: {
+  provider: AnimationProviderDefinition;
+  settings: AnimationGenerationSettings;
+  locale: Locale;
+  onChange: (settings: AnimationGenerationSettings) => void;
+}) {
+  const ready = animationProviderReady(provider.id, settings);
+  const providerKey = settings.providerKeys[provider.id] ?? '';
+  const baseUrl = settings.providerBaseUrls[provider.id] ?? '';
+  const model = animationProviderModel(provider.id, settings);
+  const models = [
+    model,
+    ...(settings.providerModelLists[provider.id] ?? []),
+    ...provider.models,
+  ].filter(Boolean);
+  const modelOptions = uniqueModelOptions(models).map((item) => ({
+    id: item.id,
+    label: item.label,
+    hint: item.hint,
+  }));
+
+  const patch = (patchValue: Partial<AnimationGenerationSettings>) => {
+    onChange({ ...settings, ...patchValue });
+  };
+  const patchKey = (value: string) => {
+    patch({
+      providerKeys: { ...settings.providerKeys, [provider.id]: value.trim() },
+    });
+  };
+  const patchBaseUrl = (value: string) => {
+    patch({
+      providerBaseUrls: {
+        ...settings.providerBaseUrls,
+        [provider.id]: value.trim(),
+      },
+    });
+  };
+  const patchModel = (value: string) => {
+    const selected = value.trim();
+    if (!selected) return;
+    patch({
+      providerModels: { ...settings.providerModels, [provider.id]: selected },
+    });
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-panel p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h5 className="text-sm font-semibold text-fg">{provider.label}</h5>
+            <StatusBadge
+              state={ready ? 'direct' : provider.needsKey || provider.local ? 'unavailable' : 'default'}
+              label={animationProviderStatusLabel(provider, settings, locale)}
+            />
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {provider.note}
+          </p>
+        </div>
+        {provider.credentialUrl && (
+          <button
+            type="button"
+            onClick={() => void openExternal(provider.credentialUrl ?? '')}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-bg px-2 py-1 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-fg"
+          >
+            <ExternalLink size={12} strokeWidth={2.2} />
+            {t(locale, 'settings.animationGeneration.getAccess')}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-3 grid gap-3">
+        <div className="grid gap-2 text-[11px] text-fg-faint sm:grid-cols-2">
+          <div>
+            {t(locale, 'settings.animationGeneration.targets')}：
+            <span className="text-fg-dim">{provider.targets.join(', ')}</span>
+          </div>
+          <div>
+            {t(locale, 'settings.animationGeneration.formats')}：
+            <span className="text-fg-dim">{provider.outputFormats.join(', ')}</span>
+          </div>
+        </div>
+
+        {provider.needsKey && (
+          <label className="grid gap-1 text-xs text-fg-faint">
+            <span>{provider.keyLabel ?? t(locale, 'settings.animationGeneration.apiKey')}</span>
+            <input
+              type="password"
+              value={providerKey}
+              placeholder={provider.keyPlaceholder ?? 'API Key'}
+              onChange={(event) => patchKey(event.currentTarget.value)}
+              className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+
+        {provider.supportsBaseUrl && (
+          <label className="grid gap-1 text-xs text-fg-faint">
+            <span>{t(locale, 'settings.animationGeneration.endpoint')}</span>
+            <input
+              type="text"
+              value={baseUrl}
+              placeholder={provider.endpointPlaceholder || provider.defaultBaseUrl}
+              onChange={(event) => patchBaseUrl(event.currentTarget.value)}
+              className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-fg outline-none transition-colors focus:border-accent"
+            />
+          </label>
+        )}
+
+        <label className="grid gap-1 text-xs text-fg-faint">
+          <span>{t(locale, 'settings.animationGeneration.model')}</span>
+          <SelectControl
+            value={model}
+            options={modelOptions}
+            onChange={patchModel}
+            icon={<Activity size={14} strokeWidth={2.1} />}
+          />
+        </label>
+
+        {provider.apiKind === 'library-link' && (
+          <div className="rounded-md border border-border-soft bg-bg px-2.5 py-2 text-[11px] leading-relaxed text-fg-faint">
+            {t(locale, 'settings.animationGeneration.noKeyRequired')} · {animationProviderBaseUrl(provider.id, settings)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -11035,7 +11381,7 @@ function AppearanceSettings({ locale }: { locale: Locale }) {
             onClick={() => setStylePresetId(DEFAULT_STYLE_PRESET_ID)}
             className="rounded-md border border-accent/40 bg-accent/15 px-2.5 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent/20"
           >
-            {t(locale, 'settings.appearanceUsePencil')}
+            {t(locale, STYLE_PRESETS[DEFAULT_STYLE_PRESET_ID].labelKey)}
           </button>
         </div>
       )}

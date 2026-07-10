@@ -1,8 +1,10 @@
 import type { TranslationKey } from '@/lib/i18n';
 
-export const DEFAULT_STYLE_PRESET_ID = 'pencil' as const;
+export const DEFAULT_STYLE_PRESET_ID = 'cherry-dark' as const;
 export const BUILTIN_STYLE_PRESETS = [
   DEFAULT_STYLE_PRESET_ID,
+  'pencil',
+  'cherry-light',
   'midnight',
   'aurora',
   'daylight',
@@ -98,15 +100,41 @@ export const STYLE_PRESETS: Record<BuiltinStylePresetId, StylePresetDefinition> 
         '#37c2a8',
       ],
     },
+    'cherry-dark': {
+      id: 'cherry-dark',
+      labelKey: 'settings.appearancePresetCherryDark',
+      descriptionKey: 'settings.appearancePresetCherryDarkDescription',
+      colorScheme: 'dark',
+      swatches: [
+        '#171717',
+        '#1f1f1f',
+        '#272727',
+        '#f05265',
+        '#18c782',
+      ],
+    },
+    'cherry-light': {
+      id: 'cherry-light',
+      labelKey: 'settings.appearancePresetCherryLight',
+      descriptionKey: 'settings.appearancePresetCherryLightDescription',
+      colorScheme: 'light',
+      swatches: [
+        '#f7f7f8',
+        '#ffffff',
+        '#efeff1',
+        '#f05265',
+        '#18b978',
+      ],
+    },
     midnight: {
       id: 'midnight',
       labelKey: 'settings.appearancePresetMidnight',
       descriptionKey: 'settings.appearancePresetMidnightDescription',
       colorScheme: 'dark',
       swatches: [
-        '#0b0e1a',
-        '#11152a',
-        '#171c38',
+        '#0c0e16',
+        '#101322',
+        '#161a2c',
         '#7c6cff',
         '#2dd4d4',
       ],
@@ -117,10 +145,10 @@ export const STYLE_PRESETS: Record<BuiltinStylePresetId, StylePresetDefinition> 
       descriptionKey: 'settings.appearancePresetAuroraDescription',
       colorScheme: 'dark',
       swatches: [
-        '#2e3440',
-        '#3b4252',
-        '#434c5e',
-        '#88c0d0',
+        '#232831',
+        '#2f3641',
+        '#454f60',
+        '#8fbcbb',
         '#a3be8c',
       ],
     },
@@ -144,9 +172,9 @@ export const STYLE_PRESETS: Record<BuiltinStylePresetId, StylePresetDefinition> 
       colorScheme: 'dark',
       swatches: [
         '#1a1411',
-        '#221a15',
         '#2b211a',
-        '#ff8c42',
+        '#4f3a29',
+        '#f5843e',
         '#3fb8a8',
       ],
     },

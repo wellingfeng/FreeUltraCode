@@ -49,7 +49,8 @@ export function FileChipBudgetProvider({
   children: ReactNode;
   limit?: number;
 }) {
-  const budget = createFileChipBudget(limit);
+  const [expanded, setExpanded] = useState(false);
+  const budget = createFileChipBudget(limit, expanded, setExpanded);
 
   return (
     <FileChipBudgetContext.Provider value={budget}>
@@ -75,12 +76,31 @@ function useFileChipSlot(): FileChipSlot {
 
 export function FileChipLimitNotice() {
   const locale = useStore((s) => s.locale);
+  const budget = useFileChipBudget();
+  const label = t(locale, 'chat.fileRefsFolded');
+  const expand = () => budget?.setExpanded?.(true);
+
+  if (budget?.setExpanded) {
+    return (
+      <button
+        type="button"
+        className="ai-file-chip-limit inline-flex max-w-full cursor-pointer items-center rounded border border-border-soft bg-panel-2 px-1.5 py-0.5 align-baseline text-[11px] leading-snug text-fg-faint transition-colors hover:border-accent hover:text-fg"
+        title={`${label} · ${t(locale, 'chat.expand')}`}
+        aria-expanded={budget.expanded}
+        aria-label={`${t(locale, 'chat.expand')}：${label}`}
+        onClick={expand}
+      >
+        {label}
+      </button>
+    );
+  }
+
   return (
     <span
       className="ai-file-chip-limit inline-flex max-w-full items-center rounded border border-border-soft bg-panel-2 px-1.5 py-0.5 align-baseline text-[11px] leading-snug text-fg-faint"
-      title={t(locale, 'chat.fileRefsFolded')}
+      title={label}
     >
-      {t(locale, 'chat.fileRefsFolded')}
+      {label}
     </span>
   );
 }
@@ -170,14 +190,16 @@ export default function FileChip({
   refData,
   onOpenFile,
   cwd,
+  overflowFallback,
 }: {
   refData: FileRef;
   onOpenFile?: OpenFileFn;
   cwd?: string;
+  overflowFallback?: ReactNode;
 }) {
   const slot = useFileChipSlot();
-  if (slot === 'notice') return <FileChipLimitNotice />;
-  if (slot === 'hidden') return null;
+  if (slot === 'notice') return overflowFallback ?? <FileChipLimitNotice />;
+  if (slot === 'hidden') return overflowFallback ?? null;
 
   return <VisibleFileChip refData={refData} onOpenFile={onOpenFile} cwd={cwd} />;
 }

@@ -6,6 +6,7 @@ import {
   recordModelUsageForRoute,
   recordEstimatedModelUsageForSelection,
   sessionCachePercent,
+  usageReportFromAnthropic,
   usageReportFromCliUsage,
   usageReportFromCodex,
   usageReportFromOpenAI,
@@ -124,9 +125,9 @@ describe('usage meter', () => {
     expect(snapshot.lastCall.cachePercent).toBeCloseTo(51.88, 2);
   });
 
-  it('folds Anthropic CLI cache hits back into the input total', () => {
+  it('folds Anthropic CLI cache tokens into visible input but counts only reads as hits', () => {
     // claude stream-json reports input_tokens as the *uncached* prefix only;
-    // the cached prefix lives in cache_read/cache_creation.
+    // cache reads/writes live in cache_read/cache_creation.
     const report = usageReportFromCliUsage({
       input_tokens: 120,
       output_tokens: 40,
@@ -147,8 +148,26 @@ describe('usage meter', () => {
     const snapshot = readUsageMeterSnapshot({ workspaceId: 'w1', sessionId: 's1' });
     expect(snapshot.lastCall.estimated).toBe(false);
     expect(snapshot.lastCall.inputTokens).toBe(1000);
-    expect(snapshot.lastCall.cachedInputTokens).toBe(880);
-    expect(snapshot.lastCall.cachePercent).toBeCloseTo(88, 2);
+    expect(snapshot.lastCall.cachedInputTokens).toBe(800);
+    expect(snapshot.lastCall.cacheCreationInputTokens).toBe(80);
+    expect(snapshot.lastCall.cachePercent).toBeCloseTo(80, 2);
+  });
+
+  it('folds Anthropic API cache tokens into visible input', () => {
+    const report = usageReportFromAnthropic({
+      input_tokens: 120,
+      output_tokens: 40,
+      cache_read_input_tokens: 800,
+      cache_creation_input_tokens: 80,
+    });
+
+    expect(report).toEqual({
+      inputTokens: 1000,
+      outputTokens: 40,
+      totalTokens: 1040,
+      cacheReadInputTokens: 800,
+      cacheCreationInputTokens: 80,
+    });
   });
 
   it('treats Codex CLI input_tokens as already inclusive of the cached portion', () => {
@@ -213,6 +232,43 @@ describe('usage meter', () => {
 
     // 150 / 200 = 75%, unaffected by the earlier estimated turn.
     expect(sessionCachePercent(readUsageMeterSnapshot(ctx))).toBeCloseTo(75, 5);
+  });
+
+  it('migrates legacy session snapshots without real-only totals for cache percent', () => {
+    window.localStorage.setItem(
+      'ugs_usage_meter_by_session_v1',
+      JSON.stringify({
+        'w1:s1': {
+          version: 1,
+          totals: {
+            calls: 1,
+            inputTokens: 1000,
+            outputTokens: 40,
+            totalTokens: 1040,
+            cachedInputTokens: 600,
+          },
+          lastCall: {
+            inputTokens: 1000,
+            outputTokens: 40,
+            totalTokens: 1040,
+            cachedInputTokens: 600,
+            cacheCreationInputTokens: 0,
+            cachePercent: 60,
+            estimated: false,
+            providerLabel: 'Legacy',
+            modelLabel: 'legacy-model',
+            updatedAt: 1,
+          },
+        },
+      }),
+    );
+
+    const snapshot = readUsageMeterSnapshot({
+      workspaceId: 'w1',
+      sessionId: 's1',
+    });
+
+    expect(sessionCachePercent(snapshot)).toBeCloseTo(60, 5);
   });
 
   it('derives per-turn token usage from the snapshot delta', () => {
@@ -283,6 +339,22 @@ describe('usage meter', () => {
     expect(delta.cachedInputTokens).toBe(80);
     expect(delta.cachePercent).toBe(40);
     expect(delta.estimated).toBe(false);
+  });
+
+  it('does not count cache creation tokens as cache hits in message usage', () => {
+    const delta = usageTurnFromReport(
+      {
+        inputTokens: 1000,
+        outputTokens: 40,
+        totalTokens: 1040,
+        cacheReadInputTokens: 800,
+        cacheCreationInputTokens: 80,
+      },
+      { estimated: false },
+    );
+
+    expect(delta.cachedInputTokens).toBe(800);
+    expect(delta.cachePercent).toBe(80);
   });
 
   it('rebuilds a session snapshot from persisted message turns', () => {

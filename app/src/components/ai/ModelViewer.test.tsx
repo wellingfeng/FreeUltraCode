@@ -44,6 +44,7 @@ class MockObject3D {
   rotation = new MockVector3();
   children: MockObject3D[];
   isSkinnedMesh: boolean;
+  skeleton?: unknown;
 
   constructor({
     children = [],
@@ -57,10 +58,21 @@ class MockObject3D {
     callback(this);
     for (const child of this.children) child.traverse(callback);
   }
+
+  add(...objects: MockObject3D[]) {
+    this.children.push(...objects);
+  }
 }
 
 class MockScene extends MockObject3D {
   add() {}
+}
+
+class MockSkeletonHelper extends MockObject3D {
+  constructor(public root: MockObject3D) {
+    super();
+    this.skeleton = { bones: [root] };
+  }
 }
 
 class MockPerspectiveCamera {
@@ -162,6 +174,8 @@ vi.mock('three', () => ({
   Vector3: MockVector3,
   Mesh: MockMesh,
   MeshStandardMaterial: MockMaterial,
+  Group: MockObject3D,
+  SkeletonHelper: MockSkeletonHelper,
   SRGBColorSpace: 'srgb',
   ACESFilmicToneMapping: 'aces',
 }));
@@ -213,6 +227,25 @@ vi.mock('three/addons/loaders/OBJLoader.js', () => ({ OBJLoader: objectLoader() 
 vi.mock('three/addons/loaders/FBXLoader.js', () => ({ FBXLoader: objectLoader() }));
 vi.mock('three/addons/loaders/STLLoader.js', () => ({ STLLoader: objectLoader() }));
 vi.mock('three/addons/loaders/PLYLoader.js', () => ({ PLYLoader: objectLoader() }));
+vi.mock('three/addons/loaders/BVHLoader.js', () => ({
+  BVHLoader: class {
+    load(
+      url: string,
+      onLoad: (value: {
+        skeleton: { bones: MockObject3D[] };
+        clip: { name: string };
+      }) => void,
+    ) {
+      loaderState.urls.push(url);
+      queueMicrotask(() =>
+        onLoad({
+          skeleton: { bones: [new MockObject3D()] },
+          clip: { name: 'BVH motion' },
+        }),
+      );
+    }
+  },
+}));
 
 async function flushAsyncWork(): Promise<void> {
   await act(async () => {
@@ -358,6 +391,36 @@ describe('ModelViewer', () => {
 
       expect(loaderState.playCalls.length).toBeGreaterThan(callsBeforeReplay);
       expect(loaderState.playCalls.at(-1)).toBe('Walk');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('previews BVH skeleton clips with animation controls', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(ModelViewer, {
+            src: 'https://mocap.example.com/subject/01_01.bvh',
+            label: '动画剪辑 1',
+          }),
+        );
+      });
+      await flushAsyncWork();
+
+      expect(tauriMocks.fetchModelAssetDataUrl).toHaveBeenCalledWith(
+        'https://mocap.example.com/subject/01_01.bvh',
+      );
+      expect(loaderState.urls).toEqual(['data:model/gltf-binary;base64,AAAA']);
+      expect(container.textContent).toContain('BVH motion');
+      expect(loaderState.playCalls.at(-1)).toBe('BVH motion');
     } finally {
       await act(async () => {
         root.unmount();

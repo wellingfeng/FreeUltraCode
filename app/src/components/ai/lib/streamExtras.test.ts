@@ -100,6 +100,10 @@ describe('parseToolLine', () => {
     expect(parseToolLine('https://example.com')).toBeNull();
   });
 
+  it('rejects prose that uses the tool emoji as a bullet', () => {
+    expect(parseToolLine('🔧 类型已加。接着改 history store：写入 summary')).toBeNull();
+  });
+
   it('rejects an unknown bare name:detail', () => {
     expect(parseToolLine('foobar: something')).toBeNull();
   });

@@ -184,6 +184,29 @@ export interface LocalFilePreview {
   base64?: string | null;
 }
 
+export interface KnowledgeBaseScanSource {
+  path: string;
+  kind?: 'file' | 'folder' | null;
+  enabled?: boolean | null;
+}
+
+export interface KnowledgeBaseScannedFile {
+  path: string;
+  sizeBytes: number;
+  modifiedAtMs?: number | null;
+  text: string;
+  truncated: boolean;
+}
+
+export interface KnowledgeBaseScanResult {
+  files: KnowledgeBaseScannedFile[];
+  skippedFiles: number;
+  skippedDirs: number;
+  totalBytes: number;
+  truncated: boolean;
+  errors: string[];
+}
+
 export type {
   WorkspaceDirectoryListing,
   WorkspaceTreeEntry,
@@ -425,6 +448,14 @@ export interface WorkspaceChanges {
   files: WorkspaceChangeFile[];
   truncated: boolean;
   scanScope?: 'root' | 'full' | string;
+}
+
+export interface P4PendingListCollectResult {
+  rootPath: string;
+  requestedCount: number;
+  openedCount: number;
+  stdout: string;
+  stderr: string;
 }
 
 export interface WorkspaceChangeSnapshotFile {
@@ -1491,6 +1522,20 @@ export async function workspaceFileDiff(
   });
 }
 
+export async function collectWorkspacePathsToP4PendingList(
+  rootPath: string,
+  paths: string[],
+): Promise<P4PendingListCollectResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<P4PendingListCollectResult>('p4_collect_to_pending_list', {
+    rootPath,
+    paths,
+  });
+}
+
 export type LegacyBrandMigrationPhase =
   | 'checking'
   | 'scanning'
@@ -1593,6 +1638,17 @@ export async function readLocalFileForUpload(
   }
   const invoke = await getInvoke();
   return invoke<LocalFileUploadPayload>('read_local_file_for_upload', { path });
+}
+
+/** Scan configured local files/folders and return decoded text for KB indexing. */
+export async function scanKnowledgeBaseFiles(
+  sources: KnowledgeBaseScanSource[],
+): Promise<KnowledgeBaseScanResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<KnowledgeBaseScanResult>('knowledge_base_scan_files', { sources });
 }
 
 /** Persist a generated session screenshot/GIF and return its local preview path. */

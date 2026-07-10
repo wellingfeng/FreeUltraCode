@@ -99,6 +99,47 @@ describe('MermaidBlock', () => {
     }
   });
 
+  it('does not let a mermaid closing fence with a glued comment swallow prose', async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg role="img"><text>clean diagram</text></svg>',
+    });
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(MessageContent, {
+            text: [
+              '```mermaid',
+              'flowchart LR',
+              'A-->B',
+              '```%% 模型把注释粘到关闭围栏',
+              '后续说明',
+            ].join('\n'),
+          }),
+        );
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(container.textContent).toContain('clean diagram');
+      expect(container.textContent).toContain('后续说明');
+      expect(container.textContent).not.toContain('Mermaid 渲染失败');
+      expect(mermaidMocks.render).toHaveBeenCalledWith(
+        expect.stringMatching(/^ai-mermaid-/),
+        'flowchart LR\nA-->B',
+      );
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
   it('falls back to the raw code block when mermaid render fails', async () => {
     mermaidMocks.render.mockRejectedValue(new Error('Parse error'));
     const container = document.createElement('div');

@@ -52,6 +52,7 @@ type MockStoreState = {
   workspaces: MockWorkspace[];
   sessionTree: Record<string, MockSession[]>;
   activeWorkspaceId: string | null;
+  selectedWorkspaceId: string | null;
   activeSessionId: string | null;
   composerDraft: string;
   composerDrafts: Record<string, string>;
@@ -216,6 +217,7 @@ function resetSidebarStore(): void {
     workspaces: [WORKSPACE],
     sessionTree: { [WORKSPACE.id]: [SESSION] },
     activeWorkspaceId: WORKSPACE.id,
+    selectedWorkspaceId: null,
     activeSessionId: SESSION.id,
     composerDraft: '',
     composerDrafts: {},
@@ -599,6 +601,49 @@ describe('Sidebar workflow rename', () => {
       await clickButton(openButton as HTMLButtonElement);
 
       expect(openWorkspaceDirectory).toHaveBeenCalledWith(WORKSPACE.path);
+      expect(view.container.textContent).not.toContain('打开工作区目录');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('opens a selected additional workspace folder from the workspace context menu', async () => {
+    resetSidebarStore();
+    mockState.workspaces = [
+      {
+        ...WORKSPACE,
+        metadata: {
+          projectSettings: {
+            folders: ['E:\\UnrealEngine', 'E:\\SharedDepot'],
+          },
+        },
+      },
+    ];
+    const view = await renderSidebar();
+
+    try {
+      await openWorkspaceContextMenu(workspaceButton(view.container, WORKSPACE.name));
+
+      const directoryButtons = Array.from(
+        view.container.querySelectorAll('button'),
+      ).filter((button) =>
+        button.textContent?.includes('打开工作区目录'),
+      );
+      expect(directoryButtons).toHaveLength(3);
+      expect(view.container.textContent).toContain(WORKSPACE.path);
+      expect(view.container.textContent).toContain('E:\\UnrealEngine');
+      expect(view.container.textContent).toContain('E:\\SharedDepot');
+
+      const extraFolderButton = directoryButtons.find(
+        (button) =>
+          button.getAttribute('aria-label') ===
+          '打开工作区目录: E:\\SharedDepot',
+      );
+      expect(extraFolderButton).toBeInstanceOf(HTMLButtonElement);
+
+      await clickButton(extraFolderButton as HTMLButtonElement);
+
+      expect(openWorkspaceDirectory).toHaveBeenCalledWith('E:\\SharedDepot');
       expect(view.container.textContent).not.toContain('打开工作区目录');
     } finally {
       await view.cleanup();
@@ -1537,7 +1582,7 @@ describe('Sidebar delete protection', () => {
 });
 
 describe('Sidebar live session ordering', () => {
-  it('orders workspace sessions by live state before timestamp', async () => {
+  it('orders running and AI-editing workspace sessions by timestamp within the live tier', async () => {
     resetSidebarStore();
     const runningSession = {
       ...SESSION,
@@ -1561,8 +1606,8 @@ describe('Sidebar live session ordering', () => {
       updatedAt: 1_700_000_200_000,
     };
     const titles = [
-      runningSession.title,
       thinkingSession.title,
+      runningSession.title,
       recentSession.title,
     ];
     mockState.sessionTree = {
@@ -1576,6 +1621,40 @@ describe('Sidebar live session ordering', () => {
     mockState.aiEditingSessions = [
       { workspaceId: WORKSPACE.id, sessionId: thinkingSession.id },
     ];
+
+    const view = await renderSidebar();
+
+    try {
+      expect(sessionTitleOrder(view.container, titles)).toEqual(titles);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('does not promote an active completed workspace session above newer completed sessions', async () => {
+    resetSidebarStore();
+    const activeSession = {
+      ...SESSION,
+      id: 's_active_old',
+      title: 'Active old',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    };
+    const recentSession = {
+      ...SESSION,
+      id: 's_recent_done',
+      title: 'Recent done',
+      createdAt: 1_700_000_200_000,
+      updatedAt: 1_700_000_200_000,
+    };
+    const titles = [recentSession.title, activeSession.title];
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [recentSession, activeSession],
+    };
+    mockState.sessions = [recentSession, activeSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeWorkspaceId = WORKSPACE.id;
+    mockState.activeSessionId = activeSession.id;
 
     const view = await renderSidebar();
 
@@ -1644,7 +1723,65 @@ describe('Sidebar live session ordering', () => {
     }
   });
 
-  it('orders flat fallback sessions by live state before timestamp', async () => {
+  it('pins the selected workspace group above newer idle groups', async () => {
+    resetSidebarStore();
+    const selectedOlderWorkspace = {
+      ...WORKSPACE,
+      id: 'ws_selected_older',
+      name: 'Selected Older Workspace',
+      path: 'E:\\SelectedOlderWorkspace',
+      updatedAt: 1_700_000_300_000,
+      sessionCount: 1,
+      lastActiveSessionId: 's_selected_older',
+    };
+    const newerWorkspace = {
+      ...WORKSPACE,
+      id: 'ws_newer',
+      name: 'Newer Workspace',
+      path: 'E:\\NewerWorkspace',
+      updatedAt: 1_700_000_100_000,
+      sessionCount: 1,
+      lastActiveSessionId: 's_newer',
+    };
+    const selectedOlderSession = {
+      ...SESSION,
+      id: 's_selected_older',
+      title: 'Selected older session',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    };
+    const newerSession = {
+      ...SESSION,
+      id: 's_newer',
+      title: 'Newer session',
+      createdAt: 1_700_000_200_000,
+      updatedAt: 1_700_000_200_000,
+    };
+    mockState.workspaces = [selectedOlderWorkspace, newerWorkspace];
+    mockState.sessionTree = {
+      [selectedOlderWorkspace.id]: [selectedOlderSession],
+      [newerWorkspace.id]: [newerSession],
+    };
+    mockState.sessions = [selectedOlderSession, newerSession];
+    mockState.activeWorkspaceId = newerWorkspace.id;
+    mockState.selectedWorkspaceId = selectedOlderWorkspace.id;
+    mockState.activeSessionId = newerSession.id;
+
+    const view = await renderSidebar();
+
+    try {
+      expect(
+        sessionTitleOrder(view.container, [
+          selectedOlderSession.title,
+          newerSession.title,
+        ]),
+      ).toEqual([selectedOlderSession.title, newerSession.title]);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('orders flat fallback running and AI-editing sessions by timestamp within the live tier', async () => {
     resetSidebarStore();
     const runningSession = {
       ...SESSION,
@@ -1668,15 +1805,15 @@ describe('Sidebar live session ordering', () => {
       updatedAt: 1_700_000_200_000,
     };
     const titles = [
-      runningSession.title,
       thinkingSession.title,
+      runningSession.title,
       recentSession.title,
     ];
     mockState.workspaces = [];
     mockState.sessionTree = {};
     mockState.sessions = [recentSession, thinkingSession, runningSession];
     mockState.activeWorkspaceId = null;
-    mockState.activeSessionId = recentSession.id;
+    mockState.activeSessionId = null;
     mockState.runningSessions = [
       { workspaceId: null, sessionId: runningSession.id },
     ];
@@ -1716,10 +1853,45 @@ describe('Sidebar live session ordering', () => {
     };
     mockState.sessions = [recentSession, draftSession];
     mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
-    mockState.activeSessionId = recentSession.id;
+    mockState.activeSessionId = null;
     mockState.composerDrafts = {
       [`${WORKSPACE.id}::${draftSession.id}`]: 'unsent text',
     };
+
+    const view = await renderSidebar();
+
+    try {
+      expect(sessionTitleOrder(view.container, titles)).toEqual(titles);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('promotes the active session only when its live composer has text', async () => {
+    resetSidebarStore();
+    const activeDraftSession = {
+      ...SESSION,
+      id: 's_active_draft_old',
+      title: 'Active draft old',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    };
+    const recentSession = {
+      ...SESSION,
+      id: 's_recent_idle',
+      title: 'Recent idle',
+      createdAt: 1_700_000_200_000,
+      updatedAt: 1_700_000_200_000,
+    };
+    const titles = [activeDraftSession.title, recentSession.title];
+    mockState.sessionTree = {
+      [WORKSPACE.id]: [recentSession, activeDraftSession],
+    };
+    mockState.sessions = [recentSession, activeDraftSession];
+    mockState.workspaces = [{ ...WORKSPACE, sessionCount: 2 }];
+    mockState.activeWorkspaceId = WORKSPACE.id;
+    mockState.activeSessionId = activeDraftSession.id;
+    mockState.composerDraft = 'unsent text';
 
     const view = await renderSidebar();
 

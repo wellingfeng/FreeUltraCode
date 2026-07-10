@@ -271,6 +271,7 @@ describe('ProjectSettingsModal game project tabs', () => {
 
       expect(tabText).toEqual([
         '概览',
+        '知识库',
         '蓝图',
         '权限/自动化',
       ]);
@@ -375,6 +376,7 @@ describe('ProjectSettingsModal game project tabs', () => {
 
       expect(tabText).toEqual([
         '概览',
+        '知识库',
         '权限/自动化',
       ]);
       expect(tabText).not.toContain('Mesh 渠道');

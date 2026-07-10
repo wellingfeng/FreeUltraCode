@@ -87,6 +87,8 @@ describe("withAppOnlyStaticEntries", () => {
     expect(names).toContain("/game-debug-skill");
     expect(names).toContain("/game-verify-report");
     expect(names).toContain("/video-to-frames");
+    expect(names).toContain("/anim");
+    expect(names).toContain("/anim-mode-start");
     expect(names).toContain("/sprite-mode-start");
     expect(names).toContain("/blueprint-mode-start");
     expect(names).toContain("/metahuman-mode-start");
@@ -170,6 +172,9 @@ describe("project command allowlist", () => {
     expect(isProjectCommandName("  /Deep-Research ")).toBe(false);
     expect(isProjectCommandName("  /IMAGE-TO-GAME ")).toBe(true);
     expect(isProjectCommandName("  /VIDEO-TO-FRAMES ")).toBe(true);
+    expect(isProjectCommandName("  /ANIM ")).toBe(true);
+    expect(isProjectCommandName("  /ANIM-MODE-START ")).toBe(true);
+    expect(isProjectCommandName("  /ANIM-MODE-END ")).toBe(true);
     expect(isGameProjectCommandName("/sprite-mode-start")).toBe(true);
     expect(isGameProjectCommandName("/blueprint-mode-start")).toBe(true);
     expect(isGameProjectCommandName("/metahuman-mode-start")).toBe(true);
@@ -212,6 +217,9 @@ describe("project command allowlist", () => {
     expect(names).not.toContain("/deep-research");
     expect(names).toContain("/image-to-game");
     expect(names).toContain("/video-to-frames");
+    expect(names).toContain("/anim");
+    expect(names).toContain("/anim-mode-start");
+    expect(names).toContain("/anim-mode-end");
     expect(names).not.toContain("/sprite");
     expect(names).not.toContain("/sprite-mode-start");
     expect(names).not.toContain("/sprite-mode-end");
@@ -280,5 +288,6 @@ describe("project command allowlist", () => {
     expect(names).toContain("/metahuman-mode-end");
     expect(names).toContain("/ui-mode-start");
     expect(names).toContain("/ui-mode-end");
+    expect(names).not.toContain("/anim");
   });
 });

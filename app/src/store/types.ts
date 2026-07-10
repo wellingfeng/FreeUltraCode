@@ -63,6 +63,8 @@ export interface Message {
   routeLabel?: string;
   /** Epoch milliseconds. */
   createdAt: number;
+  /** Epoch milliseconds when an assistant turn finished. Used for history order. */
+  completedAt?: number;
   /**
    * Present when this message is a node's request for user input (rendered in
    * the AI-return dock as a select/input/confirm widget rather than plain text).
@@ -259,6 +261,13 @@ export interface ComposerSettings {
   videoMode: boolean;
   /** Epoch ms when sticky video mode started; used to merge mode-local prompts. */
   videoModeStartedAt?: number | null;
+  /**
+   * 粘性动画模式。true 时输入框里的裸文本走动作库搜索或 AI 动画生成而非
+   * AI 编程;由 /anim-mode-start 开启、/anim-mode-end 关闭。
+   */
+  animationMode: boolean;
+  /** Epoch ms when sticky animation mode started; used to merge mode-local prompts. */
+  animationModeStartedAt?: number | null;
   /**
    * 粘性文本转语音模式。true 时输入框里的裸文本(无 slash 命令)走语音合成而非
    * AI 编程;由 /speech-mode-start 开启、/speech-mode-end 关闭。

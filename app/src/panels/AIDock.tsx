@@ -58,6 +58,7 @@ import {
 } from "@/lib/apiConfig";
 import { getCliRuntimeSnapshot, isCliAdapterAvailable } from "@/lib/cliConfig";
 import { cn } from "@/lib/cn";
+import { attachAutoHideScroll } from "@/hooks/useAutoHideScroll";
 import {
   FREE_CHANNELS,
   FREE_CHANNEL_AUTO_ID,
@@ -116,6 +117,16 @@ import {
   type VideoGenerationSettings,
   type VideoProviderId,
 } from "@/lib/videoGeneration";
+import {
+  DEFAULT_ANIMATION_GENERATION_SETTINGS,
+  animationProviderModel,
+  animationProviderReady,
+  animationProviders,
+  loadAnimationGenerationSettings,
+  saveAnimationGenerationSettings,
+  type AnimationGenerationSettings,
+  type AnimationProviderId,
+} from "@/lib/animationGeneration";
 import {
   DEFAULT_SPEECH_GENERATION_SETTINGS,
   SPEECH_PROVIDERS,
@@ -191,6 +202,7 @@ import {
   type WorkspaceDirectoryListing,
   type WorkspaceTreeEntry,
 } from "@/lib/tauri";
+import { downscalePastedImage } from "@/lib/pastedImage";
 import {
   applyProjectFileDragDropEffect,
   clearProjectFileDragData,
@@ -344,6 +356,7 @@ type AIDockGenerationMode =
   | "music"
   | "threeD"
   | "video"
+  | "animation"
   | "sprite"
   | "speech"
   | null;
@@ -355,6 +368,7 @@ type AIDockGenerationSettingsState = {
   music: MusicGenerationSettings;
   threeD: ThreeDGenerationSettings;
   video: VideoGenerationSettings;
+  animation: AnimationGenerationSettings;
   speech: SpeechGenerationSettings;
 };
 
@@ -363,6 +377,7 @@ const AIDOCK_GENERATION_SETTINGS_EVENTS = [
   "ugs:music-generation-settings-changed",
   "ugs:three-d-generation-settings-changed",
   "ugs:video-generation-settings-changed",
+  "ugs:animation-generation-settings-changed",
   "ugs:speech-generation-settings-changed",
 ] as const;
 
@@ -371,6 +386,7 @@ function composerGenerationMode(composer: {
   musicMode?: boolean;
   threeDMode?: boolean;
   videoMode?: boolean;
+  animationMode?: boolean;
   spriteMode?: boolean;
   speechMode?: boolean;
 }): AIDockGenerationMode {
@@ -378,6 +394,7 @@ function composerGenerationMode(composer: {
   if (composer.musicMode) return "music";
   if (composer.threeDMode) return "threeD";
   if (composer.videoMode) return "video";
+  if (composer.animationMode) return "animation";
   if (composer.spriteMode) return "sprite";
   if (composer.speechMode) return "speech";
   return null;
@@ -393,6 +410,7 @@ function defaultAIDockGenerationSettings(
     music: DEFAULT_MUSIC_GENERATION_SETTINGS,
     threeD: DEFAULT_THREE_D_GENERATION_SETTINGS,
     video: DEFAULT_VIDEO_GENERATION_SETTINGS,
+    animation: DEFAULT_ANIMATION_GENERATION_SETTINGS,
     speech: DEFAULT_SPEECH_GENERATION_SETTINGS,
   };
 }
@@ -408,6 +426,7 @@ function loadAIDockGenerationSettings(
     music: loadMusicGenerationSettings(settingsProfile),
     threeD: loadThreeDGenerationSettings(settingsProfile),
     video: loadVideoGenerationSettings(settingsProfile),
+    animation: loadAnimationGenerationSettings(settingsProfile),
     speech: loadSpeechGenerationSettings(settingsProfile),
   };
 }
@@ -420,6 +439,7 @@ function slashChannelNeedsAIDockGenerationSettings(
     channel === "music" ||
     channel === "threeD" ||
     channel === "video" ||
+    channel === "animation" ||
     channel === "speech" ||
     channel === "sprite" ||
     channel === "comfyui"
@@ -836,7 +856,7 @@ function MessageActionToolbar({
             <Zap size={11} className="text-[var(--accent-3)]" />
             {usage.estimated
               ? "--"
-              : `${Math.min(999, Math.round(usage.cachePercent))}%`}
+              : `${Math.min(100, Math.round(usage.cachePercent))}%`}
           </span>
         </span>
       )}
@@ -1018,13 +1038,16 @@ async function savePastedImageFile(
   cwd: string,
   remoteRootPath?: string,
 ): Promise<string> {
+  // Shrink big screenshots before they hit disk / the remote upload so a single
+  // pasted image can't overflow the model request body.
+  const compressed = await downscalePastedImage(file);
   if (remoteRootPath) {
-    return uploadRemoteFile(remoteRootPath, file, "clipboard-images");
+    return uploadRemoteFile(remoteRootPath, compressed, "clipboard-images");
   }
   const request: ClipboardImageSaveRequest = {
-    bytesBase64: await fileToBase64(file),
-    mime: file.type || "image/png",
-    fileName: file.name || null,
+    bytesBase64: await fileToBase64(compressed),
+    mime: compressed.type || "image/png",
+    fileName: compressed.name || null,
     cwd: cwd || null,
   };
   return saveClipboardImage(request);
@@ -1743,6 +1766,7 @@ export default function AIDock({
   const generateMusicPrompt = useStore((s) => s.generateMusicPrompt);
   const generateThreeDPrompt = useStore((s) => s.generateThreeDPrompt);
   const generateVideoPrompt = useStore((s) => s.generateVideoPrompt);
+  const generateAnimationPrompt = useStore((s) => s.generateAnimationPrompt);
   const generateSpeechPrompt = useStore((s) => s.generateSpeechPrompt);
   const generateSpritePrompt = useStore((s) => s.generateSpritePrompt);
   const generateGddPrompt = useStore((s) => s.generateGddPrompt);
@@ -1873,6 +1897,12 @@ export default function AIDock({
   const answerInteraction = useStore((s) => s.answerInteraction);
   const dismissInteraction = useStore((s) => s.dismissInteraction);
   const streamRef = useRef<HTMLDivElement>(null);
+  // 中间信息流：滚动条默认隐藏，仅滚动或光标靠近右缘（分割线一侧）时显示。
+  useEffect(() => {
+    const el = streamRef.current;
+    if (!el) return;
+    return attachAutoHideScroll(el);
+  }, []);
   // The inner message list. We observe its size (not just the scroll
   // container's) so appended messages and streaming tokens — which grow this
   // node while the container keeps its fixed height — still trigger auto-scroll.
@@ -2625,6 +2655,7 @@ export default function AIDock({
   const musicSettings = activeGenerationSettingsState.music;
   const threeDSettings = activeGenerationSettingsState.threeD;
   const videoSettings = activeGenerationSettingsState.video;
+  const animationSettings = activeGenerationSettingsState.animation;
   const speechSettings = activeGenerationSettingsState.speech;
 
   useEffect(() => {
@@ -2902,6 +2933,73 @@ export default function AIDock({
       providerModels: { ...current.providerModels, [providerId]: selected },
     }, generationSettingsProfile);
   }, [generationSettingsProfile]);
+  const animationChannelOptions = useMemo<SelectOption[]>(
+    () =>
+      animationProviders()
+        .filter((provider) => !remoteGenerationSettings || !provider.local)
+        .map((provider) => ({
+          id: provider.id,
+          label:
+            provider.label +
+            (animationProviderReady(provider.id, animationSettings) ? "" : " ⚠"),
+          hint: t(
+            locale,
+            provider.category === "library"
+              ? "settings.animationGeneration.categoryLibrary"
+              : provider.category === "ai"
+                ? "settings.animationGeneration.categoryAi"
+                : "settings.animationGeneration.categoryLocal",
+          ),
+          group: t(
+            locale,
+            provider.category === "library"
+              ? "settings.animationGeneration.libraryProviders"
+              : provider.category === "ai"
+                ? "settings.animationGeneration.aiProviders"
+                : "settings.animationGeneration.localProviders",
+          ),
+        })),
+    [animationSettings, locale, remoteGenerationSettings],
+  );
+  const animationChannelValue = animationChannelOptions.some(
+    (option) => option.id === animationSettings.preferredProviderId,
+  )
+    ? animationSettings.preferredProviderId
+    : "";
+  const animationModelOptions = useMemo<SelectOption[]>(() => {
+    const provider = animationProviders().find(
+      (item) =>
+        item.id === animationSettings.preferredProviderId &&
+        (!remoteGenerationSettings || !item.local),
+    );
+    if (!provider) return [];
+    const current = animationProviderModel(provider.id, animationSettings);
+    return uniqueModelSelectOptions([
+      current,
+      ...(animationSettings.providerModelLists[provider.id] ?? []),
+      ...provider.models,
+    ]);
+  }, [animationSettings, remoteGenerationSettings]);
+  const animationModelValue = animationProviderModel(
+    animationSettings.preferredProviderId,
+    animationSettings,
+  );
+  const onAnimationChannelChange = useCallback((id: string) => {
+    saveAnimationGenerationSettings({
+      ...loadAnimationGenerationSettings(generationSettingsProfile),
+      preferredProviderId: id as AnimationProviderId,
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
+  const onAnimationModelChange = useCallback((model: string) => {
+    const selected = model.trim();
+    if (!selected) return;
+    const current = loadAnimationGenerationSettings(generationSettingsProfile);
+    const providerId = current.preferredProviderId;
+    saveAnimationGenerationSettings({
+      ...current,
+      providerModels: { ...current.providerModels, [providerId]: selected },
+    }, generationSettingsProfile);
+  }, [generationSettingsProfile]);
   const speechChannelOptions = useMemo<SelectOption[]>(
     () =>
       SPEECH_PROVIDERS.filter(
@@ -2967,9 +3065,11 @@ export default function AIDock({
       music: musicSettings,
       threeD: threeDSettings,
       video: videoSettings,
+      animation: animationSettings,
       speech: speechSettings,
     }),
     [
+      animationSettings,
       imageSettings,
       musicSettings,
       speechSettings,
@@ -2992,6 +3092,7 @@ export default function AIDock({
         music: loaded.music,
         threeD: loaded.threeD,
         video: loaded.video,
+        animation: loaded.animation,
         speech: loaded.speech,
       };
     }
@@ -3649,6 +3750,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6185,6 +6288,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6240,6 +6345,8 @@ export default function AIDock({
         threeDModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6297,6 +6404,8 @@ export default function AIDock({
         threeDModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6356,6 +6465,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: true,
         videoModeStartedAt: startedAt,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6396,6 +6507,69 @@ export default function AIDock({
       clearDraftIfNeeded();
       return;
     }
+    const animationModeStart = /^\/anim-mode-start(?:\s+([\s\S]*))?$/i.exec(
+      text,
+    );
+    if (animationModeStart) {
+      const wasAnimationMode = composer.animationMode;
+      const startedAt = wasAnimationMode
+        ? (composer.animationModeStartedAt ?? Date.now())
+        : Date.now();
+      setComposer({
+        gddMode: false,
+        gddModeStartedAt: null,
+        imageMode: false,
+        imageModeStartedAt: null,
+        musicMode: false,
+        musicModeStartedAt: null,
+        threeDMode: false,
+        threeDModeStartedAt: null,
+        comfyMode: false,
+        comfyModeStartedAt: null,
+        videoMode: false,
+        videoModeStartedAt: null,
+        animationMode: true,
+        animationModeStartedAt: startedAt,
+        spriteMode: false,
+        spriteModeStartedAt: null,
+        speechMode: false,
+        speechModeStartedAt: null,
+        uiMode: false,
+        uiModeStartedAt: null,
+        metahumanMode: false,
+        metahumanModeStartedAt: null,
+        worldMode: false,
+        worldModeStartedAt: null,
+      });
+      clearDraftIfNeeded();
+      if (!wasAnimationMode) {
+        appendChatNote(t(locale, "dock.animationModeEntered"), "system");
+      }
+      const prompt = (animationModeStart[1] ?? "").trim();
+      if (prompt) generateAnimationPrompt(prompt);
+      return;
+    }
+    const animationModeEnd = /^\/anim-mode-end(?:\s+([\s\S]*))?$/i.exec(text);
+    if (animationModeEnd) {
+      const wasAnimationMode = composer.animationMode;
+      setComposer({ animationMode: false, animationModeStartedAt: null });
+      clearDraftIfNeeded();
+      if (wasAnimationMode) {
+        appendChatNote(t(locale, "dock.animationModeExited"), "system");
+      }
+      return;
+    }
+    const animationMatch =
+      /^\/(?:anim|animation|motion|mocap|动画|动作|动作库)(?:\s+([\s\S]*))?$/iu.exec(
+        text,
+      );
+    if (animationMatch) {
+      const prompt = (animationMatch[1] ?? "").trim();
+      if (!prompt) return;
+      generateAnimationPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
     const speechModeStart = /^\/speech-mode-start(?:\s+([\s\S]*))?$/i.exec(
       text,
     );
@@ -6417,6 +6591,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: true,
@@ -6478,6 +6654,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: true,
         spriteModeStartedAt: startedAt,
         speechMode: false,
@@ -6535,6 +6713,8 @@ export default function AIDock({
         threeDModeStartedAt: startedAt,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6585,6 +6765,8 @@ export default function AIDock({
         comfyModeStartedAt: startedAt,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6634,6 +6816,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6692,6 +6876,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6741,6 +6927,8 @@ export default function AIDock({
         comfyModeStartedAt: null,
         videoMode: false,
         videoModeStartedAt: null,
+        animationMode: false,
+        animationModeStartedAt: null,
         spriteMode: false,
         spriteModeStartedAt: null,
         speechMode: false,
@@ -6880,6 +7068,11 @@ export default function AIDock({
     }
     if (composer.videoMode && !text.startsWith("/")) {
       generateVideoPrompt(text);
+      clearDraftIfNeeded();
+      return;
+    }
+    if (composer.animationMode && !text.startsWith("/")) {
+      generateAnimationPrompt(text);
       clearDraftIfNeeded();
       return;
     }
@@ -7181,6 +7374,8 @@ export default function AIDock({
           ? threeDChannelOptions
           : generationMode === "video"
             ? videoChannelOptions
+            : generationMode === "animation"
+              ? animationChannelOptions
             : generationMode === "sprite"
               ? imageChannelOptions
               : generationMode === "speech"
@@ -7195,6 +7390,8 @@ export default function AIDock({
           ? threeDChannelValue
           : generationMode === "video"
             ? videoChannelValue
+            : generationMode === "animation"
+              ? animationChannelValue
             : generationMode === "sprite"
               ? imageChannelValue
               : generationMode === "speech"
@@ -7209,6 +7406,8 @@ export default function AIDock({
           ? onThreeDChannelChange
           : generationMode === "video"
             ? onVideoChannelChange
+            : generationMode === "animation"
+              ? onAnimationChannelChange
             : generationMode === "sprite"
               ? onImageChannelChange
               : generationMode === "speech"
@@ -7223,6 +7422,8 @@ export default function AIDock({
           ? threeDModelOptions
           : generationMode === "video"
             ? videoModelOptions
+            : generationMode === "animation"
+              ? animationModelOptions
             : generationMode === "sprite"
               ? imageModelOptions
               : generationMode === "speech"
@@ -7237,6 +7438,8 @@ export default function AIDock({
           ? threeDModelValue
           : generationMode === "video"
             ? videoModelValue
+            : generationMode === "animation"
+              ? animationModelValue
             : generationMode === "sprite"
               ? imageModelValue
               : generationMode === "speech"
@@ -7251,6 +7454,8 @@ export default function AIDock({
           ? onThreeDModelChange
           : generationMode === "video"
             ? onVideoModelChange
+            : generationMode === "animation"
+              ? onAnimationModelChange
             : generationMode === "sprite"
               ? onImageModelChange
               : generationMode === "speech"
@@ -7263,6 +7468,8 @@ export default function AIDock({
         ? t(locale, "dock.musicModelTitle")
         : generationMode === "video"
           ? t(locale, "dock.videoModelTitle")
+          : generationMode === "animation"
+            ? t(locale, "dock.animationModelTitle")
           : generationMode === "sprite"
             ? t(locale, "dock.imageModelTitle")
             : generationMode === "speech"
@@ -7283,6 +7490,8 @@ export default function AIDock({
           ? "ugs-ai-input--three-d "
           : composer.videoMode && !dropActive
             ? "ugs-ai-input--video "
+            : composer.animationMode && !dropActive
+              ? "ugs-ai-input--animation "
             : composer.spriteMode && !dropActive
               ? "ugs-ai-input--sprite "
               : composer.speechMode && !dropActive
@@ -7555,7 +7764,7 @@ export default function AIDock({
             ref={streamRef}
             onScroll={handleStreamScroll}
             className={
-              "ugs-ai-return-stream min-h-0 overflow-y-auto p-3 " +
+              "ugs-ai-return-stream ugs-autohide-scroll min-h-0 overflow-y-auto px-6 py-4 " +
               (isChat && timelineMarkers.length > 0 ? "pr-12 " : "") +
               (centerInput ? "mx-auto w-full" : "h-full")
             }
@@ -7779,7 +7988,7 @@ export default function AIDock({
                           onDismiss={() => handleInteractionDismiss(m)}
                         />
                       ) : editingQueuedMessage ? (
-                        <div className="ai-stream-user-bubble flex w-[min(100%,32rem)] max-w-[86%] flex-col gap-2 rounded-md px-3 py-2 text-left">
+                        <div className="ai-stream-user-bubble flex w-[min(100%,46rem)] max-w-[96%] flex-col gap-2 rounded-md px-3 py-2.5 text-left">
                           <textarea
                             value={queuedEditDraft}
                             onChange={(event) =>
@@ -7801,8 +8010,8 @@ export default function AIDock({
                             }}
                             onPaste={handleQueuedEditPaste}
                             autoFocus
-                            rows={Math.min(8, Math.max(2, queuedEditDraft.split("\n").length))}
-                            className="max-h-52 min-h-16 resize-y rounded-md border border-border bg-bg/70 px-2 py-1.5 text-sm leading-relaxed text-fg outline-none transition-colors focus:border-accent"
+                            rows={Math.min(12, Math.max(4, queuedEditDraft.split("\n").length))}
+                            className="max-h-80 min-h-28 resize-y rounded-md border border-border bg-bg/70 px-2.5 py-2 text-sm leading-relaxed text-fg outline-none transition-colors focus:border-accent"
                           />
                           <div className="flex justify-end gap-1">
                             <button
@@ -8584,10 +8793,12 @@ export default function AIDock({
                       ? t(locale, "dock.threeDModePlaceholder")
                       : composer.videoMode
                         ? t(locale, "dock.videoModePlaceholder")
-                        : composer.spriteMode
-                          ? t(locale, "dock.spriteModePlaceholder")
-                          : composer.speechMode
-                            ? t(locale, "dock.speechModePlaceholder")
+                        : composer.animationMode
+                          ? t(locale, "dock.animationModePlaceholder")
+                          : composer.spriteMode
+                            ? t(locale, "dock.spriteModePlaceholder")
+                            : composer.speechMode
+                              ? t(locale, "dock.speechModePlaceholder")
                             : composer.uiMode
                               ? t(locale, "dock.uiModePlaceholder")
                               : composer.metahumanMode

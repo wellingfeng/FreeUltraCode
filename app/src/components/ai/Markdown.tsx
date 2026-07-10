@@ -1,6 +1,7 @@
 import {
   memo,
   useMemo,
+  useRef,
   isValidElement,
   cloneElement,
   type ReactElement,
@@ -62,6 +63,7 @@ function markdownUrlTransform(url: string, key: string): string | null | undefin
     return url;
   }
   if (key === 'href' && isModelUrl(url)) return url;
+  if (key === 'href' && /^data:text\/plain;base64,/i.test(url)) return url;
   return defaultUrlTransform(url);
 }
 
@@ -132,10 +134,33 @@ function MarkdownImpl({
   );
   const fileChipBudget = useFileChipBudget();
 
+  // Keep the mutable per-render inputs in a ref so the `components` object below
+  // can be built once (stable identity) yet always read the latest values.
+  // react-markdown uses `components[tag]` as the element *type*; if that type
+  // changes identity on every streamed token, React unmounts and remounts the
+  // whole subtree each token — which visibly flickers code blocks, image chips,
+  // and paragraphs during streaming. Freezing the component map fixes that.
+  const ctxRef = useRef({
+    onOpenFile,
+    cwd,
+    searchState,
+    fileChipBudget,
+    defaultModelAnimations,
+  });
+  ctxRef.current = {
+    onOpenFile,
+    cwd,
+    searchState,
+    fileChipBudget,
+    defaultModelAnimations,
+  };
+
+  const components = useMemo<Components>(() => {
   const isLineBreak = (child: ReactNode): boolean =>
     isValidElement(child) && child.type === 'br';
 
   const renderFileRef = (refData: ReturnType<typeof scanFileRefs>[number], key: number) => {
+    const { onOpenFile, cwd, fileChipBudget } = ctxRef.current;
     if (typeof refData === 'string') return { node: refData, hidden: false };
     const slot = claimFileChipSlot(fileChipBudget);
     if (slot === 'notice') {
@@ -159,6 +184,7 @@ function MarkdownImpl({
     text: string,
     key?: number,
   ): { node: ReactNode; hiddenOnly: boolean } => {
+    const { searchState } = ctxRef.current;
     const parts = scanFileRefs(text);
     if (parts.length === 1 && typeof parts[0] === 'string') {
       // No file refs — apply search highlight if active, else return raw string.
@@ -274,7 +300,7 @@ function MarkdownImpl({
     return walk(children);
   };
 
-  const components: Components = {
+  return {
     pre: ({ node, children }) => (
       <CodeBlock node={node as never}>{children}</CodeBlock>
     ),
@@ -294,7 +320,7 @@ function MarkdownImpl({
         );
       }
       return (
-        <InlineCode onOpenFile={onOpenFile} cwd={cwd}>
+        <InlineCode onOpenFile={ctxRef.current.onOpenFile} cwd={ctxRef.current.cwd}>
           {children}
         </InlineCode>
       );
@@ -302,9 +328,9 @@ function MarkdownImpl({
     a: ({ href, children }) => (
       <SmartLink
         href={href}
-        onOpenFile={onOpenFile}
-        cwd={cwd}
-        defaultModelAnimations={defaultModelAnimations}
+        onOpenFile={ctxRef.current.onOpenFile}
+        cwd={ctxRef.current.cwd}
+        defaultModelAnimations={ctxRef.current.defaultModelAnimations}
       >
         {children as ReactNode}
       </SmartLink>
@@ -316,8 +342,8 @@ function MarkdownImpl({
           <ToolLine
             name={tool.name}
             detail={tool.detail}
-            onOpenFile={onOpenFile}
-            cwd={cwd}
+            onOpenFile={ctxRef.current.onOpenFile}
+            cwd={ctxRef.current.cwd}
           />
         );
       }
@@ -347,6 +373,10 @@ function MarkdownImpl({
       />
     ),
   };
+  // Empty deps: the map reads all mutable inputs via ctxRef, so it stays a
+  // stable identity across streamed tokens and never remounts subtrees.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="ai-markdown ai-stream-markdown text-sm leading-relaxed">

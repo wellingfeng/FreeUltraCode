@@ -38,7 +38,7 @@ export async function completeOpenAICompatible(
         signal: request.signal,
       });
       if (res.ok && res.body) {
-        return readOpenAICompatibleStream(res, request);
+        return readOpenAICompatibleResponse(res, request);
       }
       const retryDetail = await safeText(res);
       throw new Error(`HTTP ${res.status}: ${retryDetail}`);
@@ -46,7 +46,7 @@ export async function completeOpenAICompatible(
     throw new Error(`HTTP ${res.status}: ${detail}`);
   }
 
-  return readOpenAICompatibleStream(res, request);
+  return readOpenAICompatibleResponse(res, request);
 }
 
 function openAICompatibleBody(
@@ -91,6 +91,17 @@ function openAICompatibleUserContent(
   return [...parts, { type: 'text', text: request.userContent }];
 }
 
+async function readOpenAICompatibleResponse(
+  res: Response,
+  request: GatewayTextRequest,
+): Promise<string> {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (/\bjson\b/i.test(contentType)) {
+    return readOpenAICompatibleJson(await res.text(), request);
+  }
+  return readOpenAICompatibleStream(res, request);
+}
+
 async function readOpenAICompatibleStream(
   res: Response,
   request: GatewayTextRequest,
@@ -115,15 +126,11 @@ async function readOpenAICompatibleStream(
       if (!data || data === '[DONE]') continue;
       try {
         const evt = JSON.parse(data) as {
-          choices?: Array<{ delta?: { content?: string } }>;
+          choices?: Array<OpenAIChoice>;
           usage?: unknown;
         };
         usage = mergeUsageReports(usage, usageReportFromOpenAI(evt.usage));
-        const chunk = evt.choices?.[0]?.delta?.content;
-        if (chunk) {
-          full += chunk;
-          request.onDelta?.(chunk);
-        }
+        full = appendOpenAIText(full, evt.choices?.[0], request);
       } catch {
         /* ignore malformed keep-alive lines */
       }
@@ -132,6 +139,79 @@ async function readOpenAICompatibleStream(
   if (usage) request.onUsage?.(usage);
 
   return full;
+}
+
+type OpenAIChoice = {
+  delta?: { content?: unknown };
+  message?: { content?: unknown };
+  text?: unknown;
+};
+
+function readOpenAICompatibleJson(
+  raw: string,
+  request: GatewayTextRequest,
+): string {
+  try {
+    const evt = JSON.parse(raw) as {
+      choices?: Array<OpenAIChoice>;
+      usage?: unknown;
+    };
+    const usage = usageReportFromOpenAI(evt.usage);
+    if (usage) request.onUsage?.(usage);
+    return appendOpenAIText('', evt.choices?.[0], request);
+  } catch {
+    return '';
+  }
+}
+
+function appendOpenAIText(
+  current: string,
+  choice: OpenAIChoice | undefined,
+  request: GatewayTextRequest,
+): string {
+  const delta = textFromOpenAIContent(choice?.delta?.content);
+  if (delta) {
+    request.onDelta?.(delta);
+    return current + delta;
+  }
+
+  const text = textFromOpenAIContent(choice?.text);
+  if (text) {
+    request.onDelta?.(text);
+    return current + text;
+  }
+
+  const message = textFromOpenAIContent(choice?.message?.content);
+  if (!message) return current;
+  const appended = appendMaybeCumulativeText(current, message);
+  const deltaText = appended.slice(current.length);
+  if (deltaText) request.onDelta?.(deltaText);
+  return appended;
+}
+
+function appendMaybeCumulativeText(current: string, next: string): string {
+  if (!current || !next.startsWith(current)) return current + next;
+  return next;
+}
+
+function textFromOpenAIContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (
+        part &&
+        typeof part === 'object' &&
+        'type' in part &&
+        (part as { type?: unknown }).type === 'text' &&
+        'text' in part &&
+        typeof (part as { text?: unknown }).text === 'string'
+      ) {
+        return (part as { text: string }).text;
+      }
+      return '';
+    })
+    .join('');
 }
 
 function shouldRetryWithoutStreamUsage(status: number, detail: string): boolean {

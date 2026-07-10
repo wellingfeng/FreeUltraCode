@@ -12,6 +12,9 @@ import {
   type VideoGenerationSettings,
 } from '@/lib/videoGeneration';
 import {
+  DEFAULT_ANIMATION_GENERATION_SETTINGS,
+} from '@/lib/animationGeneration';
+import {
   guardSlashCommandChannel,
   guardSlashCommandText,
   slashGuardChannelForText,
@@ -22,6 +25,7 @@ const blankComposer = {
   musicMode: false,
   threeDMode: false,
   videoMode: false,
+  animationMode: false,
   speechMode: false,
   spriteMode: false,
   comfyMode: false,
@@ -78,6 +82,15 @@ describe('slash command guards', () => {
     expect(guardSlashCommandText('/plan 修 bug', blankComposer)).toBeNull();
   });
 
+  it('allows animation library search with the default Mixamo provider', () => {
+    const result = guardSlashCommandText('/anim walk cycle', blankComposer, {
+      animation: DEFAULT_ANIMATION_GENERATION_SETTINGS,
+    });
+
+    expect(result?.ok).toBe(true);
+    expect(result?.channel).toBe('animation');
+  });
+
   it('exposes the channel without loading settings', () => {
     expect(slashGuardChannelForText('/image 画一张猫', blankComposer)).toBe(
       'image',
@@ -88,6 +101,9 @@ describe('slash command guards', () => {
         musicMode: true,
       }),
     ).toBe('music');
+    expect(slashGuardChannelForText('/anim walk', blankComposer)).toBe(
+      'animation',
+    );
     expect(slashGuardChannelForText('/plan 修 bug', blankComposer)).toBeNull();
   });
 

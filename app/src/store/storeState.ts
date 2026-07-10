@@ -18,6 +18,7 @@ import type { ImageProviderId } from '@/lib/imageGeneration';
 import type { MusicProviderId } from '@/lib/musicGeneration';
 import type { ThreeDProviderId } from '@/lib/threeDGeneration';
 import type { VideoProviderId } from '@/lib/videoGeneration';
+import type { AnimationProviderId } from '@/lib/animationGeneration';
 import type { SpeechProviderId } from '@/lib/speechGeneration';
 import type {
   AppearanceSettings,
@@ -334,6 +335,10 @@ export interface StoreState {
   generateVideoPrompt: (
     text: string,
     options?: { providerId?: VideoProviderId; model?: string },
+  ) => void;
+  generateAnimationPrompt: (
+    text: string,
+    options?: { providerId?: AnimationProviderId; model?: string },
   ) => void;
   generateSpeechPrompt: (
     text: string,

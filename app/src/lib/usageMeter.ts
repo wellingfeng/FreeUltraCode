@@ -159,18 +159,34 @@ function parseSnapshot(value: unknown): UsageMeterSnapshot {
   const raw = value as Partial<UsageMeterSnapshot>;
   const totals = raw.totals ?? EMPTY_SNAPSHOT.totals;
   const last = raw.lastCall ?? ZERO_CALL;
+  const calls = numberFrom(totals.calls) ?? 0;
+  const inputTokens = numberFrom(totals.inputTokens) ?? 0;
+  const outputTokens = numberFrom(totals.outputTokens) ?? 0;
+  const totalTokens = numberFrom(totals.totalTokens) ?? 0;
+  const cachedInputTokens = numberFrom(totals.cachedInputTokens) ?? 0;
+  const realInputTokens = numberFrom(totals.realInputTokens);
+  const realCachedInputTokens = numberFrom(totals.realCachedInputTokens);
+  const legacyRealTotals =
+    realInputTokens === undefined &&
+    realCachedInputTokens === undefined &&
+    inputTokens > 0 &&
+    (last.estimated === false || cachedInputTokens > 0);
   return {
     version: 1,
     totals: {
-      calls: numberFrom(totals.calls) ?? 0,
-      inputTokens: numberFrom(totals.inputTokens) ?? 0,
-      outputTokens: numberFrom(totals.outputTokens) ?? 0,
-      totalTokens: numberFrom(totals.totalTokens) ?? 0,
-      cachedInputTokens: numberFrom(totals.cachedInputTokens) ?? 0,
-      // Legacy snapshots predate the real-only fields; default them to 0 so the
-      // session cache % simply stays `--` until the next real call lands.
-      realInputTokens: numberFrom(totals.realInputTokens) ?? 0,
-      realCachedInputTokens: numberFrom(totals.realCachedInputTokens) ?? 0,
+      calls,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cachedInputTokens,
+      // Legacy snapshots predate the real-only fields. If they clearly carry
+      // server-reported usage (real last call or cached tokens), migrate totals
+      // so cache % does not collapse to `--` forever.
+      realInputTokens:
+        realInputTokens ?? (legacyRealTotals ? inputTokens : 0),
+      realCachedInputTokens:
+        realCachedInputTokens ??
+        (legacyRealTotals ? Math.min(inputTokens, cachedInputTokens) : 0),
     },
     lastCall: {
       inputTokens: numberFrom(last.inputTokens) ?? 0,
@@ -300,15 +316,24 @@ export function mergeUsageReports(
 ): ModelUsageReport | null {
   if (!next) return current ?? null;
   if (!current) return next;
-  return {
+  const merged: ModelUsageReport = {
     inputTokens: next.inputTokens ?? current.inputTokens,
     outputTokens: next.outputTokens ?? current.outputTokens,
-    totalTokens: next.totalTokens ?? current.totalTokens,
     cacheReadInputTokens:
       next.cacheReadInputTokens ?? current.cacheReadInputTokens,
     cacheCreationInputTokens:
       next.cacheCreationInputTokens ?? current.cacheCreationInputTokens,
   };
+  const computedTotal =
+    merged.inputTokens !== undefined || merged.outputTokens !== undefined
+      ? (merged.inputTokens ?? 0) + (merged.outputTokens ?? 0)
+      : undefined;
+  const reportedTotal = next.totalTokens ?? current.totalTokens;
+  merged.totalTokens =
+    reportedTotal !== undefined && computedTotal !== undefined
+      ? Math.max(reportedTotal, computedTotal)
+      : (reportedTotal ?? computedTotal);
+  return merged;
 }
 
 export function usageReportFromOpenAI(value: unknown): ModelUsageReport | null {
@@ -372,10 +397,10 @@ export function usageReportFromCodex(value: unknown): ModelUsageReport | null {
  *
  * - Codex / OpenAI-style: `input_tokens` already *includes* the cached portion
  *   (`cached_input_tokens` is a subset), so the cached/total ratio is correct as-is.
- * - Anthropic-style: `input_tokens` counts only the *uncached* prefix, with cache
- *   hits/writes reported separately (`cache_read_input_tokens` /
- *   `cache_creation_input_tokens`). We fold those back into a single total so the
- *   meter's cached÷total math stays correct.
+ * - Anthropic-style: `input_tokens` counts only standard-priced input, with
+ *   cache hits/writes reported separately (`cache_read_input_tokens` /
+ *   `cache_creation_input_tokens`). We fold those back into visible input for
+ *   window/tokens, but only cache reads count as cache hits.
  *
  * Returns null when the payload carries no recognizable token counts.
  */
@@ -430,8 +455,8 @@ export function usageReportFromCliUsage(value: unknown): ModelUsageReport | null
     numberFrom(raw.outputTokens) ??
     numberFrom(raw.completion_tokens) ??
     numberFrom(raw.completionTokens);
-  // Anthropic keeps the cached prefix out of `input_tokens`; sum it back in so
-  // the gauge reflects cache-of-total. Codex/OpenAI already report the full
+  // Anthropic keeps cache reads/writes out of `input_tokens`; sum them back in
+  // so visible input reflects the request. Codex/OpenAI already report full
   // input, so leave it untouched.
   const inputTokens = anthropicStyle
     ? (rawInput ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0)
@@ -458,17 +483,26 @@ export function usageReportFromCliUsage(value: unknown): ModelUsageReport | null
 export function usageReportFromAnthropic(value: unknown): ModelUsageReport | null {
   if (typeof value !== 'object' || value === null) return null;
   const raw = value as Record<string, unknown>;
+  const rawInput = numberFrom(raw.input_tokens);
+  const outputTokens = numberFrom(raw.output_tokens);
+  const cacheRead =
+    numberFrom(raw.cache_read_input_tokens) ?? numberFrom(raw.cache_read_tokens);
+  const cacheCreation =
+    numberFrom(raw.cache_creation_input_tokens) ??
+    numberFrom(raw.cache_creation_tokens);
+  const inputTokens =
+    rawInput !== undefined || cacheRead !== undefined || cacheCreation !== undefined
+      ? (rawInput ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0)
+      : undefined;
   const report: ModelUsageReport = {
-    inputTokens: numberFrom(raw.input_tokens),
-    outputTokens: numberFrom(raw.output_tokens),
+    inputTokens,
+    outputTokens,
     cacheReadInputTokens:
-      numberFrom(raw.cache_read_input_tokens) ?? numberFrom(raw.cache_read_tokens),
-    cacheCreationInputTokens:
-      numberFrom(raw.cache_creation_input_tokens) ??
-      numberFrom(raw.cache_creation_tokens),
+      cacheRead,
+    cacheCreationInputTokens: cacheCreation,
   };
-  const input = report.inputTokens ?? 0;
-  const output = report.outputTokens ?? 0;
+  const input = inputTokens ?? 0;
+  const output = outputTokens ?? 0;
   if (input || output) report.totalTokens = input + output;
   return Object.values(report).some((item) => item !== undefined) ? report : null;
 }
@@ -511,7 +545,7 @@ export function recordModelUsageForRoute(
   const usage = cleanUsage(report);
   const cachedInputTokens = Math.min(
     usage.inputTokens,
-    usage.cacheReadInputTokens + usage.cacheCreationInputTokens,
+    usage.cacheReadInputTokens,
   );
   const updatedAt = Date.now();
   const call: UsageMeterCall = {
@@ -592,7 +626,9 @@ export function rebuildSnapshotFromTurns(
       numberFrom(turn.cachedInputTokens) ?? 0,
     );
     if (totalTokens <= 0 && inputTokens <= 0 && outputTokens <= 0) continue;
-    const isReal = turn.estimated === false;
+    const isReal =
+      turn.estimated === false ||
+      (turn.estimated !== true && cachedInputTokens > 0);
     totals.calls += 1;
     totals.inputTokens += inputTokens;
     totals.outputTokens += outputTokens;
@@ -704,7 +740,7 @@ export function usageTurnFromReport(
   const usage = cleanUsage(report);
   const cachedInputTokens = Math.min(
     usage.inputTokens,
-    usage.cacheReadInputTokens + usage.cacheCreationInputTokens,
+    usage.cacheReadInputTokens,
   );
   const estimated = options.estimated !== false;
   return {

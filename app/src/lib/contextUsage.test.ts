@@ -88,4 +88,17 @@ describe('context usage estimates', () => {
       }).tone,
     ).toBe('danger');
   });
+
+  it('shows over-window context as 100%+ instead of raw overflow percent', () => {
+    const estimate = estimateContextUsage({
+      messages: [],
+      draft: 'a'.repeat(10000),
+      adapter: 'claude-code',
+      model: 'custom-1k',
+      simpleChatMode: true,
+    });
+
+    expect(estimate.percent).toBeGreaterThan(100);
+    expect(estimate.displayPercent).toBe('100%+');
+  });
 });

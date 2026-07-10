@@ -29,6 +29,9 @@ const SETTINGS_COMMAND_NAMES = [
   "/image-mode-start",
   "/image-mode-end",
   "/video-to-frames",
+  "/anim",
+  "/anim-mode-start",
+  "/anim-mode-end",
   "/comfyui-mode-start",
   "/comfyui-mode-end",
   "/worldmodel",
@@ -198,6 +201,8 @@ function requiredSettingsForCommand(name: string): string[] {
     return ["settings.music.defaultProvider"];
   if (name === "/video" || name === "/video-mode-start")
     return ["settings.video.defaultProvider"];
+  if (name === "/anim" || name === "/anim-mode-start")
+    return ["settings.animation.defaultProvider"];
   if (name === "/tts" || name === "/speech-mode-start")
     return ["settings.speech.defaultProvider"];
   if (name === "/worldmodel" || name === "/worldmodel-mode-start") {

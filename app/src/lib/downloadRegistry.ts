@@ -496,7 +496,7 @@ function diskAssetToEntry(input: CachedAssetFileInput): AssetEntry {
 const IMAGE_EXT = new Set(['png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp', 'gif', 'webp', 'bmp', 'dib', 'ico', 'cur', 'svg', 'avif']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'm4v']);
 const AUDIO_EXT = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a']);
-const MESH_EXT = new Set(['glb', 'gltf', 'obj', 'stl', 'fbx', 'ply', 'usdz', 'blend']);
+const MESH_EXT = new Set(['glb', 'gltf', 'obj', 'stl', 'fbx', 'bvh', 'asf', 'amc', 'ply', 'usdz', 'blend']);
 const MANAGED_ASSET_EXT = new Set([
   ...IMAGE_EXT,
   ...VIDEO_EXT,
@@ -538,7 +538,7 @@ const MANAGED_ASSET_TERMINATORS = new Set([
   '？',
 ]);
 const MANAGED_ASSET_PATH_RE =
-  /(?:file:\/\/\/)?(?:[A-Za-z]:[/\\]|[/\\]{1,2}|~[/\\]|\$\w+[/\\]|\.[/\\])?[^\s"'`<>()[\]{}]*?\.ultragamestudio[/\\][^\s"'`<>()[\]{}]*?\.(?:jpeg|pjpeg|apng|jfif|webp|avif|gltf|blend|html|jpg|jpe|pjp|gif|bmp|dib|ico|cur|svg|png|mp4|webm|mov|m4v|mp3|wav|ogg|flac|aac|m4a|glb|obj|stl|fbx|ply|usdz|zip|json|htm|md|txt|pdf)(?=$|[\s"'`<>()[\]{}.,;:!?，。；、！？])/gi;
+  /(?:file:\/\/\/)?(?:[A-Za-z]:[/\\]|[/\\]{1,2}|~[/\\]|\$\w+[/\\]|\.[/\\])?[^\s"'`<>()[\]{}]*?\.ultragamestudio[/\\][^\s"'`<>()[\]{}]*?\.(?:jpeg|pjpeg|apng|jfif|webp|avif|gltf|blend|html|jpg|jpe|pjp|gif|bmp|dib|ico|cur|svg|png|mp4|webm|mov|m4v|mp3|wav|ogg|flac|aac|m4a|glb|obj|stl|fbx|bvh|asf|amc|ply|usdz|zip|json|htm|md|txt|pdf)(?=$|[\s"'`<>()[\]{}.,;:!?，。；、！？])/gi;
 const ASSET_MESSAGE_LINK_MAX_DISTANCE_MS = 2 * 60 * 60 * 1000;
 
 function extensionFromPath(path: string): string {

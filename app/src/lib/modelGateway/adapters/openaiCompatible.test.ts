@@ -18,6 +18,35 @@ function mockOpenAIStream(text: string): Response {
   });
 }
 
+function mockOpenAIStreamWithMessageContent(text: string): Response {
+  const sse =
+    `data: {"choices":[{"message":{"content":${JSON.stringify(text)}}}]}\n\n` +
+    'data: [DONE]\n\n';
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(sse));
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
+function mockOpenAIJson(text: string): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{ message: { content: text } }],
+      usage: { prompt_tokens: 12, completion_tokens: 3, total_tokens: 15 },
+    }),
+    {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    },
+  );
+}
+
 describe('completeOpenAICompatible', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -75,5 +104,55 @@ describe('completeOpenAICompatible', () => {
       }),
     ).rejects.toThrow('NO_API_KEY');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reads GLM-style streamed message content chunks', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      mockOpenAIStreamWithMessageContent('GLM标题'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      completeOpenAICompatible({
+        route: {
+          selection: { adapter: 'codex', modelClass: 'gpt-oss' },
+          adapter: 'codex',
+          modelClass: 'gpt-oss',
+          model: 'glm-5.2',
+          transport: 'openai-compatible',
+          mode: 'direct',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.com/v1',
+          label: 'GLM',
+          source: 'global',
+        },
+        system: 's',
+        userContent: 'hello',
+      }),
+    ).resolves.toBe('GLM标题');
+  });
+
+  it('reads non-streaming OpenAI-compatible JSON replies', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => mockOpenAIJson('JSON标题'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      completeOpenAICompatible({
+        route: {
+          selection: { adapter: 'codex', modelClass: 'gpt-oss' },
+          adapter: 'codex',
+          modelClass: 'gpt-oss',
+          model: 'glm-5.2',
+          transport: 'openai-compatible',
+          mode: 'direct',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.com/v1',
+          label: 'GLM',
+          source: 'global',
+        },
+        system: 's',
+        userContent: 'hello',
+      }),
+    ).resolves.toBe('JSON标题');
   });
 });

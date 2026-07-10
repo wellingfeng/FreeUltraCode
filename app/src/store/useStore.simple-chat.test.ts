@@ -82,12 +82,16 @@ vi.mock('@/lib/sessionNotification', async () => {
 
 import { useStore } from './useStore';
 import {
+  addAiEditChannel,
+  aiEditCommitMessages,
   gatewayRouteHeader,
   gatewayRouteLine,
   isActiveAiEditingSession,
   isWorkflowReadOnly,
+  removeAiEditChannel,
   __resetSimpleChatRuntimeForTests,
 } from './useStore';
+import type { AiEditChannel } from './useStore';
 import { historyStore } from './history/store';
 import type { Message, Session } from './types';
 
@@ -199,6 +203,97 @@ afterEach(async () => {
 });
 
 describe('simple-workflow chat mode', () => {
+  it('stamps assistant completion time when persisting an AI edit message', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(5_000);
+    const updateSpy = vi.spyOn(historyStore, 'updateSession').mockResolvedValue({
+      id: 's1',
+      workspaceId: 'ws1',
+      title: 'Chat',
+      isWorkflow: false,
+      createdAt: 1,
+      updatedAt: 5_000,
+      messages: [],
+    } as never);
+    const workflow = simpleBlueprint('Simple chat');
+    resetStore(workflow);
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: 'ws1',
+      activeSessionId: 's1',
+      sessions: [
+        {
+          id: 's1',
+          workspaceId: 'ws1',
+          title: 'Chat',
+          createdAt: 1,
+          updatedAt: 1,
+          isWorkflow: false,
+        },
+      ],
+      sessionTree: {
+        ws1: [
+          {
+            id: 's1',
+            workspaceId: 'ws1',
+            title: 'Chat',
+            createdAt: 1,
+            updatedAt: 1,
+            isWorkflow: false,
+          },
+        ],
+      },
+    });
+    const ch: AiEditChannel = {
+      key: 'ws1::s1::m_user',
+      sessionKey: 'ws1::s1',
+      workspaceId: 'ws1',
+      sessionId: 's1',
+      workspaceRootPath: null,
+      workflow,
+      messages: [
+        { id: 'm_user', role: 'user', text: 'start', createdAt: 1_000 },
+        {
+          id: 'm_assistant',
+          role: 'assistant',
+          text: 'done',
+          createdAt: 1_001,
+        },
+      ],
+      cliRunIds: new Set(),
+      abortController: new AbortController(),
+      workflowSession: false,
+      chat: true,
+      ownedMessageIds: new Set(['m_user', 'm_assistant']),
+    };
+
+    try {
+      addAiEditChannel(ch);
+      aiEditCommitMessages(ch, true);
+      await vi.advanceTimersByTimeAsync(800);
+
+      expect(
+        ch.messages.find((message) => message.id === 'm_assistant')?.completedAt,
+      ).toBe(5_000);
+      expect(updateSpy).toHaveBeenCalledWith(
+        'ws1',
+        's1',
+        expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'm_assistant',
+              completedAt: 5_000,
+            }),
+          ]),
+        }),
+      );
+    } finally {
+      removeAiEditChannel(ch);
+      updateSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it('creates plain chat history entries with an untitled session placeholder', async () => {
     window.localStorage.clear();
     await historyStore.ready();
@@ -693,11 +788,10 @@ describe('simple-workflow chat mode', () => {
     mockDirectRoute();
     const requests: Array<{ system: string; userContent: string }> = [];
     gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
-      requests.push({
-        system: String(request.system),
-        userContent: String(request.userContent),
-      });
-      return '普通回答。';
+      const system = String(request.system);
+      const userContent = String(request.userContent);
+      requests.push({ system, userContent });
+      return system.includes('对话命名模型') ? '普通问候' : '普通回答。';
     });
 
     useStore.getState().sendPrompt('你好，介绍一下你自己。');
@@ -720,9 +814,11 @@ describe('simple-workflow chat mode', () => {
       ? await historyStore.getSession(workspace.id, sessionId)
       : null;
 
-    expect(requests[0].system).toContain('简单 Workflow');
-    expect(requests[0].system).not.toContain('IRGraph 结构');
-    expect(requests[0].userContent).not.toContain('IRGraph');
+    const chatRequest = requests.find((request) =>
+      request.system.includes('简单 Workflow'),
+    );
+    expect(chatRequest?.system).not.toContain('IRGraph 结构');
+    expect(chatRequest?.userContent).not.toContain('IRGraph');
     expect(state.workflow.meta.simple).toBe(true);
     expect(session?.isWorkflow).toBe(false);
     expect(session?.runStatus).toBe('success');
@@ -1999,6 +2095,331 @@ describe('simple-workflow chat mode', () => {
     expect(simpleBlueprint(undefined, 'ko-KR').meta.name).toBe('새 세션');
   });
 
+  it('auto-renames a new simple chat from the first user intent before the assistant reply finishes', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    const sessionId = useStore.getState().activeSessionId;
+    expect(sessionId).toBeTruthy();
+    mockDirectRoute();
+    const requests: Array<{ system: string; userContent: string }> = [];
+    const mainGate: { resolve?: (answer: string) => void } = {};
+    gatewayMocks.completeGatewayText.mockImplementation((request) => {
+      const system = String(request.system);
+      const userContent = String(request.userContent);
+      requests.push({ system, userContent });
+      if (system.includes('对话命名模型')) {
+        return Promise.resolve(
+          userContent.includes('用户输入：') ? '早期意图标题' : '首轮总结标题',
+        );
+      }
+      return new Promise<string>((resolve) => {
+        mainGate.resolve = resolve;
+      });
+    });
+
+    useStore.getState().sendPrompt('分析 Cherry Studio 话题标题怎么自动生成');
+
+    await waitFor(
+      () =>
+        useStore.getState().sessions[0]?.title === '早期意图标题' &&
+        useStore
+          .getState()
+          .messages.some((message) => message.text.includes('生成中')),
+      'early generated session title',
+    );
+
+    const intentRequest = requests.find(
+      (request) =>
+        request.system.includes('对话命名模型') &&
+        request.userContent.includes('用户输入：'),
+    );
+    expect(intentRequest?.userContent).toContain('分析 Cherry Studio');
+
+    mainGate.resolve?.('Cherry 的做法是首轮后总结标题。');
+    await waitFor(
+      () => useStore.getState().sessions[0]?.title === '首轮总结标题',
+      'summary generated session title',
+    );
+
+    const record = sessionId
+      ? await historyStore.getSession(workspace.id, sessionId)
+      : null;
+    expect(record?.title).toBe('首轮总结标题');
+  });
+
+  it('does not start early title naming on CLI-only simple chats', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+    await waitFor(
+      async () => {
+        const sessionId = useStore.getState().activeSessionId;
+        return !!(
+          sessionId && (await historyStore.getSession(workspace.id, sessionId))
+        );
+      },
+      'plain chat session persisted',
+    );
+
+    tauriMocks.isTauri.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      modelClass: 'sonnet',
+      model: 'glm-5.2',
+      providerName: 'KuroGLM5.2',
+      channelName: 'glm-5.2',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'KuroGLM5.2',
+      source: 'global',
+      cliCommand: 'claude',
+    });
+    const mainGate: { resolve?: (answer: string) => void } = {};
+    tauriMocks.aiEditViaCli.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          mainGate.resolve = resolve;
+        }),
+    );
+    gatewayMocks.completeGatewayText.mockResolvedValue('GLM总结标题');
+
+    useStore.getState().sendPrompt('分析 ScreenLeak 全屏彩光是否开启');
+
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
+      'main CLI chat call',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
+
+    mainGate.resolve?.('ScreenLeak 没有开启，需要改 DefaultEngine.ini。');
+    await waitFor(
+      () => useStore.getState().sessions[0]?.title === 'GLM总结标题',
+      'summary title after CLI reply',
+    );
+
+    expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(1);
+  });
+
+  it('auto-renames a new simple chat after the first assistant reply', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    const sessionId = useStore.getState().activeSessionId;
+    expect(sessionId).toBeTruthy();
+    mockDirectRoute();
+    const requests: Array<{ system: string; userContent: string }> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      const system = String(request.system);
+      const userContent = String(request.userContent);
+      requests.push({ system, userContent });
+      if (system.includes('对话命名模型')) {
+        return userContent.includes('首轮助手回复')
+          ? '自动话题命名'
+          : '早期话题命名';
+      }
+      return 'Cherry 的做法是首轮后总结标题。';
+    });
+
+    useStore.getState().sendPrompt('分析 Cherry Studio 话题标题怎么自动生成');
+
+    await waitFor(
+      () =>
+        requests.length >= 2 &&
+        useStore.getState().sessions[0]?.title === '自动话题命名',
+      'generated session title',
+    );
+
+    const record = sessionId
+      ? await historyStore.getSession(workspace.id, sessionId)
+      : null;
+    const summaryRequest = requests.find(
+      (request) =>
+        request.system.includes('对话命名模型') &&
+        request.userContent.includes('首轮助手回复'),
+    );
+    expect(summaryRequest?.userContent).toContain('首轮用户消息');
+    expect(summaryRequest?.userContent).toContain('首轮助手回复');
+    expect(record?.title).toBe('自动话题命名');
+  });
+
+  it('keeps pasted image paths out of pending simple chat titles', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    const sessionId = useStore.getState().activeSessionId;
+    expect(sessionId).toBeTruthy();
+    mockDirectRoute();
+    const titleGate: { resolve?: (title: string) => void } = {};
+    gatewayMocks.completeGatewayText.mockImplementation((request) => {
+      const system = String(request.system);
+      const userContent = String(request.userContent);
+      if (
+        system.includes('对话命名模型') &&
+        userContent.includes('用户输入：')
+      ) {
+        return new Promise<string>((resolve) => {
+          titleGate.resolve = resolve;
+        });
+      }
+      if (system.includes('对话命名模型')) {
+        return Promise.resolve('UE启动着色器崩溃');
+      }
+      return Promise.resolve('主回复完成。');
+    });
+
+    useStore
+      .getState()
+      .sendPrompt(
+        '`E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1783578658027-52db4c04aa12e57d-0.png`，这里的失败是因为什么，好像我不应该失败才对，是因为超时吗，还是什么原因',
+      );
+
+    await waitFor(
+      () => useStore.getState().sessions[0]?.title?.startsWith('这里的失败'),
+      'sanitized pending session title',
+    );
+
+    const pendingTitle = useStore.getState().sessions[0]?.title ?? '';
+    expect(pendingTitle).not.toContain('clipboard-images');
+    expect(pendingTitle).not.toContain('UltraGameStudio');
+
+    await waitFor(() => !!titleGate.resolve, 'title naming request');
+    titleGate.resolve?.('UE启动着色器崩溃');
+
+    await waitFor(
+      () => useStore.getState().sessions[0]?.title === 'UE启动着色器崩溃',
+      'generated session title',
+    );
+
+    const record = sessionId
+      ? await historyStore.getSession(workspace.id, sessionId)
+      : null;
+    expect(record?.title).toBe('UE启动着色器崩溃');
+  });
+
+  it('does not overwrite a manual rename while title naming is in flight', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    const sessionId = useStore.getState().activeSessionId;
+    expect(sessionId).toBeTruthy();
+    mockDirectRoute();
+    const titleResolvers: Array<(title: string) => void> = [];
+    gatewayMocks.completeGatewayText.mockImplementation((request) => {
+      if (String(request.system).includes('对话命名模型')) {
+        return new Promise<string>((resolve) => {
+          titleResolvers.push(resolve);
+        });
+      }
+      return Promise.resolve('首轮回答已经完成。');
+    });
+
+    useStore.getState().sendPrompt('给这个新会话起个更短标题');
+
+    await waitFor(
+      () => titleResolvers.length >= 2,
+      'title naming request',
+    );
+    await useStore
+      .getState()
+      .renameWorkflowSession(sessionId ?? '', workspace.id, '手动标题');
+
+    for (const resolveTitle of titleResolvers) {
+      resolveTitle('模型标题');
+    }
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const record = sessionId
+      ? await historyStore.getSession(workspace.id, sessionId)
+      : null;
+    expect(useStore.getState().sessions[0]?.title).toBe('手动标题');
+    expect(record?.title).toBe('手动标题');
+  });
+
   it('answers directly without generating an IRGraph and keeps a single node', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     mockDirectRoute();
@@ -2094,6 +2515,60 @@ describe('simple-workflow chat mode', () => {
     expect(assistant?.usage?.cachedInputTokens).toBe(0);
     expect(assistant?.usage?.cachePercent).toBe(0);
     expect(assistant?.usage?.estimated).toBe(true);
+  });
+
+  it('stamps CLI simple-chat usage even when the session usage meter cannot persist', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      modelClass: 'sonnet',
+      model: 'sonnet',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code',
+      source: 'fallback',
+      cliCommand: 'claude',
+    });
+    const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key, value) => {
+      if (key === 'ugs_usage_meter_by_session_v1') {
+        throw new Error('quota exceeded');
+      }
+      return originalSetItem(key, value);
+    });
+    tauriMocks.aiEditViaCli.mockImplementation(async (_prompt, _adapter, opts) => {
+      opts.onUsage?.({
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 40,
+      });
+      return '带 CLI usage 的回答。';
+    });
+
+    useStore.getState().sendPrompt('测试 CLI usage 回填');
+
+    await waitFor(
+      () =>
+        !useStore.getState().aiStreaming &&
+        useStore
+          .getState()
+          .messages.some((m) => m.role === 'assistant' && m.text.includes('CLI usage')),
+      'CLI usage simple chat reply',
+    );
+
+    const assistant = useStore
+      .getState()
+      .messages.find((m) => m.role === 'assistant' && m.text.includes('CLI usage'));
+    expect(assistant?.usage?.inputTokens).toBe(140);
+    expect(assistant?.usage?.outputTokens).toBe(20);
+    expect(assistant?.usage?.totalTokens).toBe(160);
+    expect(assistant?.usage?.cachedInputTokens).toBe(40);
+    expect(assistant?.usage?.cachePercent).toBeCloseTo(28.57, 2);
+    expect(assistant?.usage?.estimated).toBe(false);
   });
 
   it('keeps simple-chat interaction widgets visible while waiting for input', async () => {

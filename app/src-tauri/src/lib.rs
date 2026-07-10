@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 use tauri::{
+    AppHandle, Manager, Runtime,
     menu::MenuBuilder,
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, Runtime,
 };
 
 mod cache_cleanup;
@@ -85,10 +85,7 @@ fn emit_session_notification_click<R: Runtime>(
     let _ = app.emit(SESSION_NOTIFICATION_CLICKED_EVENT, payload);
 }
 
-fn waiting_input_notification_tag(
-    workspace_id: Option<&str>,
-    session_id: Option<&str>,
-) -> String {
+fn waiting_input_notification_tag(workspace_id: Option<&str>, session_id: Option<&str>) -> String {
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
@@ -235,10 +232,10 @@ fn show_windows_waiting_input_notification(
 ) -> Result<bool, String> {
     use std::time::Duration as StdDuration;
     use windows::{
-        core::{HSTRING, IInspectable},
         Data::Xml::Dom::XmlDocument,
         Foundation::TypedEventHandler,
         UI::Notifications::{ToastNotification, ToastNotificationManager},
+        core::{HSTRING, IInspectable},
     };
 
     let app_id = windows_notification_app_id(&app);
@@ -290,7 +287,7 @@ fn dismiss_waiting_input_notification(
     workspace_id: Option<String>,
     session_id: Option<String>,
 ) -> Result<bool, String> {
-    use windows::{core::HSTRING, UI::Notifications::ToastNotificationManager};
+    use windows::{UI::Notifications::ToastNotificationManager, core::HSTRING};
 
     let app_id = windows_notification_app_id(&app);
     let tag = waiting_input_notification_tag(workspace_id.as_deref(), session_id.as_deref());
@@ -615,6 +612,35 @@ struct LocalFileUploadPayload {
     size_bytes: u64,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeBaseScanSource {
+    path: String,
+    kind: Option<String>,
+    enabled: Option<bool>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeBaseScannedFile {
+    path: String,
+    size_bytes: u64,
+    modified_at_ms: Option<u64>,
+    text: String,
+    truncated: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnowledgeBaseScanResult {
+    files: Vec<KnowledgeBaseScannedFile>,
+    skipped_files: usize,
+    skipped_dirs: usize,
+    total_bytes: u64,
+    truncated: bool,
+    errors: Vec<String>,
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkspaceTreeEntry {
@@ -667,6 +693,16 @@ struct WorkspaceChanges {
     truncated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scan_scope: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct P4PendingListCollectResult {
+    root_path: String,
+    requested_count: usize,
+    opened_count: usize,
+    stdout: String,
+    stderr: String,
 }
 
 /// Progress event emitted while a workspace VCS scan runs in the background.
@@ -843,7 +879,9 @@ fn cli_slash_command_entry(
         detail: localized_text(zh_detail, en_detail),
         insert_text: localized_text(
             &format!("按 {source_zh} CLI 的 `{name}` slash command 语义处理当前请求。{zh_detail}"),
-            &format!("Use the `{name}` slash-command semantics from {source_en} CLI for this request. {en_detail}"),
+            &format!(
+                "Use the `{name}` slash-command semantics from {source_en} CLI for this request. {en_detail}"
+            ),
         ),
         source: Some(source.to_string()),
         source_adapter: Some(source.to_string()),
@@ -3188,6 +3226,11 @@ const PREVIEW_BASENAME_SEARCH_LIMIT: usize = 20_000;
 const CLIPBOARD_IMAGE_LIMIT: usize = 32 * 1024 * 1024;
 const SESSION_CAPTURE_LIMIT: usize = 128 * 1024 * 1024;
 const LOCAL_FILE_UPLOAD_LIMIT: u64 = 128 * 1024 * 1024;
+const KNOWLEDGE_BASE_MAX_FILES: usize = 1200;
+const KNOWLEDGE_BASE_MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
+const KNOWLEDGE_BASE_MAX_FILE_BYTES: u64 = 768 * 1024;
+const KNOWLEDGE_BASE_MAX_DOCX_BYTES: u64 = 8 * 1024 * 1024;
+const KNOWLEDGE_BASE_MAX_DEPTH: usize = 16;
 const CAPTURE_IMAGE_FETCH_LIMIT: usize = 32 * 1024 * 1024;
 const CAPTURE_IMAGE_FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const MODEL_ASSET_FETCH_LIMIT: usize = 128 * 1024 * 1024;
@@ -3958,7 +4001,9 @@ else:\n\
         .timeout(std::time::Duration::from_secs(4))
         .send_json(body)
     {
-        Ok(_) => EngineRevealResult::new("unreal", true, "jumped", "已在 Unreal 编辑器中定位资产。"),
+        Ok(_) => {
+            EngineRevealResult::new("unreal", true, "jumped", "已在 Unreal 编辑器中定位资产。")
+        }
         Err(ureq::Error::Status(code, _)) => EngineRevealResult::new(
             "unreal",
             false,
@@ -4285,7 +4330,7 @@ fn project_mcp_probe_stdio(
                 message: "MCP 命令为空。".to_string(),
                 tools_count: None,
                 checked_at_ms: now_ms(),
-            }
+            };
         }
     };
 
@@ -4323,7 +4368,7 @@ fn project_mcp_probe_stdio(
                 message: format!("启动 MCP 失败: {e}"),
                 tools_count: None,
                 checked_at_ms: now_ms(),
-            }
+            };
         }
     };
 
@@ -5717,6 +5762,29 @@ fn npm_command_name() -> &'static str {
     } else {
         "npm"
     }
+}
+
+fn bun_command_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "bun.exe"
+    } else {
+        "bun"
+    }
+}
+
+fn is_bun_global_shim_path(exe: &str) -> bool {
+    let normalized = exe.replace('\\', "/").to_ascii_lowercase();
+    normalized.contains("/.bun/bin/")
+}
+
+fn bun_command_for_shim(exe: &str) -> String {
+    let path = std::path::Path::new(exe);
+    if path.is_absolute() {
+        if let Some(parent) = path.parent() {
+            return parent.join(bun_command_name()).to_string_lossy().to_string();
+        }
+    }
+    bun_command_name().to_string()
 }
 
 fn project_run_npm(args: &[&str], cwd: &Path) -> Result<String, String> {
@@ -7662,6 +7730,7 @@ fn truncate_workspace_changes(files: &mut Vec<WorkspaceChangeFile>) -> bool {
 }
 
 const WORKSPACE_STATUS_COMMAND_TIMEOUT_MS: u64 = 6_000;
+const P4_PENDING_COLLECT_TIMEOUT_MS: u64 = 30_000;
 const P4_STATUS_SPEC_BATCH_SIZE: usize = 6;
 const P4_STATUS_MAX_SPEC_VISITS: usize = 2048;
 const P4_STATUS_BATCH_PAUSE_MS: u64 = 15;
@@ -8525,24 +8594,58 @@ fn filter_workspace_change_files_for_path(
 }
 
 fn workspace_file_diff_relative_path(root: &Path, path: &str) -> Result<String, String> {
+    workspace_file_diff_root_and_relative_path_inner(root, path, false)
+        .map(|(_, relative_path)| relative_path)
+}
+
+fn workspace_file_diff_absolute_path_fallback(path: &Path) -> Option<(PathBuf, String)> {
+    let file_name = path.file_name()?.to_string_lossy().trim().to_string();
+    if file_name.is_empty() {
+        return None;
+    }
+    let parent = path.parent()?.to_path_buf();
+    if !parent.is_dir() {
+        return None;
+    }
+    let root = std::fs::canonicalize(&parent).unwrap_or(parent);
+    Some((root, normalize_vcs_status_path(&file_name)))
+}
+
+fn workspace_file_diff_root_and_relative_path(
+    root: &Path,
+    path: &str,
+) -> Result<(PathBuf, String), String> {
+    workspace_file_diff_root_and_relative_path_inner(root, path, true)
+}
+
+fn workspace_file_diff_root_and_relative_path_inner(
+    root: &Path,
+    path: &str,
+    allow_external_absolute_path: bool,
+) -> Result<(PathBuf, String), String> {
     let normalized = normalize_preview_separators(path.trim());
     if normalized.trim().is_empty() {
         return Err("缺少文件路径。".to_string());
     }
 
     if normalized.starts_with("//") {
-        return Ok(normalize_p4_mapping_path(&normalized));
+        return Ok((root.to_path_buf(), normalize_p4_mapping_path(&normalized)));
     }
 
     let candidate = PathBuf::from(&normalized);
     if candidate.is_absolute() {
         if let Some(relative) = local_status_path_from_root(root, &normalized) {
-            return Ok(relative);
+            return Ok((root.to_path_buf(), relative));
         }
         if let Ok(canonical) = std::fs::canonicalize(&candidate) {
             if let Some(relative) = local_status_path_from_root(root, &canonical.to_string_lossy())
             {
-                return Ok(relative);
+                return Ok((root.to_path_buf(), relative));
+            }
+        }
+        if allow_external_absolute_path {
+            if let Some(fallback) = workspace_file_diff_absolute_path_fallback(&candidate) {
+                return Ok(fallback);
             }
         }
         return Err("文件不在工作区内。".to_string());
@@ -8563,7 +8666,7 @@ fn workspace_file_diff_relative_path(root: &Path, path: &str) -> Result<String, 
     }) {
         return Err("文件不在工作区内。".to_string());
     }
-    Ok(relative)
+    Ok((root.to_path_buf(), relative))
 }
 
 fn workspace_single_change_from_status_and_diff(
@@ -8916,8 +9019,80 @@ fn workspace_file_diff_blocking(
     path: String,
 ) -> Result<Option<WorkspaceChangeFile>, String> {
     let (root, _) = workspace_tree_resolve_dir(&root_path, "")?;
-    let relative_path = workspace_file_diff_relative_path(&root, &path)?;
-    vcs_workspace_file_change(&root, &relative_path)
+    let (diff_root, relative_path) = workspace_file_diff_root_and_relative_path(&root, &path)?;
+    vcs_workspace_file_change(&diff_root, &relative_path)
+}
+
+fn p4_collect_opened_count(stdout: &str) -> usize {
+    stdout
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("opened for"))
+        .count()
+}
+
+fn p4_collect_error_is_noop(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    p4_error_is_empty_result("reconcile", stderr) || lower.contains("already opened")
+}
+
+fn p4_collect_to_pending_list_blocking(
+    root_path: String,
+    paths: Vec<String>,
+) -> Result<P4PendingListCollectResult, String> {
+    let (root, _) = workspace_tree_resolve_dir(&root_path, "")?;
+    let mut specs = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let relative = workspace_file_diff_relative_path(&root, &path)?;
+        if seen.insert(relative.clone()) {
+            specs.push(relative);
+        }
+    }
+
+    if specs.is_empty() {
+        return Err("缺少要收集到 P4 pending list 的文件。".to_string());
+    }
+
+    let probe = run_workspace_status_command(&root, "p4", &["info"])
+        .map_err(|err| format!("P4 检测失败: {err}"))?;
+    if probe.timed_out {
+        return Err("P4 检测超时。".to_string());
+    }
+    if !probe.success {
+        return Err(format!(
+            "当前工作区不是可用的 P4 工作区: {}",
+            workspace_status_error(&probe)
+        ));
+    }
+
+    let args = p4_status_args(&["reconcile", "-ead"], &specs);
+    let output = run_workspace_status_command_owned_with_timeout(
+        &root,
+        "p4",
+        &args,
+        std::time::Duration::from_millis(P4_PENDING_COLLECT_TIMEOUT_MS),
+    )
+    .map_err(|err| format!("P4 收集失败: {err}"))?;
+
+    let opened_count = p4_collect_opened_count(&format!("{}\n{}", output.stdout, output.stderr));
+    let noop_result = p4_collect_error_is_noop(&output.stderr);
+    if output.timed_out {
+        return Err("P4 收集到 pending list 超时。".to_string());
+    }
+    if !output.success && !noop_result {
+        return Err(format!(
+            "P4 收集到 pending list 失败: {}",
+            workspace_status_error(&output)
+        ));
+    }
+
+    Ok(P4PendingListCollectResult {
+        root_path: display_preview_path(&root),
+        requested_count: specs.len(),
+        opened_count,
+        stdout: output.stdout.trim().to_string(),
+        stderr: output.stderr.trim().to_string(),
+    })
 }
 
 fn parse_svn_workspace_changes(stdout: &str) -> Vec<WorkspaceChangeFile> {
@@ -9747,6 +9922,18 @@ async fn workspace_file_diff(
         .map_err(|e| format!("文件差异读取任务失败: {e}"))?
 }
 
+#[tauri::command]
+async fn p4_collect_to_pending_list(
+    root_path: String,
+    paths: Vec<String>,
+) -> Result<P4PendingListCollectResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        p4_collect_to_pending_list_blocking(root_path, paths)
+    })
+    .await
+    .map_err(|e| format!("P4 收集任务失败: {e}"))?
+}
+
 /// Return the last cached full VCS status snapshot for a workspace, if any.
 /// Lets the UI render icons instantly on workspace switch before a fresh scan.
 #[tauri::command]
@@ -10070,7 +10257,7 @@ fn model_mime_for_extension(ext: &str) -> Option<&'static str> {
     match ext.to_ascii_lowercase().as_str() {
         "glb" => Some("model/gltf-binary"),
         "gltf" => Some("model/gltf+json"),
-        "obj" => Some("text/plain"),
+        "obj" | "bvh" | "asf" | "amc" => Some("text/plain"),
         "stl" | "fbx" | "ply" => Some("application/octet-stream"),
         "usdz" => Some("model/vnd.usdz+zip"),
         "zip" => Some("application/zip"),
@@ -10294,6 +10481,409 @@ fn decode_preview_text(bytes: Vec<u8>) -> Option<String> {
             }
         }
     }
+}
+
+fn knowledge_base_allowed_text_ext(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        ""
+            | "txt"
+            | "md"
+            | "mdx"
+            | "markdown"
+            | "rst"
+            | "adoc"
+            | "csv"
+            | "tsv"
+            | "json"
+            | "jsonc"
+            | "json5"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "ini"
+            | "cfg"
+            | "conf"
+            | "xml"
+            | "html"
+            | "htm"
+            | "css"
+            | "scss"
+            | "less"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "cjs"
+            | "mjs"
+            | "py"
+            | "lua"
+            | "cs"
+            | "cpp"
+            | "c"
+            | "h"
+            | "hpp"
+            | "java"
+            | "kt"
+            | "rs"
+            | "go"
+            | "rb"
+            | "php"
+            | "sh"
+            | "bat"
+            | "cmd"
+            | "ps1"
+            | "uproject"
+            | "uplugin"
+    )
+}
+
+fn knowledge_base_is_docx(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("docx"))
+        .unwrap_or(false)
+}
+
+fn knowledge_base_skip_dir(path: &Path) -> bool {
+    if skip_preview_search_dir(path) {
+        return true;
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    matches!(
+        name,
+        ".ultragamestudio"
+            | ".worktree"
+            | ".omc"
+            | "Binaries"
+            | "DerivedDataCache"
+            | "Intermediate"
+            | "Library"
+            | "Saved"
+            | "Temp"
+    )
+}
+
+fn knowledge_base_modified_at_ms(metadata: &std::fs::Metadata) -> Option<u64> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+}
+
+fn decode_xml_entities(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '&' {
+            out.push(ch);
+            continue;
+        }
+        let mut entity = String::new();
+        while let Some(next) = chars.peek().copied() {
+            chars.next();
+            if next == ';' {
+                break;
+            }
+            entity.push(next);
+            if entity.len() > 16 {
+                break;
+            }
+        }
+        match entity.as_str() {
+            "amp" => out.push('&'),
+            "lt" => out.push('<'),
+            "gt" => out.push('>'),
+            "quot" => out.push('"'),
+            "apos" => out.push('\''),
+            _ if entity.starts_with("#x") => {
+                if let Ok(code) = u32::from_str_radix(&entity[2..], 16) {
+                    if let Some(decoded) = char::from_u32(code) {
+                        out.push(decoded);
+                    }
+                }
+            }
+            _ if entity.starts_with('#') => {
+                if let Ok(code) = entity[1..].parse::<u32>() {
+                    if let Some(decoded) = char::from_u32(code) {
+                        out.push(decoded);
+                    }
+                }
+            }
+            _ => {
+                out.push('&');
+                out.push_str(&entity);
+                out.push(';');
+            }
+        }
+    }
+    out
+}
+
+fn word_xml_text(xml: &str) -> String {
+    let mut out = String::new();
+    let mut tag = String::new();
+    let mut in_tag = false;
+    for ch in xml.chars() {
+        if in_tag {
+            if ch == '>' {
+                let tag_name = tag.trim();
+                if tag_name.starts_with("/w:p")
+                    || tag_name.starts_with("w:br")
+                    || tag_name.starts_with("/w:tr")
+                {
+                    out.push('\n');
+                } else if tag_name.starts_with("/w:tc") || tag_name.starts_with("w:tab") {
+                    out.push('\t');
+                }
+                tag.clear();
+                in_tag = false;
+            } else {
+                tag.push(ch);
+            }
+            continue;
+        }
+        if ch == '<' {
+            in_tag = true;
+            tag.clear();
+        } else {
+            out.push(ch);
+        }
+    }
+    decode_xml_entities(&out)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn extract_docx_text(path: &Path) -> Result<String, String> {
+    let file = std::fs::File::open(path).map_err(|e| format!("打开 docx 失败：{e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析 docx 失败：{e}"))?;
+    let mut sections = Vec::new();
+    for name in [
+        "word/document.xml",
+        "word/footnotes.xml",
+        "word/endnotes.xml",
+        "word/comments.xml",
+    ] {
+        let Ok(mut entry) = archive.by_name(name) else {
+            continue;
+        };
+        let mut xml = String::new();
+        if entry.read_to_string(&mut xml).is_ok() {
+            let text = word_xml_text(&xml);
+            if !text.trim().is_empty() {
+                sections.push(text);
+            }
+        }
+    }
+    Ok(sections.join("\n\n"))
+}
+
+fn read_knowledge_base_file(path: &Path) -> Result<Option<KnowledgeBaseScannedFile>, String> {
+    let metadata = std::fs::metadata(path).map_err(|e| format!("读取文件信息失败：{e}"))?;
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    let size_bytes = metadata.len();
+    if knowledge_base_is_docx(path) {
+        if size_bytes > KNOWLEDGE_BASE_MAX_DOCX_BYTES {
+            return Ok(None);
+        }
+        let text = extract_docx_text(path)?;
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(KnowledgeBaseScannedFile {
+            path: display_preview_path(path),
+            size_bytes,
+            modified_at_ms: knowledge_base_modified_at_ms(&metadata),
+            text,
+            truncated: false,
+        }));
+    }
+    if !knowledge_base_allowed_text_ext(path) {
+        return Ok(None);
+    }
+    let mut file = std::fs::File::open(path).map_err(|e| format!("打开文件失败：{e}"))?;
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take(KNOWLEDGE_BASE_MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("读取文件失败：{e}"))?;
+    let truncated =
+        bytes.len() as u64 > KNOWLEDGE_BASE_MAX_FILE_BYTES || size_bytes > KNOWLEDGE_BASE_MAX_FILE_BYTES;
+    if bytes.len() as u64 > KNOWLEDGE_BASE_MAX_FILE_BYTES {
+        bytes.truncate(KNOWLEDGE_BASE_MAX_FILE_BYTES as usize);
+    }
+    if !has_utf16_bom(&bytes) && probably_binary(&bytes) {
+        return Ok(None);
+    }
+    let Some(text) = decode_preview_text(bytes) else {
+        return Ok(None);
+    };
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(KnowledgeBaseScannedFile {
+        path: display_preview_path(path),
+        size_bytes,
+        modified_at_ms: knowledge_base_modified_at_ms(&metadata),
+        text,
+        truncated,
+    }))
+}
+
+fn push_knowledge_base_file(result: &mut KnowledgeBaseScanResult, path: &Path) {
+    if result.files.len() >= KNOWLEDGE_BASE_MAX_FILES {
+        result.truncated = true;
+        result.skipped_files += 1;
+        return;
+    }
+    match read_knowledge_base_file(path) {
+        Ok(Some(file)) => {
+            let counted = file.size_bytes.min(KNOWLEDGE_BASE_MAX_FILE_BYTES);
+            if result.total_bytes.saturating_add(counted) > KNOWLEDGE_BASE_MAX_TOTAL_BYTES {
+                result.truncated = true;
+                result.skipped_files += 1;
+                return;
+            }
+            result.total_bytes = result.total_bytes.saturating_add(counted);
+            result.truncated = result.truncated || file.truncated;
+            result.files.push(file);
+        }
+        Ok(None) => {
+            result.skipped_files += 1;
+        }
+        Err(err) => {
+            result.skipped_files += 1;
+            if result.errors.len() < 20 {
+                result
+                    .errors
+                    .push(format!("{}: {err}", display_preview_path(path)));
+            }
+        }
+    }
+}
+
+fn knowledge_base_scan_files_blocking(
+    sources: Vec<KnowledgeBaseScanSource>,
+) -> Result<KnowledgeBaseScanResult, String> {
+    let mut result = KnowledgeBaseScanResult {
+        files: Vec::new(),
+        skipped_files: 0,
+        skipped_dirs: 0,
+        total_bytes: 0,
+        truncated: false,
+        errors: Vec::new(),
+    };
+    let mut queue: VecDeque<(PathBuf, usize)> = VecDeque::new();
+    let mut seen_dirs = HashSet::new();
+
+    for source in sources {
+        if source.enabled == Some(false) {
+            continue;
+        }
+        let path = normalize_preview_separators(&source.path);
+        let raw = preview_path(&path, None)?;
+        let resolved = std::fs::canonicalize(&raw).unwrap_or(raw);
+        let metadata = match std::fs::metadata(&resolved) {
+            Ok(metadata) => metadata,
+            Err(err) => {
+                result
+                    .errors
+                    .push(format!("{}: 路径不可读：{err}", source.path));
+                continue;
+            }
+        };
+        let requested_file = source.kind.as_deref() == Some("file");
+        if requested_file && !metadata.is_file() {
+            result
+                .errors
+                .push(format!("{}: 配置为文件，但目标不是文件。", source.path));
+            continue;
+        }
+        if metadata.is_file() {
+            push_knowledge_base_file(&mut result, &resolved);
+        } else if metadata.is_dir() {
+            queue.push_back((resolved, 0));
+        } else {
+            result.skipped_files += 1;
+        }
+    }
+
+    while let Some((dir, depth)) = queue.pop_front() {
+        if result.files.len() >= KNOWLEDGE_BASE_MAX_FILES
+            || result.total_bytes >= KNOWLEDGE_BASE_MAX_TOTAL_BYTES
+        {
+            result.truncated = true;
+            break;
+        }
+        if depth > KNOWLEDGE_BASE_MAX_DEPTH || knowledge_base_skip_dir(&dir) {
+            result.skipped_dirs += 1;
+            continue;
+        }
+        let canonical = std::fs::canonicalize(&dir).unwrap_or(dir.clone());
+        if !seen_dirs.insert(canonical.clone()) {
+            continue;
+        }
+        let mut entries = match std::fs::read_dir(&canonical) {
+            Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+            Err(err) => {
+                result.skipped_dirs += 1;
+                if result.errors.len() < 20 {
+                    result
+                        .errors
+                        .push(format!("{}: 读取目录失败：{err}", display_preview_path(&canonical)));
+                }
+                continue;
+            }
+        };
+        entries.sort_by_key(|entry| entry.path());
+        for entry in entries {
+            let Ok(file_type) = entry.file_type() else {
+                result.skipped_files += 1;
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_symlink() {
+                result.skipped_files += 1;
+            } else if file_type.is_dir() {
+                queue.push_back((path, depth + 1));
+            } else if file_type.is_file() {
+                push_knowledge_base_file(&mut result, &path);
+            }
+            if result.files.len() >= KNOWLEDGE_BASE_MAX_FILES
+                || result.total_bytes >= KNOWLEDGE_BASE_MAX_TOTAL_BYTES
+            {
+                result.truncated = true;
+                break;
+            }
+        }
+    }
+
+    result.files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(result)
+}
+
+#[tauri::command]
+async fn knowledge_base_scan_files(
+    sources: Vec<KnowledgeBaseScanSource>,
+) -> Result<KnowledgeBaseScanResult, String> {
+    tauri::async_runtime::spawn_blocking(move || knowledge_base_scan_files_blocking(sources))
+        .await
+        .map_err(|e| format!("知识库扫描任务失败: {e}"))?
 }
 
 fn preview_local_file_blocking(
@@ -10640,6 +11230,9 @@ fn model_asset_extension(mime: &str, url: Option<&str>, file_name: Option<&str>)
             "obj" => return "obj",
             "stl" => return "stl",
             "fbx" => return "fbx",
+            "bvh" => return "bvh",
+            "asf" => return "asf",
+            "amc" => return "amc",
             "ply" => return "ply",
             "usdz" => return "usdz",
             "zip" => return "zip",
@@ -12016,8 +12609,8 @@ async fn validate_cli_path(path: String) -> Result<cli_runtime::CliPathValidatio
 //     never races a mid-session self-update (see `disable_autoupdater`
 //     below); this command is the only place that intentionally triggers one.
 //   - codex: native `codex update` subcommand.
-//   - gemini: no self-update path; refreshed via
-//     `npm install -g @google/gemini-cli@latest`.
+//   - gemini: no self-update path; refreshed through the package manager that
+//     owns the detected shim (`bun install -g ...` for ~/.bun/bin, else npm).
 // "Latest version" is read from the npm registry for all three — Anthropic's
 // native-installer channel tracks the npm package version closely enough to
 // use it as a freshness signal even when `claude` itself isn't npm-installed.
@@ -12157,9 +12750,14 @@ fn version_lt(current: &str, latest: &str) -> bool {
     false
 }
 
-fn read_cli_installed_version(executable_path: &str) -> Option<String> {
-    let mut cmd = Command::new(executable_path);
+fn cli_version_probe_command(executable_path: &str) -> Command {
+    let mut cmd = spawn_cli_command(executable_path);
     cmd.arg("--version");
+    cmd
+}
+
+fn read_cli_installed_version(executable_path: &str) -> Option<String> {
+    let cmd = cli_version_probe_command(executable_path);
     let text = command_text_output_with_timeout(cmd, std::time::Duration::from_secs(10)).ok()?;
     extract_semver(&text)
 }
@@ -12279,7 +12877,12 @@ fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
         .candidates
         .iter()
         .find(|c| c.adapter == spec.adapter && c.available)
-        .ok_or_else(|| format!("未检测到已安装的 {}，请先在设置中配置 CLI 路径。", spec.label))?;
+        .ok_or_else(|| {
+            format!(
+                "未检测到已安装的 {}，请先在设置中配置 CLI 路径。",
+                spec.label
+            )
+        })?;
     let exe = candidate
         .path
         .clone()
@@ -12289,21 +12892,7 @@ fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
     // env vars only guard the ai_cli chat/run subprocess so a live session
     // never races a background self-update. This is the one path meant to
     // actually trigger an update.
-    let cmd = match spec.adapter {
-        "claude-code" | "codex" => {
-            let mut c = Command::new(&exe);
-            c.arg("update");
-            c
-        }
-        "gemini" => {
-            let mut c = Command::new(npm_command_name());
-            c.arg("install")
-                .arg("-g")
-                .arg(format!("{}@latest", spec.npm_package));
-            c
-        }
-        other => return Err(format!("未知的 CLI: {other}")),
-    };
+    let cmd = cli_update_command(spec, &exe)?;
 
     let output = command_text_output_with_timeout(cmd, std::time::Duration::from_secs(180))
         .map_err(|e| format!("更新 {} 失败：{e}", spec.label))?;
@@ -12315,6 +12904,30 @@ fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
     save_cli_version_cache(&cache);
 
     Ok(output)
+}
+
+fn cli_update_command(spec: &CliUpdateSpec, exe: &str) -> Result<Command, String> {
+    match spec.adapter {
+        "claude-code" | "codex" => {
+            let mut c = spawn_cli_command(exe);
+            c.arg("update");
+            Ok(c)
+        }
+        "gemini" => {
+            let uses_bun_shim = is_bun_global_shim_path(exe);
+            let installer = if uses_bun_shim {
+                bun_command_for_shim(exe)
+            } else {
+                npm_command_name().to_string()
+            };
+            let mut c = spawn_cli_command(&installer);
+            c.arg("install")
+                .arg("-g")
+                .arg(format!("{}@latest", spec.npm_package));
+            Ok(c)
+        }
+        other => Err(format!("未知的 CLI: {other}")),
+    }
 }
 
 #[tauri::command]
@@ -13010,7 +13623,11 @@ fn normalize_spawn_env(
 
     let gemini_key = env_value(&out, "GEMINI_API_KEY")
         .map(ToString::to_string)
-        .or_else(|| std::env::var("GEMINI_API_KEY").ok().map(|value| value.trim().to_string()))
+        .or_else(|| {
+            std::env::var("GEMINI_API_KEY")
+                .ok()
+                .map(|value| value.trim().to_string())
+        })
         .filter(|value| !value.is_empty());
     if let Some(api_key) = gemini_key {
         if env_value(&out, "GEMINI_API_KEY") != Some(api_key.as_str()) {
@@ -13460,6 +14077,7 @@ fn command_text_output_with_timeout(
     mut cmd: Command,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
+    prepare_command_for_spawn(&mut cmd);
     let stdout_path = temp_output_path("ultragamestudio-cli-help-stdout", "txt");
     let stderr_path = temp_output_path("ultragamestudio-cli-help-stderr", "txt");
     let _stdout_guard = TempFileGuard::new(stdout_path.clone());
@@ -13706,11 +14324,7 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     })
     .unwrap_or_else(|| {
         let s = input.to_string();
-        if s == "null" {
-            String::new()
-        } else {
-            s
-        }
+        if s == "null" { String::new() } else { s }
     });
 
     let detail: String = detail.replace(['\n', '\r'], " ");
@@ -13928,8 +14542,12 @@ fn codex_progress_line(item: &CodexLiteItem) -> Option<String> {
         return item
             .text
             .as_deref()
+            .map(str::trim)
             .filter(|t| !t.is_empty())
-            .map(|t| t.to_string());
+            // Codex emits completed assistant messages, not token deltas. Keep
+            // adjacent updates as separate markdown paragraphs instead of
+            // gluing them into one unreadable line.
+            .map(|t| format!("\n{t}\n"));
     }
 
     if item_type.is_empty() {
@@ -15305,6 +15923,12 @@ async fn ai_cli(
 mod tests {
     use super::*;
 
+    fn command_arg_strings(cmd: &Command) -> Vec<String> {
+        cmd.get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect()
+    }
+
     #[test]
     fn extract_semver_handles_each_vendor_format() {
         // claude
@@ -15330,6 +15954,109 @@ mod tests {
         assert!(!version_lt("2.1.202", "2.1.197"));
         // Missing trailing segments count as 0.
         assert!(version_lt("1.2", "1.2.1"));
+    }
+
+    #[test]
+    fn cli_version_probe_command_passes_version_arg() {
+        let cmd = cli_version_probe_command("claude");
+        assert!(command_arg_strings(&cmd).iter().any(|arg| arg == "--version"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cli_version_probe_command_wraps_windows_cmd_shims() {
+        let shim = r"C:\Users\me\AppData\Roaming\npm\claude.cmd";
+        let cmd = cli_version_probe_command(shim);
+        let program = cmd.get_program().to_string_lossy().to_ascii_lowercase();
+        assert!(program == "cmd" || program.ends_with("cmd.exe"));
+        assert_eq!(command_arg_strings(&cmd), vec!["/C", shim, "--version"]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cli_version_probe_command_uses_direct_program_on_unix_like_platforms() {
+        let path = "/opt/ugs/bin/claude";
+        let cmd = cli_version_probe_command(path);
+        assert_eq!(cmd.get_program().to_string_lossy(), path);
+        assert_eq!(command_arg_strings(&cmd), vec!["--version"]);
+    }
+
+    #[test]
+    fn cli_update_command_builds_expected_args() {
+        let codex = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "codex")
+            .unwrap();
+        let codex_cmd = cli_update_command(codex, "codex").unwrap();
+        assert!(command_arg_strings(&codex_cmd).ends_with(&["update".to_string()]));
+
+        let gemini = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "gemini")
+            .unwrap();
+        let gemini_cmd = cli_update_command(gemini, "gemini").unwrap();
+        assert!(command_arg_strings(&gemini_cmd).ends_with(&[
+            "install".to_string(),
+            "-g".to_string(),
+            "@google/gemini-cli@latest".to_string(),
+        ]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cli_update_command_wraps_windows_npm_cmd() {
+        let gemini = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "gemini")
+            .unwrap();
+        let cmd = cli_update_command(gemini, "gemini").unwrap();
+        let program = cmd.get_program().to_string_lossy().to_ascii_lowercase();
+        assert!(program == "cmd" || program.ends_with("cmd.exe"));
+        assert_eq!(
+            command_arg_strings(&cmd),
+            vec![
+                "/C",
+                "npm.cmd",
+                "install",
+                "-g",
+                "@google/gemini-cli@latest"
+            ]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cli_update_command_uses_bun_for_windows_bun_gemini_shim() {
+        let gemini = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "gemini")
+            .unwrap();
+        let shim = r"C:\Users\me\.bun\bin\gemini.exe";
+        let cmd = cli_update_command(gemini, shim).unwrap();
+        assert_eq!(
+            cmd.get_program().to_string_lossy(),
+            r"C:\Users\me\.bun\bin\bun.exe"
+        );
+        assert_eq!(
+            command_arg_strings(&cmd),
+            vec!["install", "-g", "@google/gemini-cli@latest"]
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn cli_update_command_uses_direct_npm_on_unix_like_platforms() {
+        let gemini = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "gemini")
+            .unwrap();
+        let cmd = cli_update_command(gemini, "gemini").unwrap();
+        let args = command_arg_strings(&cmd);
+        assert!(!args.iter().any(|arg| arg == "/C"));
+        assert_eq!(
+            args,
+            vec!["install", "-g", "@google/gemini-cli@latest"]
+        );
     }
 
     #[test]
@@ -15492,12 +16219,14 @@ mod tests {
             .map(|p| p["Name"].as_str().unwrap().to_string())
             .collect();
         assert!(names.contains(&"ExistingOther".to_string()));
-        assert!(doc["Plugins"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|p| p["Name"].as_str() != Some("RemoteControl")
-                || p["Enabled"].as_bool() == Some(true)));
+        assert!(
+            doc["Plugins"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|p| p["Name"].as_str() != Some("RemoteControl")
+                    || p["Enabled"].as_bool() == Some(true))
+        );
 
         // Second run is a no-op (already enabled).
         let second = ue_mcp_enable_uproject_plugins(&uproject, &plugins).unwrap();
@@ -16047,6 +16776,47 @@ mod tests {
     }
 
     #[test]
+    fn codex_agent_messages_are_paragraph_delimited() {
+        let first: CodexLiteEvent = serde_json::from_str(
+            r#"{
+              "method": "item/completed",
+              "params": {
+                "item": {
+                  "type": "agent_message",
+                  "text": "🔎 目标：分析原因。"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let second: CodexLiteEvent = serde_json::from_str(
+            r#"{
+              "method": "item/completed",
+              "params": {
+                "item": {
+                  "type": "agent_message",
+                  "text": "🛠 下一步：修复。"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let first = first
+            .completed_item()
+            .and_then(codex_progress_line)
+            .unwrap();
+        let second = second
+            .completed_item()
+            .and_then(codex_progress_line)
+            .unwrap();
+        assert_eq!(
+            format!("{first}{second}"),
+            "\n🔎 目标：分析原因。\n\n🛠 下一步：修复。\n"
+        );
+    }
+
+    #[test]
     fn codex_tool_patch_keeps_file_change_paths() {
         let event: CodexLiteEvent = serde_json::from_str(
             r#"{
@@ -16468,6 +17238,54 @@ mod tests {
     }
 
     #[test]
+    fn parse_unified_workspace_diff_lines_accepts_p4_headers() {
+        let (lines, binary) = parse_unified_workspace_diff_lines(
+            "--- //MoonEngine/dev/Engine/Shaders/Private/KuroMoon.usf\t2026-05-27\n\
+             +++ E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\KuroMoon.usf\t2026-05-27\n\
+             @@ -139,0 +139,1 @@\n\
+             +\tValue.a = 1.0f; // Moon Modified\n\
+             @@ -169,1 +170,1 @@\n\
+             -void DecodeMoonScreenShadow(float4 LightAttenuation)\n\
+             +void DecodeMoonScreenShadow(float4 ShadowMaskFactors)\n",
+        );
+
+        assert!(!binary);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].kind, "added");
+        assert_eq!(lines[0].new_line, Some(139));
+        assert_eq!(lines[1].kind, "replacedDeleted");
+        assert_eq!(lines[1].old_line, Some(169));
+        assert_eq!(lines[2].kind, "replacedAdded");
+        assert_eq!(lines[2].new_line, Some(170));
+    }
+
+    #[test]
+    fn workspace_file_diff_root_and_relative_path_uses_absolute_file_parent_outside_root() {
+        let base = std::env::temp_dir().join(format!(
+            "ugs-file-diff-root-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let primary = base.join("primary");
+        let external_dir = base.join("external").join("Engine").join("Shaders");
+        let file = external_dir.join("KuroMoon.usf");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(&external_dir).unwrap();
+        std::fs::write(&file, "float4 Main() { return 1; }\n").unwrap();
+        let expected_root = std::fs::canonicalize(&external_dir).unwrap_or(external_dir.clone());
+
+        assert!(workspace_file_diff_relative_path(&primary, &display_preview_path(&file)).is_err());
+        let (diff_root, relative_path) =
+            workspace_file_diff_root_and_relative_path(&primary, &display_preview_path(&file))
+                .unwrap();
+        let _ = std::fs::remove_dir_all(&base);
+
+        assert_eq!(diff_root, expected_root);
+        assert_eq!(relative_path, "KuroMoon.usf");
+    }
+
+    #[test]
     fn workspace_change_file_from_unified_diff_detects_binary() {
         let file = workspace_change_file_from_unified_diff(
             "Content/Logo.uasset",
@@ -16604,14 +17422,37 @@ mod tests {
             commands,
             vec![vec!["opened"], vec!["reconcile", "-n", "-ead"]]
         );
-        assert!(commands
-            .iter()
-            .all(|args| { args.first().copied() != Some("reconcile") || args.contains(&"-n") }));
-        assert!(!commands
-            .iter()
-            .any(|args| args.first().is_some_and(|command| {
-                matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
-            })));
+        assert!(
+            commands
+                .iter()
+                .all(|args| { args.first().copied() != Some("reconcile") || args.contains(&"-n") })
+        );
+        assert!(
+            !commands
+                .iter()
+                .any(|args| args.first().is_some_and(|command| {
+                    matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
+                }))
+        );
+    }
+
+    #[test]
+    fn p4_collect_opened_count_counts_opened_lines() {
+        assert_eq!(
+            p4_collect_opened_count(
+                "//depot/A.cpp#3 - opened for edit\n\
+                 //depot/B.cpp#1 - opened for add\n\
+                 //depot/C.cpp - file(s) up-to-date\n"
+            ),
+            2
+        );
+    }
+
+    #[test]
+    fn p4_collect_error_treats_already_opened_as_noop() {
+        assert!(p4_collect_error_is_noop(
+            "//depot/A.cpp#3 - can't edit exclusive file already opened\n"
+        ));
     }
 
     #[test]
@@ -16858,14 +17699,12 @@ pub fn run() {
     #[cfg(windows)]
     {
         const WEBVIEW2_ARGS_VAR: &str = "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS";
-        const DISABLE_OCCLUSION: &str = "--disable-features=msWebOOUI,msPdfOOUI,CalculateNativeWinOcclusion";
+        const DISABLE_OCCLUSION: &str =
+            "--disable-features=msWebOOUI,msPdfOOUI,CalculateNativeWinOcclusion";
         match std::env::var(WEBVIEW2_ARGS_VAR) {
             Ok(existing) if !existing.is_empty() => {
                 if !existing.contains("CalculateNativeWinOcclusion") {
-                    std::env::set_var(
-                        WEBVIEW2_ARGS_VAR,
-                        format!("{existing} {DISABLE_OCCLUSION}"),
-                    );
+                    std::env::set_var(WEBVIEW2_ARGS_VAR, format!("{existing} {DISABLE_OCCLUSION}"));
                 }
             }
             _ => std::env::set_var(WEBVIEW2_ARGS_VAR, DISABLE_OCCLUSION),
@@ -16996,6 +17835,7 @@ pub fn run() {
             workspace_vcs_status,
             workspace_vcs_status_shallow,
             workspace_file_diff,
+            p4_collect_to_pending_list,
             workspace_vcs_status_cached,
             workspace_vcs_status_scan,
             workspace_vcs_status_cancel,
@@ -17003,6 +17843,7 @@ pub fn run() {
             prepare_isolated_workspace,
             preview_local_file,
             read_local_file_for_upload,
+            knowledge_base_scan_files,
             save_clipboard_image,
             save_session_capture,
             fetch_capture_image_data_url,

@@ -99,9 +99,9 @@ describe('GAME_SKILLS registry', () => {
     }
   });
 
-  it('covers the 39 app-introduced commands and excludes generic shortcuts', () => {
+  it('covers the 42 app-introduced commands and excludes generic shortcuts', () => {
     const names = GAME_SKILLS.map((s) => s.name);
-    expect(names).toHaveLength(39);
+    expect(names).toHaveLength(42);
     // Sample of each category is present.
     expect(names).toContain('/game');
     expect(names).toContain('/gdd-mode-start');
@@ -114,6 +114,9 @@ describe('GAME_SKILLS registry', () => {
     expect(names).toContain('/video-to-frames');
     expect(names).toContain('/metahuman-mode-end');
     expect(names).toContain('/screenshot-gif');
+    expect(names).toContain('/anim');
+    expect(names).toContain('/anim-mode-start');
+    expect(names).toContain('/anim-mode-end');
     // Generic shortcuts must NOT be GameSkills.
     for (const generic of ['/help', '/plan', '/diagnose', '/review', '/explain', '/test']) {
       expect(names).not.toContain(generic);

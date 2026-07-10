@@ -811,6 +811,7 @@ describe('workflow read-only guard', () => {
         musicMode: false,
         threeDMode: false,
         videoMode: false,
+        animationMode: false,
         speechMode: false,
         spriteMode: false,
         comfyMode: false,

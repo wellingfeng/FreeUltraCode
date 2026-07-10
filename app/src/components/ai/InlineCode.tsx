@@ -20,13 +20,25 @@ export default function InlineCode({
 }) {
   const text = childrenToText(children);
   const ref = text ? parseFileRef(text, { allowSpaces: true }) : null;
-  if (ref) return <FileChip refData={ref} onOpenFile={onOpenFile} cwd={cwd} />;
 
-  return (
+  const plainCode = (
     <code className="ai-inline-code rounded border border-border bg-panel-2 px-1 py-px font-mono text-[12.5px] text-accent-2">
       {children}
     </code>
   );
+
+  if (ref) {
+    return (
+      <FileChip
+        refData={ref}
+        onOpenFile={onOpenFile}
+        cwd={cwd}
+        overflowFallback={plainCode}
+      />
+    );
+  }
+
+  return plainCode;
 }
 
 function childrenToText(children: ReactNode): string {

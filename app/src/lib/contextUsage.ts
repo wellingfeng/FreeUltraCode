@@ -104,7 +104,8 @@ export function contextLimitForModel(
 function formatPercent(percent: number): string {
   if (percent <= 0) return '0%';
   if (percent < 1) return '<1%';
-  return `${Math.min(999, Math.round(percent))}%`;
+  if (percent > 100) return '100%+';
+  return `${Math.round(percent)}%`;
 }
 
 function toneForPercent(percent: number): ContextUsageTone {

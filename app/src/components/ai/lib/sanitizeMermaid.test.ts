@@ -35,4 +35,24 @@ describe('sanitizeMermaid', () => {
     const src = 'flowchart TD\n  A[] --> B';
     expect(sanitizeMermaid(src)).toBe(src);
   });
+
+  it('strips inline percent comments that are glued to flowchart source', () => {
+    const src = [
+      'flowchart LR',
+      '  Hang["CPU 0，卡住"]%% 模型生成的行尾注释',
+      '  Hang --> Done %% 另一段行尾注释',
+      '  %% 整行 Mermaid 注释保留',
+      '  Done["100%% 完成"]',
+    ].join('\n');
+
+    expect(sanitizeMermaid(src)).toBe(
+      [
+        'flowchart LR',
+        '  Hang["CPU 0，卡住"]',
+        '  Hang --> Done',
+        '  %% 整行 Mermaid 注释保留',
+        '  Done["100%% 完成"]',
+      ].join('\n'),
+    );
+  });
 });

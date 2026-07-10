@@ -44,6 +44,13 @@ const tauriWebviewMock = vi.hoisted(() => {
 
 const tauriMocks = vi.hoisted(() => ({
   readLocalFileForUpload: vi.fn(),
+  collectWorkspacePathsToP4PendingList: vi.fn(async () => ({
+    rootPath: 'E:/UltraGameStudio',
+    requestedCount: 1,
+    openedCount: 1,
+    stdout: '',
+    stderr: '',
+  })),
 }));
 
 vi.mock('@tauri-apps/api/webview', () => ({
@@ -99,6 +106,8 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     }),
     onSlashCatalogUpdated: async () => () => {},
     readLocalFileForUpload: tauriMocks.readLocalFileForUpload,
+    collectWorkspacePathsToP4PendingList:
+      tauriMocks.collectWorkspacePathsToP4PendingList,
   };
 });
 
@@ -320,6 +329,7 @@ const dragEntry: WorkspaceTreeEntry = {
 afterEach(() => {
   clearProjectFileDragData();
   tauriMocks.readLocalFileForUpload.mockReset();
+  tauriMocks.collectWorkspacePathsToP4PendingList.mockClear();
   tauriWebviewMock.listeners.length = 0;
   tauriWebviewMock.onDragDropEvent.mockClear();
   vi.unstubAllGlobals();
@@ -869,6 +879,90 @@ describe('AIDock project file drag', () => {
       });
     } finally {
       await view.cleanup();
+    }
+  });
+
+  it('collects a P4 session file to the pending list from the context menu', async () => {
+    window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
+    window.localStorage.setItem(
+      'ultragamestudio.sessionChanges.v5:v5:ws_project_file_drag:s_project_file_drag:E:/UltraGameStudio',
+      JSON.stringify({
+        rootPath: 'E:/UltraGameStudio',
+        generatedAtMs: 50,
+        source: 'p4',
+        truncated: false,
+        files: [
+          {
+            path: 'app/src/ProjectFileTree.tsx',
+            oldPath: null,
+            status: 'modified',
+            binary: false,
+            truncated: false,
+            lines: [],
+          },
+        ],
+      }),
+    );
+    resetStore({ withWorkspace: true });
+    useStore.setState({
+      messages: [
+        {
+          id: 'assistant-session-files-p4',
+          role: 'assistant',
+          createdAt: 25,
+          text: encodeToolPatch({
+            id: 'project-file-tree-p4',
+            name: 'Edit',
+            status: 'done',
+            args: { file_path: 'app/src/ProjectFileTree.tsx' },
+          }),
+        },
+      ],
+    });
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const view = await renderProjectDragHarness();
+
+    try {
+      let source: HTMLButtonElement | undefined;
+      await waitForExpect(() => {
+        source = Array.from(
+          view.container.querySelectorAll<HTMLButtonElement>('button[title]'),
+        ).find((candidate) => candidate.title === 'app/src/ProjectFileTree.tsx');
+        expect(source).toBeTruthy();
+      });
+
+      await act(async () => {
+        source!.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 20,
+            clientY: 20,
+          }),
+        );
+      });
+
+      const collectItem = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'),
+      ).find((button) => (button.textContent ?? '').includes('收集到 pending list'));
+      expect(collectItem).toBeTruthy();
+
+      await act(async () => {
+        collectItem!.click();
+      });
+
+      await waitForExpect(() => {
+        expect(tauriMocks.collectWorkspacePathsToP4PendingList).toHaveBeenCalledWith(
+          'E:\\UltraGameStudio',
+          ['app/src/ProjectFileTree.tsx'],
+        );
+        expect(alertSpy).toHaveBeenCalledWith(
+          '已收集到 P4 pending list：1 个新打开，1 个已处理。',
+        );
+      });
+    } finally {
+      await view.cleanup();
+      alertSpy.mockRestore();
     }
   });
 
