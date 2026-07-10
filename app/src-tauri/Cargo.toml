@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.5.6"
+version = "0.5.7"
 description = "UltraGameStudio - AI coding studio for game development"
 authors = ["UltraGameStudio"]
 license = ""
