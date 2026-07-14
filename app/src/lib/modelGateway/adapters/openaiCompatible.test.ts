@@ -83,6 +83,44 @@ describe('completeOpenAICompatible', () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    [
+      'https://generativelanguage.googleapis.com/v1beta/openai',
+      'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    ],
+    [
+      'https://ark.cn-beijing.volces.com/api/v3',
+      'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+    ],
+    [
+      'https://qianfan.baidubce.com/v2',
+      'https://qianfan.baidubce.com/v2/chat/completions',
+    ],
+  ])('preserves versioned OpenAI-compatible bases: %s', async (baseUrl, endpoint) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => mockOpenAIStream('ok'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await completeOpenAICompatible({
+      route: {
+        selection: { adapter: 'codex', modelClass: 'vision-model' },
+        adapter: 'codex',
+        modelClass: 'vision-model',
+        model: 'vision-model',
+        transport: 'openai-compatible',
+        mode: 'direct',
+        apiKey: 'key',
+        baseUrl,
+        label: 'Vision',
+        source: 'global',
+      },
+      system: 's',
+      userContent: 'describe',
+      userImages: ['data:image/png;base64,AAAA'],
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(endpoint);
+  });
+
   it('still rejects keyless official OpenAI-compatible calls', async () => {
     const fetchMock = vi.fn(async () => mockOpenAIStream('ok'));
     vi.stubGlobal('fetch', fetchMock);

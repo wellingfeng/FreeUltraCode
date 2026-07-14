@@ -34,6 +34,7 @@ const tauriMocks = vi.hoisted(() => ({
   cancelAiCli: vi.fn(),
   freeProxyEnsure: vi.fn(),
   isTauri: vi.fn(() => false),
+  previewLocalFile: vi.fn(),
   tauriAvailable: vi.fn(() => false),
 }));
 
@@ -64,6 +65,7 @@ vi.mock('@/lib/tauri', async () => {
     cancelAiCli: tauriMocks.cancelAiCli,
     freeProxyEnsure: tauriMocks.freeProxyEnsure,
     isTauri: tauriMocks.isTauri,
+    previewLocalFile: tauriMocks.previewLocalFile,
     tauriAvailable: tauriMocks.tauriAvailable,
   };
 });
@@ -140,9 +142,13 @@ function mockDirectRoute(): void {
   gatewayMocks.resolveDirectGatewayRoute.mockReturnValue({
     selection: { adapter: 'claude-code', modelClass: 'sonnet' },
     adapter: 'claude-code',
+    modelClass: 'sonnet',
     apiKey: 'test-key',
     model: 'sonnet',
     transport: 'anthropic',
+    mode: 'direct',
+    label: 'sonnet',
+    source: 'global',
   });
 }
 
@@ -190,6 +196,7 @@ afterEach(async () => {
   tauriMocks.cancelAiCli.mockReset();
   tauriMocks.freeProxyEnsure.mockReset();
   tauriMocks.isTauri.mockReset();
+  tauriMocks.previewLocalFile.mockReset();
   tauriMocks.tauriAvailable.mockReset();
   notificationMocks.dismissSessionWaitingInputNotification.mockReset();
   notificationMocks.notifySessionComplete.mockReset();
@@ -2361,6 +2368,91 @@ describe('simple-workflow chat mode', () => {
       ? await historyStore.getSession(workspace.id, sessionId)
       : null;
     expect(record?.title).toBe('UE启动着色器崩溃');
+  });
+
+  it('auto-renames image-only first turns from image context and reply', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    const sessionId = useStore.getState().activeSessionId;
+    expect(sessionId).toBeTruthy();
+    mockDirectRoute();
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.previewLocalFile.mockResolvedValue({
+      path: 'E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1.png',
+      fileName: 'pasted-1.png',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 3,
+      truncated: false,
+      text: null,
+      base64: 'AQID',
+    });
+
+    const requests: Array<{
+      system: string;
+      userContent: string;
+      userImages?: string[];
+    }> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(async (request) => {
+      const system = String(request.system);
+      const userContent = String(request.userContent);
+      requests.push({
+        system,
+        userContent,
+        userImages: request.userImages,
+      });
+      if (system.includes('对话命名模型')) {
+        return userContent.includes('首轮助手回复')
+          ? '启动崩溃截图'
+          : '截图问题分析';
+      }
+      return '截图里是 UE 启动时 ShaderCompileWorker 崩溃。';
+    });
+
+    useStore
+      .getState()
+      .sendPrompt(
+        '`E:\\UltraGameStudio\\.ultragamestudio\\clipboard-images\\pasted-1.png`',
+      );
+
+    await waitFor(
+      () => useStore.getState().sessions[0]?.title === '启动崩溃截图',
+      'image-only generated session title',
+    );
+
+    const titleRequests = requests.filter((request) =>
+      request.system.includes('对话命名模型'),
+    );
+    const intentRequest = titleRequests.find((request) =>
+      request.userContent.includes('用户输入：'),
+    );
+    expect(intentRequest?.userContent).toContain('用户只上传了图片或截图');
+    expect(intentRequest?.userContent).toContain('用户附加图片：1 张图片或截图');
+    expect(intentRequest?.userContent).not.toContain('pasted-1.png');
+    expect(intentRequest?.userContent).not.toContain('clipboard-images');
+    expect(intentRequest?.userImages).toEqual(['data:image/png;base64,AQID']);
+
+    const record = sessionId
+      ? await historyStore.getSession(workspace.id, sessionId)
+      : null;
+    expect(record?.title).toBe('启动崩溃截图');
   });
 
   it('does not overwrite a manual rename while title naming is in flight', async () => {

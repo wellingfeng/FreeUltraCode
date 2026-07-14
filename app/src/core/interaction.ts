@@ -64,6 +64,34 @@ export interface InteractionAnswer {
 const ASK_OPEN = '<<UGS_ASK>>';
 const ASK_CLOSE = '<<UGS_ASK_END>>';
 
+// Tolerant sentinel matchers. Models routinely fumble the exact delimiter —
+// dropping a `>` (`<<UGS_ASK>`), adding a third (`<<UGS_ASK>>>`), or slipping in
+// whitespace (`<< UGS_ASK >>`). A strict `indexOf('<<UGS_ASK>>')` misses those,
+// so the whole reply (raw protocol JSON and all) leaks into the chat bubble and
+// no interaction widget renders. These regexes accept any positive number of
+// trailing `>` and stray inner whitespace. The open matcher can't collide with
+// the close sentinel because `UGS_ASK` there is immediately followed by `_END`,
+// not `>`/whitespace.
+const ASK_OPEN_RE = /<<\s*UGS_ASK\s*>+/;
+const ASK_CLOSE_RE = /<<\s*UGS_ASK_END\s*>+/;
+
+/** Locate a sentinel; returns its start index and matched length, or null. */
+function findSentinel(
+  text: string,
+  re: RegExp,
+  from = 0,
+): { index: number; length: number } | null {
+  const scoped = new RegExp(re.source, 'g');
+  scoped.lastIndex = from;
+  const m = scoped.exec(text);
+  return m ? { index: m.index, length: m[0].length } : null;
+}
+
+/** Index of the (tolerant) opening sentinel, or -1. */
+function askOpenIndex(text: string): number {
+  return findSentinel(text, ASK_OPEN_RE)?.index ?? -1;
+}
+
 /**
  * Instruction block appended to every executable node prompt. Kept terse and
  * imperative so weaker models still follow it. The key rules: ask only when
@@ -140,12 +168,15 @@ function firstJsonObject(text: string): string | null {
 export function parseInteraction(text: string): InteractionRequest | null {
   if (!text) return null;
 
-  const open = text.indexOf(ASK_OPEN);
-  if (open === -1) return null;
-  const afterOpen = text.slice(open + ASK_OPEN.length);
-  const close = afterOpen.indexOf(ASK_CLOSE);
-  if (close === -1) return null;
-  const body = afterOpen.slice(0, close);
+  const open = findSentinel(text, ASK_OPEN_RE);
+  if (!open) return null;
+  const afterOpen = text.slice(open.index + open.length);
+  const close = findSentinel(afterOpen, ASK_CLOSE_RE);
+  // Require a closing sentinel: an unterminated block usually means the reply
+  // was cut off mid-stream, and pausing on a half-written request would strand
+  // the run. (Covered by "does not pause … on an unterminated interaction block".)
+  if (!close) return null;
+  const body = afterOpen.slice(0, close.index);
   const jsonSpan = firstJsonObject(body);
   if (!jsonSpan) return null;
 
@@ -197,7 +228,7 @@ export function parseInteraction(text: string): InteractionRequest | null {
  * model emitted *before* the block is preserved.
  */
 export function stripInteraction(text: string): string {
-  const open = text.indexOf(ASK_OPEN);
+  const open = askOpenIndex(text);
   if (open !== -1) return text.slice(0, open).trim();
   return text.trim();
 }
@@ -210,7 +241,7 @@ export function stripInteraction(text: string): string {
  */
 export function liveProse(text: string): string {
   const cuts: number[] = [];
-  const ask = text.indexOf(ASK_OPEN);
+  const ask = askOpenIndex(text);
   if (ask !== -1) cuts.push(ask);
   const fence = text.indexOf('```');
   if (fence !== -1) cuts.push(fence);

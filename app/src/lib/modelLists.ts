@@ -248,7 +248,7 @@ export function removeUserModel(key: string, model: string): void {
 
 /** Cache key for generation provider model lists (keyed by base URL). */
 export function endpointModelCacheKey(
-  scope: 'image' | 'music' | 'video' | 'sprite' | 'speech' | 'mesh',
+  scope: 'image' | 'music' | 'video' | 'sprite' | 'speech' | 'mesh' | 'vision',
   providerId: string,
   baseUrl: string,
 ): string {
@@ -266,12 +266,14 @@ export async function refreshEndpointModels(params: {
   apiKey?: string;
   fallback?: string[];
   urls?: string[];
+  transport?: 'openai' | 'anthropic';
 }): Promise<ModelListResult> {
   const fallback = uniqueModels(params.fallback ?? []);
+  const transport = params.transport ?? 'openai';
   const urls =
     params.urls && params.urls.length > 0
       ? uniqueModels(params.urls)
-      : modelListUrls(params.baseUrl, 'openai');
+      : modelListUrls(params.baseUrl, transport);
   if (urls.length === 0) {
     return { models: fallback, source: 'catalog' };
   }
@@ -279,7 +281,7 @@ export async function refreshEndpointModels(params: {
     const response = await listRemoteModels({
       urls,
       apiKey: params.apiKey ?? '',
-      transport: 'openai',
+      transport,
     });
     const models = uniqueModels(response.models);
     if (models.length > 0) {

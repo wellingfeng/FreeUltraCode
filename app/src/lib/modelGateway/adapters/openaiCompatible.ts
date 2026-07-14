@@ -225,7 +225,9 @@ function resolveChatCompletionsEndpoint(baseUrl?: string): string {
   const raw = baseUrl?.trim().replace(/\/+$/, '');
   if (!raw) return 'https://api.openai.com/v1/chat/completions';
   if (raw.endsWith('/chat/completions')) return raw;
-  if (raw.endsWith('/v1')) return `${raw}/chat/completions`;
+  if (/\/(?:v\d+(?:beta)?|openai)$/i.test(raw)) {
+    return `${raw}/chat/completions`;
+  }
   return `${raw}/v1/chat/completions`;
 }
 

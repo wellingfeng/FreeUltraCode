@@ -35,6 +35,7 @@ const SETTINGS_PROFILE_REGISTRY_KEY = 'ultragamestudio.settingsProfiles.v1';
 const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: string]> = [
   ['settings/appearance.v1.json', 'ultragamestudio.appearance.v1'],
   ['settings/imageGeneration.v1.json', 'ultragamestudio.imageGeneration.v1'],
+  ['settings/visionModel.v1.json', 'ultragamestudio.visionModel.v1'],
   ['settings/videoGeneration.v1.json', 'ultragamestudio.videoGeneration.v1'],
   ['settings/animationGeneration.v1.json', 'ultragamestudio.animationGeneration.v1'],
   ['settings/musicGeneration.v1.json', 'ultragamestudio.musicGeneration.v1'],

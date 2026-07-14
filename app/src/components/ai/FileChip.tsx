@@ -8,6 +8,7 @@ import {
 import { FileCode, FolderOpen, ImageOff, Loader2 } from 'lucide-react';
 import {
   displayFileRefLabel,
+  displayFileRefChipPath,
   displayFileRefPath,
   fileRefLineSuffix,
   isImageFileRef,
@@ -217,6 +218,7 @@ export function VisibleFileChip({
   const locale = useStore((s) => s.locale);
   const lineSuffix = fileRefLineSuffix(refData);
   const displayPath = displayFileRefPath(refData, cwd);
+  const chipPath = displayFileRefChipPath(refData, cwd);
   const label = displayFileRefLabel(refData, cwd);
   const interactive = typeof onOpenFile === 'function';
   const isImage = isImageFileRef(refData);
@@ -344,7 +346,7 @@ export function VisibleFileChip({
           <FileCode size={11} className="shrink-0 opacity-70" />
         )}
         <span className="ai-file-chip__label min-w-0 whitespace-normal break-all text-left">
-          {displayPath}
+          {chipPath}
           {lineSuffix && (
             <span className={interactive ? 'opacity-75' : 'text-fg-faint'}>
               {lineSuffix}

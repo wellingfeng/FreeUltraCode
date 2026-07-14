@@ -29,6 +29,11 @@ import {
   type ToolEventPatch,
 } from '@/components/ai/lib/toolEvent';
 import { legacyXmlToolsToSentinels } from '@/components/ai/lib/legacyXmlTool';
+import { scanFileRefs } from '@/components/ai/lib/fileScan';
+import {
+  displayFileRefPath,
+  isImageFileRef,
+} from '@/components/ai/lib/filePath';
 import {
   personalInstructionsBlock,
   personalInstructionsForSelection,
@@ -175,6 +180,7 @@ import {
   downloadModelAsset,
   ensureDefaultWorkspaceDir,
   isTauri,
+  previewLocalFile,
 } from '@/lib/tauri';
 import {
   linkManagedAssetsFromMessageText,
@@ -2604,9 +2610,70 @@ export function applyPromptTitle(
 
 type SessionTitleNamingPhase = 'intent' | 'summary';
 
+const MAX_SESSION_TITLE_NAMING_IMAGES = 2;
+
 const sessionTitleNamingInFlight = new Set<string>();
 const sessionIntentAutoTitles = new Map<string, Set<string>>();
 let sessionTitleNamingEpoch = 0;
+
+function sessionTitleImageRefs(userText: string, cwd?: string): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const part of scanFileRefs(userText)) {
+    if (typeof part === 'string' || !isImageFileRef(part)) continue;
+    const path = displayFileRefPath(part, cwd);
+    const key = path.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    paths.push(path);
+  }
+  return paths;
+}
+
+function sessionTitleImageCount(userText: string, cwd?: string): number {
+  return sessionTitleImageRefs(userText, cwd).length;
+}
+
+function firstTurnFallbackTitle(
+  userText: string,
+  locale: Locale,
+  imageCount: number,
+): string {
+  const derived = titleFromText(userText);
+  if (!isAutoTitlePlaceholder(derived)) return derived;
+  if (imageCount <= 0) return derived;
+  return locale === 'en-US' ? 'Image chat' : '图片分析';
+}
+
+function canAttachSessionTitleImages(route: ResolvedGatewayRoute): boolean {
+  return (
+    route.mode === 'direct' &&
+    (route.transport === 'anthropic' ||
+      route.transport === 'openai-compatible')
+  );
+}
+
+async function loadSessionTitleImages(
+  userText: string,
+  cwd?: string,
+): Promise<string[]> {
+  if (!isTauri() || (cwd && isRemoteWorkspacePath(cwd))) return [];
+  const images: string[] = [];
+  for (const path of sessionTitleImageRefs(userText, cwd).slice(
+    0,
+    MAX_SESSION_TITLE_NAMING_IMAGES,
+  )) {
+    if (/^(?:remote|remote-project):\/\//i.test(path)) continue;
+    try {
+      const preview = await previewLocalFile(path, { cwd });
+      if (preview.kind !== 'image' || !preview.base64 || !preview.mime) continue;
+      images.push(`data:${preview.mime};base64,${preview.base64}`);
+    } catch {
+      /* best-effort: missing image preview must not block title naming */
+    }
+  }
+  return images;
+}
 
 function firstUserMessageId(messages: Message[]): string | null {
   return (
@@ -2710,6 +2777,7 @@ function scheduleFirstTurnSessionTitleNaming(args: {
   userMessageId: string;
   userText: string;
   assistantText?: string;
+  userImageCount?: number;
   fallbackTitle: string;
   locale: Locale;
   gatewaySelection: GatewaySelection;
@@ -2747,11 +2815,16 @@ function scheduleFirstTurnSessionTitleNaming(args: {
         args.directRoute,
       );
       if (!route || sessionTitleNamingEpoch !== epoch) return;
+      const userImages = canAttachSessionTitleImages(route)
+        ? await loadSessionTitleImages(args.userText, args.cwd)
+        : [];
 
       const title = await generateSessionTitle({
         route,
         userText: args.userText,
         assistantText: args.assistantText,
+        userImageCount: args.userImageCount ?? 0,
+        ...(userImages.length ? { userImages } : {}),
         fallbackTitle: args.fallbackTitle,
         locale: args.locale,
         cwd: args.cwd,
@@ -4807,13 +4880,22 @@ export const useStore = create<StoreState>((set, get) => ({
       isRemoteWorkspacePath(workspaceRootPath) &&
       remoteProvider.workspaceId === remoteWorkspaceIdFromPath(workspaceRootPath);
     if (simpleMode && !selectedRemoteWorkspaceConfig && directRoute) {
+      const userImageCount = sessionTitleImageCount(
+        trimmed,
+        ch.workspaceRootPath ?? undefined,
+      );
       scheduleFirstTurnSessionTitleNaming({
         phase: 'intent',
         workspaceId: ch.workspaceId,
         sessionId: ch.sessionId,
         userMessageId: userMsg.id,
         userText: trimmed,
-        fallbackTitle: titleFromText(trimmed),
+        userImageCount,
+        fallbackTitle: firstTurnFallbackTitle(
+          trimmed,
+          state.locale,
+          userImageCount,
+        ),
         locale: state.locale,
         gatewaySelection,
         directRoute,
@@ -6091,6 +6173,10 @@ ${previousReply.slice(0, 4000)}
             { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
             'success',
           );
+          const userImageCount = sessionTitleImageCount(
+            turnText,
+            ch.workspaceRootPath ?? undefined,
+          );
           scheduleFirstTurnSessionTitleNaming({
             phase: 'summary',
             workspaceId: ch.workspaceId,
@@ -6098,7 +6184,12 @@ ${previousReply.slice(0, 4000)}
             userMessageId: userMsg.id,
             userText: turnText,
             assistantText: finalProse,
-            fallbackTitle: titleFromText(turnText),
+            userImageCount,
+            fallbackTitle: firstTurnFallbackTitle(
+              turnText,
+              state.locale,
+              userImageCount,
+            ),
             locale: state.locale,
             gatewaySelection,
             directRoute,

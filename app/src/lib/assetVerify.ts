@@ -25,6 +25,8 @@ import {
   resolveDirectGatewayRoute,
   type GatewaySelection,
 } from './modelGateway';
+import type { SettingsProfileOptions } from './generationSettingsStore';
+import { resolveVisionModelRoute } from './visionModel';
 
 /** A single verification outcome for one generated asset. */
 export interface AssetVerdict {
@@ -54,6 +56,8 @@ export interface VerifyAssetInput {
   sources: string[];
   /** The coding/text channel currently selected; must resolve to a direct route. */
   selection: GatewaySelection;
+  /** Project-scoped VLM settings. Dedicated Vision/VLM route wins when ready. */
+  settingsProfile?: SettingsProfileOptions;
   /** Score at/above which the asset passes. Default 70. */
   threshold?: number;
   permission?: string;
@@ -64,8 +68,14 @@ export interface VerifyAssetInput {
 }
 
 /** Whether visual verification can run for the given channel selection. */
-export function canVerifyAsset(selection: GatewaySelection): boolean {
-  return resolveDirectGatewayRoute(selection) !== null;
+export function canVerifyAsset(
+  selection: GatewaySelection,
+  settingsProfile: SettingsProfileOptions = {},
+): boolean {
+  return (
+    resolveVisionModelRoute(settingsProfile) !== null ||
+    resolveDirectGatewayRoute(selection) !== null
+  );
 }
 
 const KIND_FOCUS: Partial<Record<AssetKind, string>> = {
@@ -142,7 +152,9 @@ const MAX_VERIFY_IMAGES = 2;
 export async function verifyAsset(
   input: VerifyAssetInput,
 ): Promise<AssetVerdict | null> {
-  const route = resolveDirectGatewayRoute(input.selection);
+  const route =
+    resolveVisionModelRoute(input.settingsProfile) ??
+    resolveDirectGatewayRoute(input.selection);
   if (!route) return null;
   const images = (input.sources ?? [])
     .map((s) => s?.trim())

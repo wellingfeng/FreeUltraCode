@@ -376,7 +376,7 @@ describe('AIDock pasted clipboard images', () => {
     }
   });
 
-  it('renders user file paths as clickable full-path previews', async () => {
+  it('renders user file paths as compact clickable previews', async () => {
     resetStore();
     useStore.setState({
       messages: [
@@ -403,7 +403,8 @@ describe('AIDock pasted clipboard images', () => {
     try {
       const chip = view.container.querySelector<HTMLButtonElement>('.ai-file-chip');
       expect(chip).not.toBeNull();
-      expect(chip!.textContent).toContain('E:\\UltraGameStudio\\app\\src\\App.tsx');
+      expect(chip!.textContent).toContain('app/src/App.tsx');
+      expect(chip!.title).toContain('E:\\UltraGameStudio\\app\\src\\App.tsx');
 
       await act(async () => {
         chip!.click();

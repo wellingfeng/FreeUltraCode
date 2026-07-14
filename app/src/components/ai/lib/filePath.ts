@@ -70,6 +70,55 @@ export function displayFileRefLabel(ref: FileRef, cwd?: string): string {
   return `${displayFileRefPath(ref, cwd)}${fileRefLineSuffix(ref)}`;
 }
 
+export function displayFileRefChipPath(ref: FileRef, cwd?: string): string {
+  const displayPath = displayFileRefPath(ref, cwd);
+  const relativePath = workspaceRelativeLabelPath(displayPath, cwd);
+  return compactInternalPathLabel(relativePath);
+}
+
+function workspaceRelativeLabelPath(path: string, cwd?: string): string {
+  const root = cwd?.trim().replace(/[\\/]+$/, '') ?? '';
+  if (!path || !root || isOpaqueWorkspaceRoot(root)) return path;
+
+  const normalizedPath = path.replace(/\\/g, '/');
+  const normalizedRoot = root.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalizedRoot) return path;
+
+  const caseInsensitive = /^(?:[A-Za-z]:\/|\/\/)/.test(normalizedRoot);
+  const haystack = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath;
+  const needle = caseInsensitive ? normalizedRoot.toLowerCase() : normalizedRoot;
+  const prefix = `${needle}/`;
+
+  if (haystack === needle) return basenameOf(path);
+  if (!haystack.startsWith(prefix)) return path;
+  return normalizedPath.slice(normalizedRoot.length + 1);
+}
+
+function compactInternalPathLabel(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  const lower = normalized.toLowerCase();
+  const marker = '.ultragamestudio/clipboard-images/';
+  const index = lower.lastIndexOf(marker);
+  if (index === -1) return path;
+
+  const basename = normalized.slice(index + marker.length).split('/').pop() ?? '';
+  if (!basename) return path;
+  return `clipboard-images/${compactClipboardBasename(basename)}`;
+}
+
+function compactClipboardBasename(name: string): string {
+  const pasted = /^(pasted-\d+)-[a-f0-9]{12,}(-\d+\.[^.]+)$/i.exec(name);
+  if (pasted) return `${pasted[1]}...${pasted[2]}`;
+  return compactMiddle(name, 44);
+}
+
+function compactMiddle(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const head = Math.ceil((maxLength - 3) * 0.62);
+  const tail = Math.max(8, maxLength - 3 - head);
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
 /** Browser-previewable raster/vector image extensions (kept in sync with KNOWN_EXT). */
 const IMAGE_EXT = new Set([
   'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp', 'gif', 'webp',

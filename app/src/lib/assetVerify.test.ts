@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { canVerifyAsset, verifyAsset } from './assetVerify';
 import type { GatewaySelection } from './modelGateway';
 
 const mocks = vi.hoisted(() => ({
   completeGatewayText: vi.fn(),
   resolveDirectGatewayRoute: vi.fn(),
+  resolveVisionModelRoute: vi.fn(),
 }));
 
 vi.mock('./modelGateway', () => ({
@@ -12,12 +13,17 @@ vi.mock('./modelGateway', () => ({
   resolveDirectGatewayRoute: mocks.resolveDirectGatewayRoute,
 }));
 
+vi.mock('./visionModel', () => ({
+  resolveVisionModelRoute: mocks.resolveVisionModelRoute,
+}));
+
 const SELECTION = { adapter: 'anthropic', model: 'claude' } as unknown as GatewaySelection;
 const DATA_URL = 'data:image/png;base64,AAAA';
 const ROUTE = { transport: 'anthropic', apiKey: 'k', model: 'claude' };
 
-afterEach(() => {
-  vi.clearAllMocks();
+beforeEach(() => {
+  vi.resetAllMocks();
+  mocks.resolveVisionModelRoute.mockReturnValue(null);
 });
 
 describe('canVerifyAsset', () => {
@@ -26,6 +32,12 @@ describe('canVerifyAsset', () => {
     expect(canVerifyAsset(SELECTION)).toBe(true);
     mocks.resolveDirectGatewayRoute.mockReturnValueOnce(null);
     expect(canVerifyAsset(SELECTION)).toBe(false);
+  });
+
+  it('accepts a dedicated Vision/VLM route without a coding route', () => {
+    mocks.resolveVisionModelRoute.mockReturnValue(ROUTE);
+    mocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    expect(canVerifyAsset(SELECTION)).toBe(true);
   });
 });
 
@@ -68,6 +80,20 @@ describe('verifyAsset', () => {
     const call = mocks.completeGatewayText.mock.calls[0][0];
     expect(call.userImages).toEqual([DATA_URL]);
     expect(call.route).toBe(ROUTE);
+  });
+
+  it('prefers the dedicated Vision/VLM route over the coding route', async () => {
+    const visionRoute = { ...ROUTE, model: 'vision-model', providerName: 'VLM' };
+    mocks.resolveVisionModelRoute.mockReturnValue(visionRoute);
+    mocks.resolveDirectGatewayRoute.mockReturnValue(ROUTE);
+    mocks.completeGatewayText.mockResolvedValue('{"score":90,"pass":true}');
+    await verifyAsset({
+      kind: 'image',
+      prompt: 'a cat',
+      sources: [DATA_URL],
+      selection: SELECTION,
+    });
+    expect(mocks.completeGatewayText.mock.calls[0][0].route).toBe(visionRoute);
   });
 
   it('derives a failing verdict and surfaces defects + promptPatch', async () => {

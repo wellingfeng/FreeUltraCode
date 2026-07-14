@@ -1470,7 +1470,7 @@ export function startImageGenerationTurn(
       // Verification only runs when enabled AND the coding channel resolves to a
       // direct (vision-capable) route; otherwise it degrades to a single pass.
       const verifyOn =
-        settings.verifyEnabled && canVerifyAsset(codingSelection);
+        settings.verifyEnabled && canVerifyAsset(codingSelection, settingsProfile);
       const maxAttempts = verifyOn ? 1 + Math.max(0, settings.verifyMaxRetries) : 1;
       let attemptPrompt = imagePrompt;
       let result = await generateImage(
@@ -1491,6 +1491,7 @@ export function startImageGenerationTurn(
             prompt: attemptPrompt,
             sources: result.images,
             selection: codingSelection,
+            settingsProfile,
             threshold: settings.verifyThreshold,
             permission: codingPermission,
             signal: ch.abortController.signal,

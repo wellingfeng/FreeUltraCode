@@ -7,6 +7,16 @@ const MAX_GENERATED_TITLE_CHARS = 36;
 const TITLE_NAMING_TIMEOUT_SECONDS = 180;
 const INTENT_TITLE_NAMING_TIMEOUT_SECONDS = 60;
 
+function stripPathNoise(text: string): string {
+  return text
+    .replace(/`[^`\r\n]*(?:[\\/]|remote-project:\/\/)[^`\r\n]*`/gi, ' ')
+    .replace(/`[^`\r\n]*\.(?:png|apng|jpe?g|gif|webp|bmp|svg|avif|ico)`/gi, ' ')
+    .replace(/(?:file:\/\/\/)?[a-z]:[\\/][^\s`"'<>，。！？；：、,;:!?]+/gi, ' ')
+    .trim()
+    .replace(/^[\s`"'“”‘’「」『』《》【】[\]({（,，。;；:：、!！?？-]+/, '')
+    .replace(/\s+/g, ' ');
+}
+
 function clipText(text: string, maxChars = MAX_PROMPT_TEXT_CHARS): string {
   const chars = Array.from(text.trim());
   if (chars.length <= maxChars) return chars.join('');
@@ -58,7 +68,7 @@ function sessionTitleNamingSystem(locale: Locale, hasAssistantText: boolean): st
     hasAssistantText
       ? '根据首轮用户消息和首轮助手回复生成标题。'
       : '根据首条用户消息推断用户意图并生成标题，不需要等待助手回复。',
-    '忽略截图路径、本地文件路径、粘贴图片文件名和冗长日志，聚焦用户真正要解决的问题。',
+    '忽略截图路径、本地文件路径、粘贴图片文件名和冗长日志；如果用户只发图片，请根据图片内容或助手回复概括主题。',
     '要求：10 个词以内；中文优先 6-18 个字；不要标点、引号、Markdown 或解释。',
     '只输出标题本身。',
     localeLine,
@@ -68,31 +78,43 @@ function sessionTitleNamingSystem(locale: Locale, hasAssistantText: boolean): st
 function sessionTitleNamingPrompt(args: {
   userText: string;
   assistantText?: string;
+  userImageCount?: number;
 }): string {
   const assistantText = args.assistantText?.trim() ?? '';
+  const userText = stripPathNoise(args.userText);
+  const imageCount = Math.max(0, args.userImageCount ?? 0);
+  const imageLine =
+    imageCount > 0 ? `用户附加图片：${imageCount} 张图片或截图。` : '';
+  const displayedUserText =
+    userText ||
+    (imageCount > 0 ? '（用户只上传了图片或截图，未输入文字）' : args.userText);
   if (!assistantText) {
     return [
       '用户输入：',
-      clipText(args.userText),
+      clipText(displayedUserText),
+      imageLine,
       '',
       '请理解用户意图，输出短标题：',
-    ].join('\n');
+    ].filter((line) => line !== '').join('\n');
   }
   return [
     '首轮用户消息：',
-    clipText(args.userText),
+    clipText(displayedUserText),
+    imageLine,
     '',
     '首轮助手回复：',
     clipText(assistantText),
     '',
     '请输出短标题：',
-  ].join('\n');
+  ].filter((line) => line !== '').join('\n');
 }
 
 export async function generateSessionTitle(args: {
   route: ResolvedGatewayRoute;
   userText: string;
   assistantText?: string;
+  userImageCount?: number;
+  userImages?: string[];
   fallbackTitle: string;
   locale: Locale;
   cwd?: string;
@@ -102,6 +124,7 @@ export async function generateSessionTitle(args: {
     route: args.route,
     system: sessionTitleNamingSystem(args.locale, hasAssistantText),
     userContent: sessionTitleNamingPrompt(args),
+    userImages: args.userImages,
     maxTokens: 64,
     permission: 'read-only',
     cwd: args.cwd,

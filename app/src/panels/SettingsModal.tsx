@@ -375,6 +375,7 @@ import {
 import CommandsSettings from '@/panels/settings/CommandsSettings';
 import MemorySettings from '@/panels/settings/MemorySettings';
 import KnowledgeBaseSettings from '@/panels/settings/KnowledgeBaseSettings';
+import VisionModelSettings from '@/panels/settings/VisionModelSettings';
 import {
   UI_DESIGN_CHANNELS,
   loadUiDesignChannelSettings,
@@ -416,6 +417,7 @@ import {
   | 'memory'
   | 'knowledgeBase'
   | 'models'
+  | 'visionModel'
   | 'imageGeneration'
   | 'musicGeneration'
   | 'videoGeneration'
@@ -453,6 +455,7 @@ const tabs: { id: SettingsTab; labelKey: TranslationKey; Icon: LucideIcon }[] = 
   { id: 'imageGeneration', labelKey: 'settings.tabs.imageGeneration', Icon: Sparkles },
   { id: 'musicGeneration', labelKey: 'settings.tabs.musicGeneration', Icon: Music },
   { id: 'videoGeneration', labelKey: 'settings.tabs.videoGeneration', Icon: Video },
+  { id: 'visionModel', labelKey: 'settings.tabs.visionModel', Icon: Eye },
   { id: 'animationGeneration', labelKey: 'settings.tabs.animationGeneration', Icon: Activity },
   { id: 'worldModelGeneration', labelKey: 'settings.tabs.worldModelGeneration', Icon: Globe },
   { id: 'speechGeneration', labelKey: 'settings.tabs.speechGeneration', Icon: Volume2 },
@@ -833,6 +836,15 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   locale={locale}
                   cliRuntime={cliRuntime}
                 />
+              ) : tab === 'visionModel' ? (
+                <ErrorBoundary label={t(locale, 'settings.tabs.visionModel')}>
+                  <VisionModelSettings
+                    key={settingsProfileId ?? 'local'}
+                    locale={locale}
+                    settingsProfile={settingsProfile}
+                    remoteProfile={remoteSettingsProfile}
+                  />
+                </ErrorBoundary>
               ) : tab === 'imageGeneration' ? (
                 <ErrorBoundary label={t(locale, 'settings.tabs.imageGeneration')}>
                   <ImageGenerationSettingsPanel

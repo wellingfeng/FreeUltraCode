@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { segmentMessage, hasReasoning } from './segmenter';
-import { parseFileRef, looksLikePath, displayFileRefPath } from './filePath';
+import {
+  parseFileRef,
+  looksLikePath,
+  displayFileRefPath,
+  displayFileRefChipPath,
+} from './filePath';
 import { scanFileRefs } from './fileScan';
 import {
   fenceLooseDiffBlocks,
@@ -268,6 +273,26 @@ describe('displayFileRefPath', () => {
   it('leaves an absolute path untouched regardless of cwd', () => {
     const ref = parseFileRef('C:/Users/x/main.rs')!;
     expect(displayFileRefPath(ref, '/home/u/proj')).toBe('C:/Users/x/main.rs');
+  });
+});
+
+describe('displayFileRefChipPath', () => {
+  const BS = String.fromCharCode(92);
+
+  it('shows workspace-local absolute paths as relative chip text', () => {
+    const ref = parseFileRef(`E:${BS}UltraGameStudio${BS}app${BS}src${BS}App.tsx`)!;
+    expect(displayFileRefChipPath(ref, `E:${BS}UltraGameStudio`)).toBe(
+      'app/src/App.tsx',
+    );
+  });
+
+  it('compacts pasted clipboard image paths for chat readability', () => {
+    const ref = parseFileRef(
+      `E:${BS}UltraGameStudio${BS}.ultragamestudio${BS}clipboard-images${BS}pasted-1783749369180-71b38df9522b2ff5-0.jpg`,
+    )!;
+    expect(displayFileRefChipPath(ref, `E:${BS}UltraGameStudio`)).toBe(
+      'clipboard-images/pasted-1783749369180...-0.jpg',
+    );
   });
 });
 
