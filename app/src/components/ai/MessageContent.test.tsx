@@ -269,6 +269,78 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/data:image\/png;base64,iVBORw0KGgo=/);
   });
 
+  it('routes HTTP markdown images to the in-app file preview', async () => {
+    const calls: Array<{ path: string; basename: string }> = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(MessageContent, {
+            text: '![远程图片](https://cdn.example.com/previews/shot.png?token=1)',
+            streaming: false,
+            onOpenFile: (ref) => {
+              calls.push(ref);
+            },
+          }),
+        );
+      });
+
+      const image = container.querySelector<HTMLImageElement>('.ai-generated-image');
+      expect(image).not.toBeNull();
+      await act(async () => image!.click());
+
+      expect(calls).toEqual([
+        {
+          path: 'https://cdn.example.com/previews/shot.png?token=1',
+          basename: '远程图片',
+          previewKind: 'image',
+        },
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it('routes HTTP image links to the in-app file preview', async () => {
+    const calls: Array<{ path: string; basename: string; previewKind?: 'image' }> = [];
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(
+          createElement(MessageContent, {
+            text: '[查看图片](https://cdn.example.com/previews/shot.png?token=1)',
+            streaming: false,
+            onOpenFile: (ref) => {
+              calls.push(ref);
+            },
+          }),
+        );
+      });
+
+      const trigger = container.querySelector<HTMLButtonElement>('button[title="在右侧预览"]');
+      expect(trigger).not.toBeNull();
+      await act(async () => trigger!.click());
+
+      expect(calls).toEqual([
+        {
+          path: 'https://cdn.example.com/previews/shot.png?token=1',
+          basename: '查看图片',
+          previewKind: 'image',
+        },
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it('renders generated audio markdown with playback controls', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
@@ -484,18 +556,20 @@ describe('MessageContent integration', () => {
         );
       });
 
-      const menuItem = container.querySelector<HTMLButtonElement>(
+      const menuItems = container.querySelectorAll<HTMLButtonElement>(
         '.ai-file-chip-menu [role="menuitem"]',
       );
-      expect(menuItem?.textContent).toContain('在文件夹中显示');
+      // Menu order: copy path, preview in app, reveal in folder
+      const revealItem = menuItems[2];
+      expect(revealItem?.textContent).toContain('在文件夹中显示');
       await act(async () => {
-        menuItem!.dispatchEvent(
+        revealItem!.dispatchEvent(
           new MouseEvent('pointerdown', { bubbles: true, cancelable: true }),
         );
       });
       expect(container.querySelector('.ai-file-chip-menu')).not.toBeNull();
       await act(async () => {
-        menuItem!.click();
+        revealItem!.click();
       });
 
       expect(calls).toEqual([{ path: 'src/store/useStore.ts', reveal: true }]);
@@ -609,6 +683,7 @@ describe('MessageContent integration', () => {
 
     expect(html).not.toMatch(/language-(?!plaintext)[a-z]+/);
     expect(html).not.toMatch(/hljs-/);
-    expect(html).toMatch(/ai-code__folded/); // plain-text fences fold by default
+    expect(html).toMatch(/ai-plain-block/); // plain-text fences render as lightweight text
+    expect(html).not.toMatch(/ai-code__folded/); // not a code block anymore
   });
 });

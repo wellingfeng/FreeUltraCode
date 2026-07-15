@@ -333,6 +333,56 @@ export function closeDanglingToolPatches(text: string): string {
   return `${text}${closers.join('')}`;
 }
 
+/**
+ * Finalize tool sentinels in a message text before persisting to session history.
+ *
+ * When a session is cancelled mid-stream, the in-progress assistant message may
+ * contain an unclosed `<<UGS_TOOL>>{…` sentinel (no `<<UGS_TOOL_END>>` yet).
+ * `extractToolSentinels` without `streamingTail` skips incomplete sentinels,
+ * so `extractSessionFiles` cannot recover the file paths the tool touched —
+ * the files vanish from the session-files list after reload even though the
+ * edits are on disk.
+ *
+ * This function:
+ * 1. Finds the last unclosed `<<UGS_TOOL>>` (if any).
+ * 2. Parses the partial JSON fragment (best-effort: extracts id, name, subject,
+ *    file path from whatever fields have arrived).
+ * 3. Replaces the incomplete sentinel with a properly closed one.
+ * 4. Calls {@link closeDanglingToolPatches} to append terminal patches for any
+ *    tool calls still in `running` status.
+ *
+ * For text with no tool sentinels or only complete ones, this is a no-op
+ * (after `closeDanglingToolPatches`).
+ */
+export function finalizeToolSentinelsForPersistence(text: string): string {
+  if (!hasToolSentinel(text)) return text;
+
+  // Find the last unclosed TOOL_OPEN.
+  const lastOpen = text.lastIndexOf(TOOL_OPEN);
+  if (lastOpen === -1) return closeDanglingToolPatches(text);
+
+  const closeAfter = text.indexOf(TOOL_CLOSE, lastOpen + TOOL_OPEN.length);
+  if (closeAfter !== -1) {
+    // All sentinels are properly closed — just close dangling patches.
+    return closeDanglingToolPatches(text);
+  }
+
+  // The sentinel starting at lastOpen is unclosed. Parse the partial fragment.
+  const fragment = text.slice(lastOpen + TOOL_OPEN.length);
+  const partial = parsePartialToolPatch(fragment);
+
+  if (!partial) {
+    // Can't parse — append a close marker so it's at least syntactically
+    // complete, then close dangling patches.
+    return closeDanglingToolPatches(text + TOOL_CLOSE);
+  }
+
+  // Replace the incomplete sentinel with a properly closed one, then close
+  // any dangling running patches (including this one).
+  const before = text.slice(0, lastOpen);
+  return closeDanglingToolPatches(before + encodeToolPatch(partial));
+}
+
 function stripUndefined<T extends object>(obj: T): Partial<T> {
   const out: Partial<T> = {};
   for (const k of Object.keys(obj) as Array<keyof T>) {

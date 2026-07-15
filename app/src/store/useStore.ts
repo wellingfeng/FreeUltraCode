@@ -25,6 +25,7 @@ import {
   closeDanglingToolPatches,
   encodeToolPatch,
   extractToolSentinels,
+  finalizeToolSentinelsForPersistence,
   hasToolSentinel,
   type ToolEventPatch,
 } from '@/components/ai/lib/toolEvent';
@@ -87,7 +88,7 @@ import {
 } from '@/core/startInputs';
 // [dynamic-only refactor] determinism lint 仅用于蓝图 AI 改图分支，已停用。
 // import { findDeterminismHazards } from '@/core/determinism';
-import { listProviders, setActiveProviderId } from '@/lib/apiConfig';
+import { listProviders, setActiveProviderId, type Provider } from '@/lib/apiConfig';
 import { appendComposerDraftState } from '@/lib/composerEntryPolicy';
 import {
   clearActiveGatewaySelection,
@@ -171,16 +172,19 @@ import {
   normalizeGatewayWorkflow as migrateWorkflowGateway,
   selectionKey,
   systemDefaultGatewaySelection,
+  withoutWorkflowGatewayDefaults,
   workflowDefaultGatewaySelection,
 } from '@/lib/modelGateway/resolver';
 import { shortId } from '@/lib/id';
 import {
   aiEditViaCli,
+  aiCliSteerSupported,
   cancelAiCli,
   downloadModelAsset,
   ensureDefaultWorkspaceDir,
   isTauri,
   previewLocalFile,
+  steerAiCli,
 } from '@/lib/tauri';
 import {
   linkManagedAssetsFromMessageText,
@@ -783,6 +787,105 @@ function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapte
   return 'claude-code';
 }
 
+const HISTORICAL_ROUTE_LINE_RE =
+  /^⚙ (?:(?:路由：(?<route>.*?)(?: · 模型：(?<model>.*))?)|(?:模型：(?<modelOnly>.*)))$/m;
+
+function sameRouteLabel(a: string | undefined, b: string | undefined): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+}
+
+function historicalMessageRouteLabel(message: Message): string {
+  const explicit = message.routeLabel?.trim();
+  if (explicit) return explicit;
+  const match = message.text.match(HISTORICAL_ROUTE_LINE_RE);
+  const groups = match?.groups;
+  if (!groups) return '';
+  const route = groups.route?.trim() ?? '';
+  const model = (groups.model ?? groups.modelOnly ?? '').trim();
+  return [route, model].filter(Boolean).join(' · ');
+}
+
+function historicalRouteParts(
+  messages: readonly Message[],
+): { routeName: string; model?: string } | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'assistant') continue;
+    const label = historicalMessageRouteLabel(message);
+    if (!label) continue;
+    const parts = label
+      .split(' · ')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (parts.length === 0) continue;
+    if (parts.length === 1) return { routeName: parts[0] };
+    return {
+      routeName: parts.slice(0, -1).join(' · '),
+      model: parts[parts.length - 1],
+    };
+  }
+  return null;
+}
+
+function providerMatchesHistoricalModel(provider: Provider, model: string): boolean {
+  const selected = model.trim();
+  if (!selected) return true;
+  const candidates = [provider.model, ...(provider.models ?? [])]
+    .map((item) => item?.trim())
+    .filter((item): item is string => Boolean(item));
+  if (candidates.length === 0) return true;
+  return candidates.some((candidate) => sameRouteLabel(candidate, selected));
+}
+
+function adapterFromHistoricalRouteName(
+  routeName: string,
+): RuntimeAdapterId | null {
+  const adapters: RuntimeAdapterId[] = ['claude-code', 'codex', 'gemini'];
+  return (
+    adapters.find((adapter) =>
+      sameRouteLabel(runtimeAdapterLabel(adapter), routeName),
+    ) ?? null
+  );
+}
+
+function historicalGatewaySelectionFromMessages(
+  messages: readonly Message[],
+): GatewaySelection | null {
+  const route = historicalRouteParts(messages);
+  if (!route) return null;
+  const model = route.model?.trim();
+  const providers = listProviders().filter((provider) =>
+    sameRouteLabel(provider.name, route.routeName),
+  );
+  const provider =
+    providers.find((candidate) =>
+      providerMatchesHistoricalModel(candidate, model ?? ''),
+    ) ?? providers[0];
+  if (provider) {
+    const adapter = runtimeAdapterFromProviderKind(provider.kind);
+    const providerModel = provider.model?.trim() ?? '';
+    const selectedModel = model || providerModel || 'default';
+    const modelOverride =
+      model && providerModel && !sameRouteLabel(model, providerModel)
+        ? model
+        : undefined;
+    return normalizeGatewaySelection({
+      adapter,
+      modelClass: selectedModel,
+      ...(modelOverride ? { modelOverride } : {}),
+      providerId: provider.id,
+      channelId: 'default',
+    });
+  }
+  const adapter = adapterFromHistoricalRouteName(route.routeName);
+  if (!adapter) return null;
+  const selectedModel = model || 'default';
+  return normalizeGatewaySelection({
+    adapter,
+    modelClass: selectedModel,
+  });
+}
+
 function remoteWorkspaceModelForAdapter(
   adapter: GatewaySelection['adapter'],
   model: string | null | undefined,
@@ -1017,6 +1120,8 @@ export function normalizeComposerSettings(value: Partial<ComposerSettings> | und
       workspace,
     ),
     modelStrategy: source.modelStrategy ?? defaultComposer.modelStrategy,
+    knowledgeBaseMode:
+      source.knowledgeBaseMode ?? defaultComposer.knowledgeBaseMode,
     gddMode: source.gddMode ?? defaultComposer.gddMode,
     gddModeStartedAt:
       source.gddModeStartedAt ?? defaultComposer.gddModeStartedAt,
@@ -1105,20 +1210,22 @@ export function composerPatchForSession(
   sessionKey: WorkflowSessionKey,
   workflow: IRGraph,
   fallbackComposer: ComposerSettings = defaultSessionComposer(),
+  fallbackGatewaySelection: GatewaySelection | null = null,
 ): Pick<StoreState, 'composer' | 'composerBySession' | 'workflow'> {
   let composerBySession = rememberSessionComposer(state);
   const key = workflowSessionKeyId(sessionKey);
   const stored = sessionKeyPersistable(sessionKey)
     ? composerBySession[key]
     : undefined;
+  const fallbackSelection =
+    workflow.meta.gateway?.defaults || !fallbackGatewaySelection
+      ? workflowDefaultGatewaySelection(workflow, fallbackComposer.model)
+      : normalizeGatewaySelection(fallbackGatewaySelection);
   const baseSnapshot =
     stored ??
     ({
       composer: fallbackComposer,
-      gatewaySelection: workflowDefaultGatewaySelection(
-        workflow,
-        fallbackComposer.model,
-      ),
+      gatewaySelection: fallbackSelection,
     } satisfies SessionComposerSettings);
   const remoteSelection = remoteWorkspaceGatewaySelection(
     baseSnapshot.composer.workspace || fallbackComposer.workspace,
@@ -1213,12 +1320,10 @@ export function sessionLiveStatus(
 export type WorkflowDeleteProtectionReason = SessionLiveStatus;
 
 export function workflowDeleteProtectionReason(
-  session: Pick<Session, 'id' | 'isWorkflow'>,
+  session: Pick<Session, 'id'>,
   workspaceId: string | null | undefined,
   state: SessionLiveStatusState,
 ): WorkflowDeleteProtectionReason {
-  if (!session.isWorkflow) return null;
-
   return sessionLiveStatus(
     { workspaceId: workspaceId ?? null, sessionId: session.id },
     state,
@@ -2612,6 +2717,7 @@ type SessionTitleNamingPhase = 'intent' | 'summary';
 
 const MAX_SESSION_TITLE_NAMING_IMAGES = 2;
 
+
 const sessionTitleNamingInFlight = new Set<string>();
 const sessionIntentAutoTitles = new Map<string, Set<string>>();
 let sessionTitleNamingEpoch = 0;
@@ -2674,6 +2780,7 @@ async function loadSessionTitleImages(
   }
   return images;
 }
+
 
 function firstUserMessageId(messages: Message[]): string | null {
   return (
@@ -2819,12 +2926,14 @@ function scheduleFirstTurnSessionTitleNaming(args: {
         ? await loadSessionTitleImages(args.userText, args.cwd)
         : [];
 
+
       const title = await generateSessionTitle({
         route,
         userText: args.userText,
         assistantText: args.assistantText,
         userImageCount: args.userImageCount ?? 0,
         ...(userImages.length ? { userImages } : {}),
+
         fallbackTitle: args.fallbackTitle,
         locale: args.locale,
         cwd: args.cwd,
@@ -3104,6 +3213,11 @@ async function createNewChatSession(): Promise<void> {
       nextWorkflow,
       fallbackComposer,
     );
+    saveComposerSoon({
+      composer: composerPatch.composer,
+      composerBySession: composerPatch.composerBySession,
+      workspaceHistory: s.workspaceHistory,
+    });
     const existing = s.sessionTree[workspaceId] ?? s.sessions;
     const sessions = [session, ...existing.filter((it) => it.id !== sessionId)];
     return {
@@ -3506,11 +3620,15 @@ async function activateHistorySession(
   const recordWorkflow = record.workflow
     ? restoreWorkflowRunSnapshot(record.workflow, record.meta)
     : null;
+  const historicalGatewaySelection = historicalGatewaySelectionFromMessages(
+    record.messages,
+  );
   const workflow = liveRun
     ? liveRun.workflow
-    : aiEditSnapshot
-      ? aiEditSnapshot.workflow
-      : recordWorkflow ?? chatWorkflow(record.title, state.locale);
+      : aiEditSnapshot
+        ? aiEditSnapshot.workflow
+      : recordWorkflow ??
+        withoutWorkflowGatewayDefaults(simpleBlueprint(record.title, state.locale));
   const runProgress = liveRun
     ? {
         runState: liveRun.runState,
@@ -3563,6 +3681,7 @@ async function activateHistorySession(
       { workspaceId: targetWorkspaceId, sessionId: session.id },
       workflow,
       fallbackComposer,
+      historicalGatewaySelection,
     );
     if (workspace) {
       saveComposerSoon({
@@ -4168,6 +4287,7 @@ export const useStore = create<StoreState>((set, get) => ({
   aiEditingSessions: [],
   chattingSessions: [],
   queuedChatMessageIds: [],
+  steerableQueuedChatMessageIds: [],
   waitingInputSessions: [],
   blockedSendTip: null,
 
@@ -4723,7 +4843,7 @@ export const useStore = create<StoreState>((set, get) => ({
     return true;
   },
 
-  interjectQueuedChatMessage: (messageId) => interjectRunningChatTurn(messageId),
+  steerQueuedChatMessage: (messageId) => steerQueuedChatTurn(messageId),
 
   branchSessionFromMessage: (messageId) => {
     void branchChatSessionFromMessage(messageId);
@@ -4879,7 +4999,14 @@ export const useStore = create<StoreState>((set, get) => ({
       !!workspaceRootPath &&
       isRemoteWorkspacePath(workspaceRootPath) &&
       remoteProvider.workspaceId === remoteWorkspaceIdFromPath(workspaceRootPath);
-    if (simpleMode && !selectedRemoteWorkspaceConfig && directRoute) {
+    // Intent-phase title naming fires immediately on send. In API mode
+    // (directRoute != null) it uses the direct route; in CLI mode it falls
+    // back to resolveSessionTitleNamingRoute → resolveCliGatewayRoute.
+    if (
+      simpleMode &&
+      !selectedRemoteWorkspaceConfig &&
+      (directRoute || isTauri())
+    ) {
       const userImageCount = sessionTitleImageCount(
         trimmed,
         ch.workspaceRootPath ?? undefined,
@@ -5236,6 +5363,15 @@ ${previousReply.slice(0, 4000)}
       let firstProgressAt: number | undefined;
       const runId = opts.runId ?? makeCliRunId();
       ch.cliRunIds.add(runId);
+      const liveSteerSupported = await aiCliSteerSupported(
+        cli.adapter,
+        opts.cliCommand,
+        opts.permission,
+      ).catch(() => false);
+      if (liveSteerSupported) {
+        ch.liveSteer = { adapter: cli.adapter, runId, accepting: true };
+        syncQueuedChatMessageIds();
+      }
       // Capture the backend's real token usage (claude/codex emit cache hits
       // via the `ai-cli-usage` event). When present we record it as authoritative
       // so the status bar shows the true cache percentage instead of `--`.
@@ -5304,6 +5440,10 @@ ${previousReply.slice(0, 4000)}
         });
         throw err;
       } finally {
+        if (ch.liveSteer?.runId === runId) {
+          ch.liveSteer.accepting = false;
+          syncQueuedChatMessageIds();
+        }
         ch.cliRunIds.delete(runId);
       }
     };
@@ -5770,6 +5910,7 @@ ${previousReply.slice(0, 4000)}
           projectEngineGuidance,
           personalBlock,
           gameExpertBlock,
+          knowledgeBaseMode: state.composer.knowledgeBaseMode,
           aiEditCommitMessages,
           commitAiChannelBlueprint,
           appendStartUserInputs,
@@ -5781,9 +5922,9 @@ ${previousReply.slice(0, 4000)}
         return true;
       }
 
-      // Serialize turns for this chat session so a follow-up sent mid-stream
-      // ("插话") queues behind the in-flight turn and then runs with --resume
-      // (warm context) instead of colliding on the same native --session-id.
+      // Serialize turns for this chat session. Normal follow-ups always remain
+      // in FIFO. The explicit lightning action may steer a queued follow-up
+      // into an active CLI turn when that adapter exposes real steering.
       // Favorite reruns mint a fresh session per turn, so they need no queue.
       const runChatTurn = async () => {
         const turnText =
@@ -5802,11 +5943,13 @@ ${previousReply.slice(0, 4000)}
         const memorySnapshot = memoryConfig.snapshotEnabled
           ? await renderMemorySnapshot(workspaceMemoryId).catch(() => '')
           : '';
-        const knowledgeContext = await renderKnowledgeBaseContextForPrompt({
-          workspaceId: ch.workspaceId,
-          workspacePath: workspaceRootPath,
-          query: turnText,
-        }).catch(() => '');
+        const knowledgeContext = state.composer.knowledgeBaseMode
+          ? await renderKnowledgeBaseContextForPrompt({
+              workspaceId: ch.workspaceId,
+              workspacePath: workspaceRootPath,
+              query: turnText,
+            }).catch(() => '')
+          : '';
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
@@ -5845,13 +5988,10 @@ ${previousReply.slice(0, 4000)}
           selfUserIndex >= 0
             ? liveSessionMessages.slice(0, selfUserIndex)
             : liveSessionMessages;
-        const priorMessages = historyBeforeThisTurn.filter(
-          (m) =>
-            m.role !== 'system' &&
-            !m.localOnly &&
-            m.text.trim() &&
-            !(m.role === 'assistant' && m.text.trimStart().startsWith('⟳')),
+        const interruptedContinuation = isInterruptedChatContinuation(
+          historyBeforeThisTurn,
         );
+        const priorMessages = chatPromptHistoryMessages(historyBeforeThisTurn);
         const chatTranscript = (messages: Message[]): string =>
           messages
             .slice(-SIMPLE_CHAT_HISTORY_TURNS)
@@ -5862,9 +6002,16 @@ ${previousReply.slice(0, 4000)}
             .filter(Boolean)
             .join('\n\n');
         const prior = chatTranscript(priorMessages);
+        const interruptedContinuationDirective = interruptedContinuation
+          ? '上一轮任务被用户中断且尚未完成。请保留此前对话中的原始目标、已完成工作和工具结果，把当前用户消息视为对原任务的新约束或补充；除非用户明确取消原任务，否则在新约束下继续完成原任务。不要把当前消息当成孤立的新任务。'
+          : '';
         const chatPrompt = prior.length
-          ? `以下是之前的对话，请结合上下文继续回答最后一个「用户」消息：\n\n${prior}\n\n用户：${turnText}`
-          : turnText;
+          ? interruptedContinuation
+            ? `${interruptedContinuationDirective}\n\n以下是中断前的对话：\n\n${prior}\n\n用户补充：${turnText}`
+            : `以下是之前的对话，请结合上下文继续回答最后一个「用户」消息：\n\n${prior}\n\n用户：${turnText}`
+          : interruptedContinuation
+            ? `${interruptedContinuationDirective}\n\n用户补充：${turnText}`
+            : turnText;
         // Respect the permission the user picked in the composer (read-only /
         // ask-each-time / full), matching the other run paths instead of
         // hard-coding 'full'.
@@ -5912,8 +6059,12 @@ ${previousReply.slice(0, 4000)}
               const basePromptBody =
                 nativeSession && nativeResume
                   ? unseenTranscript
-                    ? `以下是你这个模型会话尚未看到的中间对话，请先吸收上下文，再回答最后一个「用户」消息：\n\n${unseenTranscript}\n\n用户：${turnText}`
-                    : turnText
+                    ? interruptedContinuation
+                      ? `${interruptedContinuationDirective}\n\n以下是你这个模型会话尚未看到的中间对话：\n\n${unseenTranscript}\n\n用户补充：${turnText}`
+                      : `以下是你这个模型会话尚未看到的中间对话，请先吸收上下文，再回答最后一个「用户」消息：\n\n${unseenTranscript}\n\n用户：${turnText}`
+                    : interruptedContinuation
+                      ? `${interruptedContinuationDirective}\n\n用户补充：${turnText}`
+                      : turnText
                   : chatPrompt;
               // On a continuation round the native session already carries the
               // prior context, so send only the user's answer; otherwise send
@@ -6202,31 +6353,37 @@ ${previousReply.slice(0, 4000)}
           // succeeded. claude already registered the `--session-id` on disk, so
           // drop the unstarted native session to free the id — otherwise the
           // next retry reuses it and dies with "Session ID … is already in use".
-          if (nativeSession && !nativeSession.started) {
+          const interrupted = ch.abortController.signal.aborted;
+          if (nativeSession && interrupted) {
+            // Claude registers its native session before the cancelled process
+            // exits. Preserve it for `--resume`; if registration did not finish,
+            // the existing missing-session fallback will replay cold context.
+            nativeSession.started = true;
+            nativeSession.coveredMessageCount = chatPromptHistoryMessages(
+              ch.messages,
+            ).length;
+          } else if (nativeSession && !nativeSession.started) {
             forgetChatNativeSession(nativeSession);
           }
-          if (activeId) setActive(withAiTiming(`✗ 调用失败: ${msg}`), true);
-          else pushAssistant(withAiTiming(`✗ 调用失败: ${msg}`));
-          persistAiMessages();
-          if (aiEditActive(ch)) {
-            syncAndPersistSessionRunStatus(
-              { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-              'error',
-            );
+          if (!interrupted) {
+            if (activeId) setActive(withAiTiming(`✗ 调用失败: ${msg}`), true);
+            else pushAssistant(withAiTiming(`✗ 调用失败: ${msg}`));
+            persistAiMessages();
+            if (aiEditActive(ch)) {
+              syncAndPersistSessionRunStatus(
+                { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
+                'error',
+              );
+            }
           }
         } finally {
           removeAiEditChannel(ch);
         }
       };
-      // Interjection ("插话") is the default for every simple-chat turn: a
-      // follow-up sent while a turn is still streaming queues behind the in-flight
-      // turn and then runs once it finishes — so it always continues the SAME
-      // conversation with the prior answer folded into context (and, for CLI,
-      // --resume onto the warm native session instead of colliding on the shared
-      // --session-id). This applies to BOTH CLI and direct-API turns; serializing
-      // the API path too is what makes an interjection merge into the running
-      // chat rather than racing it as a parallel turn. Favorite reruns mint a
-      // fresh session per turn, so they never queue.
+      // Every simple-chat turn enters the per-session FIFO. Normal sends stay
+      // queued until the in-flight turn ends; only the explicit lightning
+      // action may consume one through Codex App Server `turn/steer`.
+      // Favorite reruns mint a fresh session per turn, so they never queue.
       if (!replayFavoriteSimpleChat) {
         void enqueueChatTurn(chSessionKey, ch, runChatTurn);
       } else {
@@ -6697,14 +6854,43 @@ function formatRunWorkspaceSuffix(config: RunConfig): string {
 
 const chatNativeSessions = new Map<string, ChatNativeSession>();
 
+const CHAT_INTERRUPTED_NOTICE = '⏹ 会话已中断';
+
+function isChatInterruptedNotice(message: Message): boolean {
+  const text = message.text.trimStart();
+  return (
+    message.role === 'assistant' &&
+    (text.startsWith(CHAT_INTERRUPTED_NOTICE) ||
+      text.startsWith('⚡ 已插话打断当前回复'))
+  );
+}
+
+function isInterruptedChatContinuation(messages: Message[]): boolean {
+  const lastMeaningful = [...messages]
+    .reverse()
+    .find((message) => message.role !== 'system' && message.text.trim());
+  return !!lastMeaningful && isChatInterruptedNotice(lastMeaningful);
+}
+
+function chatPromptHistoryMessages(messages: Message[]): Message[] {
+  return messages.filter(
+    (message) =>
+      message.role !== 'system' &&
+      !message.localOnly &&
+      !isChatInterruptedNotice(message) &&
+      message.text.trim() &&
+      !(
+        message.role === 'assistant' &&
+        message.text.trimStart().startsWith('⟳')
+      ),
+  );
+}
+
 /**
- * Per-session serialization for simple-chat turns. A follow-up message can be
- * sent while a turn is still streaming ("插话"): it is accepted immediately and
- * shown in the transcript, then runs right after the in-flight turn finishes so
- * it can `--resume` the warm native session instead of colliding with the live
- * process on the same `--session-id` (which claude rejects with "Session ID …
- * is already in use"). Turns for the same chat session run strictly in order;
- * a failed turn does not block the queued ones.
+ * Per-session serialization for simple-chat turns. A normal follow-up is
+ * accepted, shown immediately, then runs after the in-flight turn. The explicit
+ * lightning action may steer it into an active Codex App Server turn. This also
+ * avoids colliding with Claude's live native `--session-id`.
  */
 const chatTurnQueues = new Map<string, Promise<void>>();
 
@@ -6714,6 +6900,7 @@ interface ChatTurnQueueEntry {
   channel: AiEditChannel;
   started: boolean;
   cancelled: boolean;
+  steering: boolean;
 }
 
 const chatTurnQueueEntries = new Map<string, ChatTurnQueueEntry>();
@@ -6724,8 +6911,38 @@ function queuedChatMessageIds(): string[] {
     .map((entry) => entry.messageId);
 }
 
+function runningSteerEntryForQueued(
+  entry: ChatTurnQueueEntry,
+): ChatTurnQueueEntry | null {
+  return (
+    [...chatTurnQueueEntries.values()].find(
+      (candidate) =>
+        candidate.sessionKey === entry.sessionKey &&
+        candidate.started &&
+        !candidate.cancelled &&
+        candidate.channel.liveSteer !== undefined &&
+        candidate.channel.liveSteer.accepting,
+    ) ?? null
+  );
+}
+
+function steerableQueuedChatMessageIds(): string[] {
+  return [...chatTurnQueueEntries.values()]
+    .filter(
+      (entry) =>
+        !entry.started &&
+        !entry.cancelled &&
+        !entry.steering &&
+        runningSteerEntryForQueued(entry) !== null,
+    )
+    .map((entry) => entry.messageId);
+}
+
 function syncQueuedChatMessageIds(): void {
-  useStore.setState({ queuedChatMessageIds: queuedChatMessageIds() });
+  useStore.setState({
+    queuedChatMessageIds: queuedChatMessageIds(),
+    steerableQueuedChatMessageIds: steerableQueuedChatMessageIds(),
+  });
 }
 
 function queuedChatTurnEntryForMessage(
@@ -6747,6 +6964,58 @@ function persistQueuedChatConversation(ch: AiEditChannel): void {
   scheduleAiEditPersist(ch, patch, 0);
 }
 
+async function trySteerQueuedCliTurn(entry: ChatTurnQueueEntry): Promise<boolean> {
+  if (entry.steering) return false;
+  const running = runningSteerEntryForQueued(entry);
+  if (!running?.channel.liveSteer) return false;
+  const text = entry.channel.messages
+    .find((message) => message.id === entry.messageId)
+    ?.text.trim();
+  if (!text) return false;
+
+  entry.steering = true;
+  syncQueuedChatMessageIds();
+  try {
+    const steered = await steerAiCli(running.channel.liveSteer.runId, text);
+    if (!steered || entry.cancelled) return false;
+    entry.cancelled = true;
+    chatTurnQueueEntries.delete(entry.channel.key);
+    syncQueuedChatMessageIds();
+
+    const userMessage = entry.channel.messages.find(
+      (message) => message.id === entry.messageId,
+    );
+    if (userMessage) {
+      running.channel.ownedMessageIds?.add(userMessage.id);
+      running.channel.messages = mergeMessagesById(
+        running.channel.messages,
+        [userMessage],
+      );
+      running.channel.workflow = simpleWorkflowFromMessages(
+        running.channel.workflow,
+        running.channel.messages,
+      );
+      // Keep the active assistant bubble streaming. The user message was
+      // already appended to durable history by sendPrompt; persisting this
+      // channel here would stamp the still-running assistant as completed.
+      aiEditCommitMessages(running.channel, false);
+      entry.channel.messages = running.channel.messages;
+      entry.channel.workflow = running.channel.workflow;
+    }
+    removeAiEditChannel(entry.channel);
+    return true;
+  } catch {
+    // Version skew or a temporarily non-steerable CLI turn: leave the
+    // message in FIFO so it runs normally after the active turn completes.
+    return false;
+  } finally {
+    if (!entry.cancelled) {
+      entry.steering = false;
+      syncQueuedChatMessageIds();
+    }
+  }
+}
+
 function enqueueChatTurn(
   sessionKey: string,
   ch: AiEditChannel,
@@ -6764,6 +7033,7 @@ function enqueueChatTurn(
     channel: ch,
     started: false,
     cancelled: false,
+    steering: false,
   };
   chatTurnQueueEntries.set(ch.key, entry);
   syncQueuedChatMessageIds();
@@ -6788,14 +7058,13 @@ function enqueueChatTurn(
   return next;
 }
 
-function clearChatTurnQueue(sessionKey: string): void {
+function clearPendingChatTurns(sessionKey: string): void {
   for (const [key, entry] of chatTurnQueueEntries) {
     if (entry.sessionKey !== sessionKey || entry.started) continue;
     entry.cancelled = true;
     chatTurnQueueEntries.delete(key);
   }
   syncQueuedChatMessageIds();
-  chatTurnQueues.delete(sessionKey);
 }
 
 /**
@@ -7024,16 +7293,32 @@ function stopActiveChat(): void {
   const stoppedAt = Date.now();
   for (const ch of channels) {
     ch.abortController.abort();
-    clearChatTurnQueue(ch.sessionKey);
+    // Drop pending follow-ups, but keep the running promise as queue tail. A
+    // continuation sent immediately after Stop must wait for the cancelled CLI
+    // process to release its native session lock before `--resume` starts.
+    clearPendingChatTurns(ch.sessionKey);
     resolvePendingAiEditInteractions(ch);
     void cancelActiveAiEditRuns(ch);
+    // Finalize incomplete tool sentinels in uncompleted assistant messages so
+    // that file modifications remain visible in the session-files list after
+    // reload. Without this, an unclosed <<UGS_TOOL>> sentinel (streaming was
+    // interrupted mid-tool-call) is silently skipped by extractSessionFiles.
+    ch.messages = ch.messages.map((m) => {
+      if (m.role !== 'assistant') return m;
+      if (ch.ownedMessageIds && !ch.ownedMessageIds.has(m.id)) return m;
+      if (typeof m.completedAt === 'number' && Number.isFinite(m.completedAt)) return m;
+      return { ...m, text: finalizeToolSentinelsForPersistence(m.text) };
+    });
   }
   const ch = channels[0];
   const stoppedMsg: Message = {
     id: shortId('m'),
     role: 'assistant',
-    text: `⏹ 会话已中断 · ${formatClock(stoppedAt)}。`,
+    text: `${CHAT_INTERRUPTED_NOTICE} · ${formatClock(stoppedAt)}。`,
     createdAt: stoppedAt,
+    // UI audit marker only. Never replay it as assistant dialogue: doing so
+    // narrows the next model call to the correction and makes it drop the goal.
+    localOnly: true,
   };
   ch.ownedMessageIds?.add(stoppedMsg.id);
   ch.messages = [
@@ -7051,47 +7336,16 @@ function stopActiveChat(): void {
 }
 
 /**
- * Real interjection for a queued simple-chat message: unlike `stopActiveChat`
- * (which kills every channel AND wipes the whole queue), this aborts only the
- * turn(s) currently in flight for the SAME session and leaves the queue intact
- * — so the targeted queued message, next in the session's FIFO chain
- * (`chatTurnQueues` in enqueueChatTurn), starts the moment the aborted turn's
- * promise settles instead of waiting for it to finish naturally. There is no
- * live stdin channel into a running native CLI process to push new text into
- * an answer mid-generation (see lib.rs: prompt is written once, stdin is then
- * closed) — this is a "stop-and-run-next-now" interjection, not a token-level
- * splice into the still-generating answer.
+ * Explicit lightning action for a queued simple-chat message. Supported CLI
+ * turns receive it through their native steer channel; rejection or unsupported
+ * adapters leave the message in FIFO. This action never aborts the active turn.
  */
-function interjectRunningChatTurn(messageId: string): boolean {
+function steerQueuedChatTurn(messageId: string): boolean {
   const entry = queuedChatTurnEntryForMessage(messageId);
-  if (!entry) return false;
-  const runningEntries = [...chatTurnQueueEntries.values()].filter(
-    (candidate) =>
-      candidate.sessionKey === entry.sessionKey &&
-      candidate.started &&
-      !candidate.cancelled,
-  );
-  if (runningEntries.length === 0) return true;
-  const interjectedAt = Date.now();
-  for (const running of runningEntries) {
-    const ch = running.channel;
-    ch.abortController.abort();
-    resolvePendingAiEditInteractions(ch);
-    void cancelActiveAiEditRuns(ch);
-    const interjectedMsg: Message = {
-      id: shortId('m'),
-      role: 'assistant',
-      text: `⚡ 已插话打断当前回复 · ${formatClock(interjectedAt)}，正在续接下一条消息…`,
-      createdAt: interjectedAt,
-    };
-    ch.ownedMessageIds?.add(interjectedMsg.id);
-    ch.messages = [...ch.messages, interjectedMsg];
-    aiEditCommitMessages(ch, true);
-    syncAndPersistSessionRunStatus(
-      { workspaceId: ch.workspaceId, sessionId: ch.sessionId },
-      'interrupted',
-    );
-  }
+  if (!entry || entry.steering) return false;
+  const running = runningSteerEntryForQueued(entry);
+  if (!running) return false;
+  void trySteerQueuedCliTurn(entry);
   return true;
 }
 
@@ -7582,6 +7836,12 @@ function abortAllActiveRuns(reason: string): void {
       : null;
     resolvePendingInteractions(ch);
     void cancelActiveCliRuns(ch);
+    // Finalize incomplete tool sentinels so file modifications survive reload.
+    ch.messages = ch.messages.map((m) =>
+      m.role === 'assistant' && !m.completedAt
+        ? { ...m, text: finalizeToolSentinelsForPersistence(m.text) }
+        : m,
+    );
     pushRunLog(
       ch,
       `⏹ 运行已中止（${reason}）· ${formatClock(stoppedAt)}`,
@@ -8258,6 +8518,13 @@ function stopWorkflowRun(): void {
 
   resolvePendingInteractions(ch);
   void cancelActiveCliRuns(ch);
+  // Finalize incomplete tool sentinels in assistant messages so file
+  // modifications remain visible in the session-files list after reload.
+  ch.messages = ch.messages.map((m) =>
+    m.role === 'assistant' && !m.completedAt
+      ? { ...m, text: finalizeToolSentinelsForPersistence(m.text) }
+      : m,
+  );
   pushRunLog(
     ch,
     interruptedNodeId

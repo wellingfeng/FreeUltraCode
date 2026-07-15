@@ -62,6 +62,7 @@ export interface StartRemoteChatTurnOptions {
   projectEngineGuidance: string;
   personalBlock: string;
   gameExpertBlock: string;
+  knowledgeBaseMode: boolean;
   aiEditCommitMessages: (ch: AiEditChannel | null, persist: boolean) => void;
   commitAiChannelBlueprint: (ch: AiEditChannel, ir: IRGraph) => boolean;
   appendStartUserInputs: (ir: IRGraph, inputs: string[]) => IRGraph;
@@ -559,10 +560,12 @@ async function buildRemotePrompt(options: StartRemoteChatTurnOptions): Promise<s
     speech: preferredReadySpeechProviderId() != null,
     sprite: preferredReadySpriteProviderId() != null,
   });
-  const knowledgeContext = await renderKnowledgeBaseContextForPrompt({
-    workspacePath: options.workspacePath,
-    query: options.prompt,
-  }).catch(() => '');
+  const knowledgeContext = options.knowledgeBaseMode
+    ? await renderKnowledgeBaseContextForPrompt({
+        workspacePath: options.workspacePath,
+        query: options.prompt,
+      }).catch(() => '')
+    : '';
   const system = [
     SIMPLE_CHAT_SYSTEM,
     languageAdaptationPrompt(isLocale(options.locale) ? options.locale : 'zh-CN'),

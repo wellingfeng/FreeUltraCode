@@ -4,6 +4,7 @@ import {
   extractToolSentinels,
   mergeToolPatches,
   hasToolSentinel,
+  finalizeToolSentinelsForPersistence,
 } from './toolEvent';
 import { segmentMessage } from './segmenter';
 import { normalizeMath } from './normalizeMath';
@@ -153,6 +154,44 @@ describe('toolEvent sentinel codec', () => {
       { id: 'a', status: 'done' },
     ]);
     expect(merged.map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  it('finalizeToolSentinelsForPersistence closes an unclosed trailing sentinel', () => {
+    // Simulates a cancelled stream: the sentinel opened but <<UGS_TOOL_END>>
+    // never arrived. Without finalization, extractSessionFiles skips it and
+    // the file vanishes from the session-files list after reload.
+    const partial =
+      'Some prose.\n<<UGS_TOOL>>{"id":"t1","name":"Edit","subject":"foo.ts","status":"running","args":{"file_path":"foo.ts","new_string":"partial';
+    const finalized = finalizeToolSentinelsForPersistence(partial);
+    // The finalized text should have extractable patches.
+    const { patches } = extractToolSentinels(finalized);
+    expect(patches.length).toBeGreaterThan(0);
+    expect(patches[0]).toMatchObject({ name: 'Edit', subject: 'foo.ts' });
+  });
+
+  it('finalizeToolSentinelsForPersistence is a no-op for complete sentinels', () => {
+    const complete =
+      'prose' +
+      encodeToolPatch({ id: 'a', name: 'Read', status: 'done', subject: 'bar.ts' }) +
+      'tail';
+    const finalized = finalizeToolSentinelsForPersistence(complete);
+    const { patches } = extractToolSentinels(finalized);
+    expect(patches).toEqual([{ id: 'a', name: 'Read', status: 'done', subject: 'bar.ts' }]);
+  });
+
+  it('finalizeToolSentinelsForPersistence closes dangling running patches', () => {
+    // A complete but still-running sentinel should get a terminal error closer.
+    const running = encodeToolPatch({ id: 'r1', name: 'Bash', status: 'running' });
+    const finalized = finalizeToolSentinelsForPersistence(`prose${running}`);
+    const { patches } = extractToolSentinels(finalized);
+    const merged = mergeToolPatches(patches);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].status).toBe('error');
+  });
+
+  it('finalizeToolSentinelsForPersistence handles text without sentinels', () => {
+    const text = 'just plain prose';
+    expect(finalizeToolSentinelsForPersistence(text)).toBe(text);
   });
 });
 

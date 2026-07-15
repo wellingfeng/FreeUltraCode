@@ -227,6 +227,10 @@ export interface ComposerSettings {
   /** AI 改图时为每个节点自动选模型的策略 */
   modelStrategy: ModelStrategy;
   /**
+   * 项目知识库检索开关。true 时简单聊天会从当前项目知识库检索相关片段并注入 prompt。
+   */
+  knowledgeBaseMode: boolean;
+  /**
    * 粘性 GDD 草稿模式。true 时裸文本走“反复修改 GDD/资产清单/实现计划”
    * 流程；由 /gdd-mode-start 开启、/gdd-mode-end 冻结并退出。
    */

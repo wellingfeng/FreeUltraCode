@@ -38,6 +38,8 @@ import {
 import { highlightCode } from './lib/highlight';
 import Markdown from './Markdown';
 import DocumentPreview from './DocumentPreview';
+import CopyButton from './CopyButton';
+import { directImagePreviewSource } from './lib/imagePreview';
 
 type PreviewState =
   | { status: 'idle' }
@@ -459,6 +461,7 @@ export default function FilePreviewDrawer({
     edge: 'left',
   });
   const open = Boolean(refData || customContent);
+  const directImageSource = directImagePreviewSource(refData);
 
   useEffect(() => {
     if (embedded) return;
@@ -490,7 +493,7 @@ export default function FilePreviewDrawer({
   }, [embedded, isExpanded]);
 
   useEffect(() => {
-    if (!refData || customContent) {
+    if (!refData || customContent || directImageSource) {
       setState({ status: 'idle' });
       setIsExpanded(false);
       return;
@@ -508,10 +511,10 @@ export default function FilePreviewDrawer({
     return () => {
       disposed = true;
     };
-  }, [customContent, cwd, previewFile, refData]);
+  }, [customContent, cwd, directImageSource, previewFile, refData]);
 
   useEffect(() => {
-    if (!refData || !cwd || customContent || !diffEnabled) {
+    if (!refData || !cwd || customContent || directImageSource || !diffEnabled) {
       setDiffState({ status: 'idle' });
       return;
     }
@@ -528,7 +531,7 @@ export default function FilePreviewDrawer({
     return () => {
       disposed = true;
     };
-  }, [customContent, cwd, diffEnabled, refData]);
+  }, [customContent, cwd, diffEnabled, directImageSource, refData]);
 
   useEffect(() => {
     if (!open) return;
@@ -571,7 +574,10 @@ export default function FilePreviewDrawer({
   );
   const label = customContent?.label ?? file?.fileName ?? refData?.basename ?? '文件预览';
   const path =
-    customContent?.path ?? file?.path ?? (refData ? displayFileRefPath(refData, cwd) : '');
+    customContent?.path ??
+    file?.path ??
+    directImageSource ??
+    (refData ? displayFileRefPath(refData, cwd) : '');
   const lineSuffix = refData?.startLine
     ? `:${refData.startLine}${refData.endLine ? `-${refData.endLine}` : ''}`
     : '';
@@ -671,6 +677,22 @@ export default function FilePreviewDrawer({
           </div>
         )}
 
+        {!customContent && directImageSource && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-center gap-2 border-b border-border-soft px-3 py-1.5 font-mono text-[10px] text-fg-faint">
+              <ImageIcon size={12} />
+              {directImageSource.startsWith('data:') ? '嵌入图片' : '远程图片'}
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto bg-bg p-4">
+              <img
+                src={directImageSource}
+                alt={refData?.basename ?? '图片预览'}
+                className="ai-file-preview-image mx-auto max-h-full max-w-full object-contain"
+              />
+            </div>
+          </div>
+        )}
+
         {!customContent && state.status === 'error' && (
           <div className="flex min-h-0 flex-1 items-center justify-center p-6">
             <div className="max-w-md rounded-md border border-status-error/40 bg-status-error/10 p-4 text-sm leading-relaxed text-fg-dim">
@@ -678,7 +700,15 @@ export default function FilePreviewDrawer({
                 <FileWarning size={16} />
                 无法预览
               </div>
-              {state.message}
+              <div className="mb-3">{state.message}</div>
+              {refData && (
+                <CopyButton
+                  value={displayFileRefPath(refData, cwd)}
+                  title="复制路径"
+                  label="复制路径"
+                  className="text-xs"
+                />
+              )}
             </div>
           </div>
         )}
@@ -700,7 +730,7 @@ export default function FilePreviewDrawer({
                 <img
                   src={imageUrl}
                   alt={file.fileName}
-                  className="mx-auto max-h-full max-w-full object-contain"
+                  className="ai-file-preview-image mx-auto max-h-full max-w-full object-contain"
                 />
               ) : (
                 <div className="flex h-full items-center justify-center gap-2 text-sm text-fg-dim">

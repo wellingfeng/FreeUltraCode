@@ -38,6 +38,7 @@ import {
 } from './FileChip';
 import { claimFileChipSlot, useFileChipBudget } from './lib/fileChipBudget';
 import { isModelUrl } from './lib/modelLink';
+import { createImagePreviewRef } from './lib/imagePreview';
 import {
   highlightSearchMarks,
   type SearchHighlightState,
@@ -364,14 +365,30 @@ function MarkdownImpl({
       }
       return <blockquote>{children}</blockquote>;
     },
-    img: ({ src, alt }) => (
-      <img
-        src={src}
-        alt={alt ?? ''}
-        loading="lazy"
-        className="ai-generated-image"
-      />
-    ),
+    img: ({ src, alt }) => {
+      const image = (
+        <img
+          src={src}
+          alt={alt ?? ''}
+          loading="lazy"
+          className="ai-generated-image"
+        />
+      );
+      const source = typeof src === 'string' ? src : '';
+      const openImage = ctxRef.current.onOpenFile;
+      if (!source || !openImage) return image;
+
+      return (
+        <button
+          type="button"
+          className="ai-generated-image-trigger"
+          title="在右侧预览"
+          onClick={() => void openImage(createImagePreviewRef(source, alt ?? undefined))}
+        >
+          {image}
+        </button>
+      );
+    },
   };
   // Empty deps: the map reads all mutable inputs via ctxRef, so it stays a
   // stable identity across streamed tokens and never remounts subtrees.

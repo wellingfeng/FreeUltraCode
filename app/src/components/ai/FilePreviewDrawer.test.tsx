@@ -298,6 +298,25 @@ describe('FilePreviewDrawer', () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:preview-image');
   });
 
+  it('renders HTTP images directly without sending the URL to the local file backend', async () => {
+    const url = 'https://cdn.example.com/previews/shot.png?token=1';
+
+    await act(async () => {
+      root.render(
+        createElement(FilePreviewDrawer, {
+          refData: { path: url, basename: '远程图片', previewKind: 'image' },
+          onClose: vi.fn(),
+        }),
+      );
+    });
+
+    const image = container.querySelector<HTMLImageElement>('.ai-file-preview-image');
+    expect(image?.getAttribute('src')).toBe(url);
+    expect(container.textContent).toContain(url);
+    expect(container.textContent).not.toContain('UltraGameStudio\\https');
+    expect(previewLocalFile).not.toHaveBeenCalled();
+  });
+
   it('renders VCS diff marks for text previews', async () => {
     vi.mocked(previewLocalFile).mockResolvedValue({
       path: 'E:\\UltraGameStudio\\src\\main.ts',

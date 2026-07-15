@@ -76,7 +76,7 @@ function MessageContentImpl({
 
   return (
     <FileChipBudgetProvider>
-      <div className="ai-message group/msg relative flex flex-col">
+      <div className="ai-message group/msg relative flex flex-col gap-2">
         {showActions && copyText && (
           <div className="absolute -top-1 right-0 z-10 opacity-0 transition-opacity group-hover/msg:opacity-100">
             <CopyButton
@@ -114,7 +114,7 @@ function MessageContentImpl({
             );
           }
           return (
-            <div key={`a${i}`} className="relative">
+            <div key={`a${i}`} className="ai-answer-sep relative">
               <Markdown
                 text={seg.text}
                 streaming={streaming && i === lastAnswerIdx}

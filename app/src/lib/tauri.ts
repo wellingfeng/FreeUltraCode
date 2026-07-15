@@ -1799,6 +1799,29 @@ export async function cancelAiCli(runId: string): Promise<void> {
   await invoke('cancel_ai_cli', { runId });
 }
 
+/** Whether this installed CLI and permission mode expose native steering. */
+export async function aiCliSteerSupported(
+  adapter: string,
+  cliCommand: string | undefined,
+  permission: string,
+): Promise<boolean> {
+  if (!tauriAvailable()) return false;
+  const invoke = await getInvoke();
+  return invoke<boolean>('ai_cli_steer_supported', {
+    adapter,
+    cliCommand: cliCommand ?? null,
+    permission,
+    shell: runShellPayload(),
+  });
+}
+
+/** Append text to an in-flight CLI turn when its adapter exposes native steering. */
+export async function steerAiCli(runId: string, text: string): Promise<boolean> {
+  if (!tauriAvailable() || !text.trim()) return false;
+  const invoke = await getInvoke();
+  return invoke<boolean>('steer_ai_cli', { runId, text });
+}
+
 /**
  * Run an emitted script through the given CLI adapter (claude-code/codex/
  * gemini). Returns a combined stdout/stderr summary string. Throws

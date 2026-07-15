@@ -5,10 +5,8 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
-import { FileCode, FolderOpen, ImageOff, Loader2 } from 'lucide-react';
+import { FileCode, FolderOpen, ImageOff, Loader2, Copy, Check, AlertTriangle } from 'lucide-react';
 import {
-  displayFileRefLabel,
-  displayFileRefChipPath,
   displayFileRefPath,
   fileRefLineSuffix,
   isImageFileRef,
@@ -128,6 +126,67 @@ type ThumbState =
   | { status: 'error' };
 
 /**
+ * Lightweight existence check via the Tauri fs plugin.  Returns 'checking'
+ * initially, then 'exists' or 'missing'.  Skipped for remote workspaces and
+ * non-desktop contexts.
+ */
+function useFileExists(path: string | null, cwd: string | undefined): 'checking' | 'exists' | 'missing' {
+  const [state, setState] = useState<'checking' | 'exists' | 'missing'>('checking');
+
+  useEffect(() => {
+    if (!path || path.startsWith('remote://') || cwd?.startsWith('remote://')) {
+      setState('exists'); // can't check — assume OK so chip stays interactive
+      return;
+    }
+
+    let disposed = false;
+    setState('checking');
+
+    void (async () => {
+      try {
+        const { exists } = await import('@tauri-apps/plugin-fs');
+        const { join } = await import('@tauri-apps/api/path');
+        let resolved = path;
+        const isAbsolute = /^(?:[A-Za-z]:[/\\]|[/\\]|\\\\|~[/\\]|\$\w+[/\\])/.test(path);
+        if (!isAbsolute && cwd) {
+          resolved = await join(cwd, path);
+        }
+        const ok = await exists(resolved);
+        if (!disposed) setState(ok ? 'exists' : 'missing');
+      } catch {
+        if (!disposed) setState('exists'); // optimistic fallback
+      }
+    })();
+
+    return () => { disposed = true; };
+  }, [path, cwd]);
+
+  return state;
+}
+
+function useCopyToClipboard(): [boolean, (value: string) => void] {
+  const [copied, setCopied] = useState(false);
+  const copy = async (value: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        try { ta.select(); document.execCommand('copy'); }
+        finally { if (ta.parentNode) ta.parentNode.removeChild(ta); }
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch { /* clipboard unavailable */ }
+  };
+  return [copied, copy];
+}
+
+/**
  * Lazily load a small in-memory preview of an image file reference so the chip
  * can show its thumbnail. Reuses the same `preview_local_file` backend command
  * the right-side drawer relies on, and revokes the object URL on cleanup.
@@ -217,12 +276,16 @@ export function VisibleFileChip({
   const [menu, setMenu] = useState<ContextMenuPosition | null>(null);
   const locale = useStore((s) => s.locale);
   const lineSuffix = fileRefLineSuffix(refData);
-  const displayPath = displayFileRefPath(refData, cwd);
-  const chipPath = displayFileRefChipPath(refData, cwd);
-  const label = displayFileRefLabel(refData, cwd);
+  // Show the original path from AI output, not the cwd-concatenated one.
+  const originalPath = refData.path;
+  // Resolved path is still used for existence check, tooltip, and copy.
+  const resolvedPath = displayFileRefPath(refData, cwd);
   const interactive = typeof onOpenFile === 'function';
   const isImage = isImageFileRef(refData);
-  const thumb = useImageThumbnail(isImage ? displayPath : null, cwd);
+  const thumb = useImageThumbnail(isImage ? resolvedPath : null, cwd);
+  const existsState = useFileExists(interactive ? resolvedPath : null, cwd);
+  const [copied, copyToClipboard] = useCopyToClipboard();
+  const fileMissing = existsState === 'missing';
 
   useEffect(() => {
     if (!menu) return;
@@ -244,12 +307,28 @@ export function VisibleFileChip({
 
   const openFile = () => {
     setMenu(null);
+    if (fileMissing) return; // Don't attempt to open a non-existent file.
+    // Keep left-click type-aware inside the app. FilePreviewDrawer renders
+    // images as images, source/text files as text, and unsupported binaries
+    // without delegating the primary click to Windows.
+    if (interactive) void onOpenFile(refData);
+  };
+
+  const previewInApp = () => {
+    setMenu(null);
     if (interactive) void onOpenFile(refData);
   };
 
   const revealFile = () => {
     setMenu(null);
     if (interactive) void onOpenFile(refData, { reveal: true });
+  };
+
+  const copyPath = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void copyToClipboard(resolvedPath);
+    setMenu(null);
   };
 
   const openContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -274,6 +353,24 @@ export function VisibleFileChip({
       <button
         type="button"
         role="menuitem"
+        onClick={copyPath}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
+      >
+        {copied ? <Check size={13} className="shrink-0 text-accent-2" /> : <Copy size={13} className="shrink-0 text-fg-faint" />}
+        <span className="truncate">{copied ? t(locale, 'chat.copied') : t(locale, 'chat.copyPath')}</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={previewInApp}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
+      >
+        <FileCode size={13} className="shrink-0 text-fg-faint" />
+        <span className="truncate">{t(locale, 'chat.previewInApp')}</span>
+      </button>
+      <button
+        type="button"
+        role="menuitem"
         onClick={revealFile}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-border-soft"
       >
@@ -292,17 +389,18 @@ export function VisibleFileChip({
       <span className="relative inline-flex max-w-full align-top">
         <button
           type="button"
-          disabled={!interactive}
-          onClick={interactive ? openFile : undefined}
+          disabled={!interactive || fileMissing}
+          onClick={interactive && !fileMissing ? openFile : undefined}
           onContextMenu={openContextMenu}
           title={
             interactive
-              ? `${label}\n${t(locale, 'chat.revealHint')}`
-              : label
+              ? `${resolvedPath}\n${t(locale, 'chat.revealHint')}`
+              : resolvedPath
           }
           className={
             'ai-file-chip-thumb group relative inline-flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-panel-2 align-top ' +
-            (interactive ? 'cursor-pointer hover:border-accent' : 'cursor-default')
+            (interactive && !fileMissing ? 'cursor-pointer hover:border-accent' : 'cursor-default') +
+            (fileMissing ? ' border-status-error/50' : '')
           }
         >
           {thumb.status === 'ready' ? (
@@ -321,32 +419,39 @@ export function VisibleFileChip({
     );
   }
 
+  const chipTitle = fileMissing
+    ? `${t(locale, 'chat.fileNotFound')}: ${resolvedPath}\n${t(locale, 'chat.fileNotFoundHint')}`
+    : interactive
+      ? `${resolvedPath}\n${t(locale, 'chat.revealHint')}`
+      : resolvedPath;
+
   return (
     <span className="relative inline-flex max-w-full align-baseline">
       <button
         type="button"
-        disabled={!interactive}
-        onClick={interactive ? openFile : undefined}
+        disabled={!interactive || fileMissing}
+        onClick={interactive && !fileMissing ? openFile : undefined}
         onContextMenu={openContextMenu}
-        title={
-          interactive
-            ? `${label}\n${t(locale, 'chat.revealHint')}`
-            : label
-        }
+        title={chipTitle}
         className={
-          'ai-file-chip inline-flex max-w-full items-center gap-1 rounded border border-transparent bg-transparent px-0.5 py-px align-baseline font-mono text-[12px] leading-snug ' +
-          (interactive
+          'ai-file-chip inline-flex max-w-full items-center gap-1 rounded border bg-transparent px-0.5 py-px align-baseline font-mono text-[12px] leading-snug ' +
+          (fileMissing
+            ? 'border-status-error/30 text-status-error'
+            : 'border-transparent ') +
+          (interactive && !fileMissing
             ? 'ai-file-chip--interactive cursor-pointer'
             : 'cursor-default text-fg-dim')
         }
       >
-        {isImage ? (
+        {fileMissing ? (
+          <AlertTriangle size={11} className="shrink-0 opacity-70" />
+        ) : isImage ? (
           <ImageOff size={11} className="shrink-0 opacity-70" />
         ) : (
           <FileCode size={11} className="shrink-0 opacity-70" />
         )}
         <span className="ai-file-chip__label min-w-0 whitespace-normal break-all text-left">
-          {chipPath}
+          {originalPath}
           {lineSuffix && (
             <span className={interactive ? 'opacity-75' : 'text-fg-faint'}>
               {lineSuffix}

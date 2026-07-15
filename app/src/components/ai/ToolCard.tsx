@@ -112,7 +112,7 @@ export default function ToolCard({
 
   return (
     <div
-      className="ai-tool-card my-0.5 rounded-[4px]"
+      className="ai-tool-card my-1 rounded-[4px]"
       data-open={open ? 'true' : 'false'}
       data-status={event.status}
       style={depth ? { marginLeft: depth * 14 } : undefined}

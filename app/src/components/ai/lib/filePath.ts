@@ -27,6 +27,8 @@ export interface FileRef {
   endLine?: number;
   /** 1-based column, when the token carried `:line:col`. */
   col?: number;
+  /** Explicit preview hint for non-filesystem sources such as HTTP images. */
+  previewKind?: 'image';
 }
 
 export function fileRefLineSuffix(ref: Pick<FileRef, 'startLine' | 'endLine'>): string {
@@ -322,8 +324,14 @@ export function parseFileRef(
   if (!hasSep && !knownFile) {
     return null;
   }
-  if (hasSep && !knownFile && containsNonAscii(path)) {
-    return null;
+  if (hasSep && !knownFile) {
+    // Reject separator-bearing tokens whose last segment has no dot, to avoid
+    // false positives like dates (2024/01/15), ratios (16/9), or directory-only
+    // references (src/components). A real file path almost always has a dot in
+    // the basename; when it doesn't (e.g. `Makefile`), knownBasename covers it.
+    const lastSep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    if (!path.slice(lastSep + 1).includes('.')) return null;
+    if (containsNonAscii(path)) return null;
   }
 
   const basename = basenameOf(path);

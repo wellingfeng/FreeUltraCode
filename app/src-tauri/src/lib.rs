@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 use tauri::{
@@ -461,6 +462,54 @@ fn active_ai_cli_pids() -> &'static Mutex<HashMap<String, u32>> {
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[derive(Clone)]
+struct ActiveCodexSteer {
+    stdin: Arc<Mutex<ChildStdin>>,
+    thread_id: Arc<Mutex<Option<String>>>,
+    turn_id: Arc<Mutex<Option<String>>>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<(), String>>>>>,
+}
+
+#[derive(Clone)]
+struct ActiveClaudeSteer {
+    stdin: Arc<Mutex<Option<ChildStdin>>>,
+}
+
+#[derive(Clone)]
+enum ActiveAiCliSteer {
+    Codex(ActiveCodexSteer),
+    Claude(ActiveClaudeSteer),
+}
+
+fn active_ai_cli_steers() -> &'static Mutex<HashMap<String, ActiveAiCliSteer>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, ActiveAiCliSteer>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_ai_cli_steer(run_id: &str, state: ActiveAiCliSteer) {
+    if let Ok(mut active) = active_ai_cli_steers().lock() {
+        active.insert(run_id.to_string(), state);
+    }
+}
+
+fn unregister_ai_cli_steer(run_id: &str) {
+    let state = active_ai_cli_steers()
+        .lock()
+        .ok()
+        .and_then(|mut active| active.remove(run_id));
+    match state {
+        Some(ActiveAiCliSteer::Codex(state)) => {
+            if let Ok(mut pending) = state.pending.lock() {
+                for (_, sender) in pending.drain() {
+                    let _ = sender.send(Err("Codex turn 已结束。".to_string()));
+                }
+            }
+        }
+        Some(ActiveAiCliSteer::Claude(state)) => close_claude_stream_input(&state.stdin),
+        None => {}
+    }
+}
+
 fn cancelled_ai_cli_ids() -> &'static Mutex<HashSet<String>> {
     static CANCELLED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     CANCELLED.get_or_init(|| Mutex::new(HashSet::new()))
@@ -496,6 +545,7 @@ fn unregister_ai_cli(run_id: &str) {
     if let Ok(mut active) = active_ai_cli_pids().lock() {
         active.remove(run_id);
     }
+    unregister_ai_cli_steer(run_id);
 }
 
 const FREE_CHANNEL_ENV_MAPPINGS: &[(&str, &[&str])] = &[
@@ -14055,9 +14105,15 @@ fn append_codex_project_mcp_config_args(args: &mut Vec<String>, cwd: Option<&str
 }
 
 static CLAUDE_BARE_SUPPORT_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+static CLAUDE_STREAM_INPUT_SUPPORT_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+static CODEX_APP_SERVER_SUPPORT_CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
 
 fn claude_help_supports_bare(help_text: &str) -> bool {
     help_text.contains("--bare")
+}
+
+fn claude_help_supports_stream_input(help_text: &str) -> bool {
+    help_text.contains("--input-format") && help_text.contains("stream-json")
 }
 
 fn shell_spec_cache_key(shell: &Option<ShellSpec>) -> String {
@@ -14438,6 +14494,9 @@ fn tool_result_raw(block: &serde_json::Value) -> String {
 
 #[derive(serde::Deserialize)]
 struct CodexLiteEvent {
+    id: Option<serde_json::Value>,
+    result: Option<serde_json::Value>,
+    error: Option<serde_json::Value>,
     method: Option<String>,
     #[serde(rename = "type")]
     event_type: Option<String>,
@@ -14450,13 +14509,59 @@ struct CodexLiteEvent {
 
 #[derive(serde::Deserialize)]
 struct CodexLiteParams {
+    delta: Option<String>,
     item: Option<CodexLiteItem>,
     turn: Option<CodexLiteTurn>,
+    #[serde(rename = "tokenUsage")]
+    token_usage: Option<serde_json::Value>,
     usage: Option<serde_json::Value>,
+}
+
+fn codex_cli_supports_app_server(binary: &str, shell: &Option<ShellSpec>) -> bool {
+    let key = format!("{}\0{}", binary, shell_spec_cache_key(shell));
+    let cache = CODEX_APP_SERVER_SUPPORT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock() {
+        if let Some(supported) = cache.get(&key) {
+            return *supported;
+        }
+    }
+
+    let help_args = vec!["app-server".to_string(), "--help".to_string()];
+    let help_cmd = build_launch_command(binary, &help_args, shell);
+    let help_text = command_text_output_with_timeout(help_cmd, std::time::Duration::from_secs(5))
+        .unwrap_or_default();
+    let supported = help_text.contains("app server") && help_text.contains("--stdio");
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(key, supported);
+    }
+    supported
+}
+
+fn claude_cli_supports_stream_input(binary: &str, shell: &Option<ShellSpec>) -> bool {
+    let key = format!("{}\0{}", binary, shell_spec_cache_key(shell));
+    let cache = CLAUDE_STREAM_INPUT_SUPPORT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(cache) = cache.lock() {
+        if let Some(supported) = cache.get(&key) {
+            return *supported;
+        }
+    }
+
+    let help_args = vec!["--help".to_string()];
+    let mut help_cmd = build_launch_command(binary, &help_args, shell);
+    help_cmd.env("DISABLE_AUTOUPDATER", "1");
+    let help_text = command_text_output_with_timeout(help_cmd, std::time::Duration::from_secs(5))
+        .unwrap_or_default();
+    let supported = claude_help_supports_stream_input(&help_text);
+
+    if let Ok(mut cache) = cache.lock() {
+        cache.insert(key, supported);
+    }
+    supported
 }
 
 #[derive(serde::Deserialize)]
 struct CodexLiteTurn {
+    id: Option<String>,
     status: Option<String>,
     usage: Option<serde_json::Value>,
 }
@@ -14538,7 +14643,7 @@ impl CodexLiteEvent {
 /// shape so large tool output fields are skipped by serde instead of allocated.
 fn codex_progress_line(item: &CodexLiteItem) -> Option<String> {
     let item_type = item.item_type.as_deref().unwrap_or("");
-    if item_type == "agent_message" {
+    if matches!(item_type, "agent_message" | "agentMessage") {
         return item
             .text
             .as_deref()
@@ -14643,7 +14748,7 @@ fn codex_tool_args(item: &CodexLiteItem) -> Option<serde_json::Value> {
 
 fn codex_tool_patch(item: &CodexLiteItem, fallback_id: String) -> Option<serde_json::Value> {
     let item_type = item.item_type.as_deref().unwrap_or("");
-    if item_type.is_empty() || item_type == "agent_message" {
+    if item_type.is_empty() || matches!(item_type, "agent_message" | "agentMessage") {
         return None;
     }
     let result_raw = item
@@ -14750,6 +14855,160 @@ fn cancel_ai_cli(run_id: String) -> Result<(), String> {
         let _ = terminate_process_tree(pid);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn ai_cli_steer_supported(
+    adapter: String,
+    cli_command: Option<String>,
+    permission: Option<String>,
+    shell: Option<ShellSpec>,
+) -> Result<bool, String> {
+    let binary = match cli_command
+        .as_deref()
+        .map(cli_runtime::normalize_cli_command_override)
+        .transpose()?
+    {
+        Some(binary) => binary,
+        None => cli_runtime::adapter_binary(&adapter).to_string(),
+    };
+    match cli_runtime::adapter_protocol(&adapter) {
+        "codex" => {
+            Ok(permission.as_deref() != Some("ask")
+                && codex_cli_supports_app_server(&binary, &shell))
+        }
+        "claude" => {
+            repair_claude_binary();
+            Ok(claude_cli_supports_stream_input(&binary, &shell))
+        }
+        _ => Ok(false),
+    }
+}
+
+fn write_codex_app_server_message(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    message: &serde_json::Value,
+) -> Result<(), String> {
+    let mut stdin = stdin
+        .lock()
+        .map_err(|_| "Codex App Server stdin 锁已损坏。".to_string())?;
+    serde_json::to_writer(&mut *stdin, message)
+        .map_err(|e| format!("编码 Codex App Server 请求失败: {e}"))?;
+    stdin
+        .write_all(b"\n")
+        .and_then(|_| stdin.flush())
+        .map_err(|e| format!("写入 Codex App Server 失败: {e}"))
+}
+
+fn write_claude_stream_message(
+    stdin: &Arc<Mutex<Option<ChildStdin>>>,
+    text: &str,
+) -> Result<(), String> {
+    let mut guard = stdin
+        .lock()
+        .map_err(|_| "Claude streaming stdin 锁已损坏。".to_string())?;
+    let stdin = guard
+        .as_mut()
+        .ok_or_else(|| "Claude turn 已结束。".to_string())?;
+    let message = claude_stream_input_message(text);
+    serde_json::to_writer(&mut *stdin, &message)
+        .map_err(|e| format!("编码 Claude streaming input 失败: {e}"))?;
+    stdin
+        .write_all(b"\n")
+        .and_then(|_| stdin.flush())
+        .map_err(|e| format!("写入 Claude streaming input 失败: {e}"))
+}
+
+fn claude_stream_input_message(text: &str) -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "message": { "role": "user", "content": text },
+        "parent_tool_use_id": serde_json::Value::Null,
+        "session_id": "default"
+    })
+}
+
+fn close_claude_stream_input(stdin: &Arc<Mutex<Option<ChildStdin>>>) {
+    if let Ok(mut guard) = stdin.lock() {
+        guard.take();
+    }
+}
+
+#[tauri::command]
+fn steer_ai_cli(run_id: String, text: String) -> Result<bool, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(false);
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let state = loop {
+        let state = active_ai_cli_steers()
+            .lock()
+            .ok()
+            .and_then(|active| active.get(&run_id).cloned());
+        if let Some(state) = state {
+            break state;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+
+    let state = match state {
+        ActiveAiCliSteer::Claude(state) => {
+            write_claude_stream_message(&state.stdin, text)?;
+            return Ok(true);
+        }
+        ActiveAiCliSteer::Codex(state) => state,
+    };
+
+    let (thread_id, turn_id) = loop {
+        let thread_id = state.thread_id.lock().ok().and_then(|id| id.clone());
+        let turn_id = state.turn_id.lock().ok().and_then(|id| id.clone());
+        if let (Some(thread_id), Some(turn_id)) = (thread_id, turn_id) {
+            break (thread_id, turn_id);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+
+    static STEER_REQUEST_SEQ: AtomicUsize = AtomicUsize::new(1);
+    let request_id = format!(
+        "ugs-steer-{}",
+        STEER_REQUEST_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let (sender, receiver) = mpsc::channel();
+    state
+        .pending
+        .lock()
+        .map_err(|_| "Codex steer 等待表锁已损坏。".to_string())?
+        .insert(request_id.clone(), sender);
+    let request = serde_json::json!({
+        "method": "turn/steer",
+        "id": request_id,
+        "params": {
+            "threadId": thread_id,
+            "expectedTurnId": turn_id,
+            "input": [{ "type": "text", "text": text }]
+        }
+    });
+    if let Err(error) = write_codex_app_server_message(&state.stdin, &request) {
+        if let Ok(mut pending) = state.pending.lock() {
+            pending.remove(request["id"].as_str().unwrap_or_default());
+        }
+        return Err(error);
+    }
+
+    match receiver.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(true),
+        Ok(Err(error)) => Err(error),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err("Codex steer 响应超时。".to_string()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err("Codex steer 通道已断开。".to_string()),
+    }
 }
 
 fn workspace_dir_key(path: &Path) -> String {
@@ -14881,9 +15140,18 @@ async fn ai_cli(
             None => cli_runtime::adapter_binary(&adapter).to_string(),
         };
         let protocol = cli_runtime::adapter_protocol(&adapter);
+        let is_claude = protocol == "claude";
         let is_codex = protocol == "codex";
         let is_gemini = protocol == "gemini";
-        let codex_last_message_path = if is_codex {
+        let claude_stream_input =
+            is_claude && claude_cli_supports_stream_input(&binary, &shell);
+        // App Server approval callbacks need a live UI reviewer. Keep the
+        // existing `codex exec` path for ask-each-time mode until that callback
+        // surface is wired; full/read-only turns can steer safely today.
+        let codex_app_server = is_codex
+            && permission.as_deref() != Some("ask")
+            && codex_cli_supports_app_server(&binary, &shell);
+        let codex_last_message_path = if is_codex && !codex_app_server {
             Some(temp_output_path_for_cwd(
                 cwd.as_deref(),
                 "ultragamestudio-codex-last",
@@ -14909,63 +15177,61 @@ async fn ai_cli(
         let mut gemini_system_settings_path: Option<String> = None;
 
         if is_codex {
-            // Codex's non-interactive surface is `codex exec`, and its JSON
-            // stream is enabled with `--json`. It has no Claude-style
-            // `--output-format`, which was the source of the reported failure.
-            match permission.as_deref().unwrap_or("full") {
-                "readonly" => {
-                    args.push("-a".into());
-                    args.push("never".into());
+            if codex_app_server {
+                // Keep a Codex App Server connection alive for this turn.
+                // Unlike `codex exec -`, it exposes `turn/steer`, so a
+                // follow-up can join the turn without killing the process.
+                append_codex_project_mcp_config_args(&mut args, cwd.as_deref());
+                if !extra_workspace_paths.is_empty() {
+                    args.push("-c".into());
+                    args.push(format!(
+                        "sandbox_workspace_write.writable_roots={}",
+                        toml_literal_string_array(&extra_workspace_paths)
+                    ));
                 }
-                "ask" => {
-                    args.push("-a".into());
-                    args.push("on-request".into());
-                }
-                _ => {}
-            }
+                args.push("app-server".into());
+                args.push("--stdio".into());
 
-            args.push("exec".into());
-            append_codex_project_mcp_config_args(&mut args, cwd.as_deref());
-            args.push("--json".into());
-            args.push("--skip-git-repo-check".into());
-
-            match permission.as_deref().unwrap_or("full") {
-                "readonly" => {
-                    args.push("--sandbox".into());
-                    args.push("read-only".into());
+                if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                    let p = std::path::Path::new(dir);
+                    if p.is_dir() {
+                        workdir = Some(p.to_path_buf());
+                    }
                 }
-                "ask" => {
-                    args.push("--sandbox".into());
-                    args.push("workspace-write".into());
+            } else {
+                match permission.as_deref().unwrap_or("full") {
+                    "readonly" => args.extend(["-a".into(), "never".into()]),
+                    "ask" => args.extend(["-a".into(), "on-request".into()]),
+                    _ => {}
                 }
-                _ => {
-                    args.push("--dangerously-bypass-approvals-and-sandbox".into());
+                args.push("exec".into());
+                append_codex_project_mcp_config_args(&mut args, cwd.as_deref());
+                args.extend(["--json".into(), "--skip-git-repo-check".into()]);
+                match permission.as_deref().unwrap_or("full") {
+                    "readonly" => args.extend(["--sandbox".into(), "read-only".into()]),
+                    "ask" => args.extend(["--sandbox".into(), "workspace-write".into()]),
+                    _ => args.push("--dangerously-bypass-approvals-and-sandbox".into()),
                 }
-            }
-
-            if let Some(m) = model.as_deref().filter(|m| cli_runtime::should_pass_model(&adapter, m)) {
-                args.push("--model".into());
-                args.push(m.to_string());
-            }
-
-            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
-                let p = std::path::Path::new(dir);
-                if p.is_dir() {
-                    workdir = Some(p.to_path_buf());
-                    args.push("-C".into());
-                    args.push(dir.to_string());
+                if let Some(model) = model
+                    .as_deref()
+                    .filter(|model| cli_runtime::should_pass_model(&adapter, model))
+                {
+                    args.extend(["--model".into(), model.to_string()]);
                 }
+                if let Some(dir) = cwd.as_deref().map(str::trim).filter(|dir| !dir.is_empty()) {
+                    if Path::new(dir).is_dir() {
+                        workdir = Some(Path::new(dir).to_path_buf());
+                        args.extend(["-C".into(), dir.to_string()]);
+                    }
+                }
+                for dir in &extra_workspace_paths {
+                    args.extend(["--add-dir".into(), dir.clone()]);
+                }
+                if let Some(path) = codex_last_message_path.as_ref() {
+                    args.extend(["-o".into(), path.to_string_lossy().to_string()]);
+                }
+                args.push("-".into());
             }
-            for dir in &extra_workspace_paths {
-                args.push("--add-dir".into());
-                args.push(dir.clone());
-            }
-
-            if let Some(path) = codex_last_message_path.as_ref() {
-                args.push("-o".into());
-                args.push(path.to_string_lossy().to_string());
-            }
-            args.push("-".into());
         } else if is_gemini {
             // Gemini CLI has its own headless/MCP flags. The prompt still goes
             // through stdin; an empty --prompt enables non-interactive mode
@@ -15023,6 +15289,10 @@ async fn ai_cli(
             args.push("--output-format".into());
             args.push("stream-json".into());
             args.push("--verbose".into());
+            if claude_stream_input {
+                args.push("--input-format".into());
+                args.push("stream-json".into());
+            }
             // Free/relay channels inject their own Anthropic-compatible key and
             // base URL. Use Claude Code's minimal print mode when available so
             // user-level plugins/hooks (especially SessionEnd hooks) cannot
@@ -15170,8 +15440,6 @@ async fn ai_cli(
         register_ai_cli(&run_id, child.id());
         let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
 
-        // Write the prompt to stdin on its own thread (so a large prompt can't
-        // deadlock against a full pipe), then close stdin to signal EOF.
         let mut stdin_pipe = child.stdin.take();
         // Codex/Gemini have no `--append-system-prompt`, so the extra-workspace
         // note (claude gets it as a system-prompt arg above) is prepended to the
@@ -15189,12 +15457,151 @@ async fn ai_cli(
         } else {
             prompt
         };
-        let prompt_bytes = prompt.into_bytes();
-        let stdin_handle = std::thread::spawn(move || {
-            if let Some(mut s) = stdin_pipe.take() {
-                let _ = s.write_all(&prompt_bytes);
-            }
-        });
+        let codex_thread_id = Arc::new(Mutex::new(None::<String>));
+        let codex_turn_id = Arc::new(Mutex::new(None::<String>));
+        let codex_pending = Arc::new(Mutex::new(HashMap::new()));
+        let codex_stdin = if codex_app_server {
+            stdin_pipe.take().map(|stdin| Arc::new(Mutex::new(stdin)))
+        } else {
+            None
+        };
+        let claude_stdin = if claude_stream_input {
+            stdin_pipe
+                .take()
+                .map(|stdin| Arc::new(Mutex::new(Some(stdin))))
+        } else {
+            None
+        };
+        if let Some(stdin) = codex_stdin.as_ref() {
+            register_ai_cli_steer(
+                &run_id,
+                ActiveAiCliSteer::Codex(ActiveCodexSteer {
+                    stdin: Arc::clone(stdin),
+                    thread_id: Arc::clone(&codex_thread_id),
+                    turn_id: Arc::clone(&codex_turn_id),
+                    pending: Arc::clone(&codex_pending),
+                }),
+            );
+        } else if let Some(stdin) = claude_stdin.as_ref() {
+            register_ai_cli_steer(
+                &run_id,
+                ActiveAiCliSteer::Claude(ActiveClaudeSteer {
+                    stdin: Arc::clone(stdin),
+                }),
+            );
+        }
+
+        let writer_stdin = codex_stdin.clone();
+        let writer_claude_stdin = claude_stdin.clone();
+        let writer_thread_id = Arc::clone(&codex_thread_id);
+        let writer_prompt = prompt.clone();
+        let writer_model = model.clone();
+        let writer_cwd = cwd.clone();
+        let writer_permission = permission.clone();
+        let stdin_handle = if codex_app_server {
+            std::thread::spawn(move || {
+                let Some(stdin) = writer_stdin else {
+                    return;
+                };
+                let _ = write_codex_app_server_message(
+                    &stdin,
+                    &serde_json::json!({
+                        "method": "initialize",
+                        "id": "ugs-init",
+                        "params": {
+                            "clientInfo": {
+                                "name": "UltraGameStudio",
+                                "title": "UltraGameStudio",
+                                "version": env!("CARGO_PKG_VERSION")
+                            }
+                        }
+                    }),
+                );
+                let _ = write_codex_app_server_message(
+                    &stdin,
+                    &serde_json::json!({ "method": "initialized", "params": {} }),
+                );
+
+                let permission = writer_permission.as_deref().unwrap_or("full");
+                let approval_policy = if permission == "ask" {
+                    "on-request"
+                } else {
+                    "never"
+                };
+                let sandbox = match permission {
+                    "readonly" => "read-only",
+                    "ask" => "workspace-write",
+                    _ => "danger-full-access",
+                };
+                let mut thread_params = serde_json::json!({
+                    "approvalPolicy": approval_policy,
+                    "sandbox": sandbox,
+                    "ephemeral": true
+                });
+                if let Some(model) = writer_model
+                    .as_deref()
+                    .filter(|model| cli_runtime::should_pass_model("codex", model))
+                {
+                    thread_params["model"] = serde_json::Value::String(model.to_string());
+                }
+                if let Some(cwd) = writer_cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|cwd| Path::new(cwd).is_dir())
+                {
+                    thread_params["cwd"] = serde_json::Value::String(cwd.to_string());
+                }
+                if write_codex_app_server_message(
+                    &stdin,
+                    &serde_json::json!({
+                        "method": "thread/start",
+                        "id": "ugs-thread-start",
+                        "params": thread_params
+                    }),
+                )
+                .is_err()
+                {
+                    return;
+                }
+
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(10);
+                let thread_id = loop {
+                    if let Some(thread_id) =
+                        writer_thread_id.lock().ok().and_then(|id| id.clone())
+                    {
+                        break thread_id;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                };
+                let _ = write_codex_app_server_message(
+                    &stdin,
+                    &serde_json::json!({
+                        "method": "turn/start",
+                        "id": "ugs-turn-start",
+                        "params": {
+                            "threadId": thread_id,
+                            "input": [{ "type": "text", "text": writer_prompt }]
+                        }
+                    }),
+                );
+            })
+        } else if claude_stream_input {
+            std::thread::spawn(move || {
+                if let Some(stdin) = writer_claude_stdin {
+                    let _ = write_claude_stream_message(&stdin, &prompt);
+                }
+            })
+        } else {
+            std::thread::spawn(move || {
+                if let Some(mut stdin) = stdin_pipe {
+                    let _ = stdin.write_all(prompt.as_bytes());
+                }
+            })
+        };
 
         // Reader thread: parse the JSONL stream, emit progress, capture the result.
         let stdout = child.stdout.take();
@@ -15202,6 +15609,7 @@ async fn ai_cli(
         let run2 = run_id.clone();
         let parse_codex = is_codex;
         let parse_gemini = is_gemini;
+        let claude_stdin_reader = claude_stdin.clone();
         let progress_model_hint2 = progress_model_hint.clone();
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
         let codex_turn_status_reader = Arc::clone(&codex_turn_status);
@@ -15214,6 +15622,9 @@ async fn ai_cli(
         let claude_usage_reader = Arc::clone(&claude_usage);
         let codex_streamed_output = Arc::new(Mutex::new(String::new()));
         let codex_streamed_output_reader = Arc::clone(&codex_streamed_output);
+        let codex_thread_id_reader = Arc::clone(&codex_thread_id);
+        let codex_turn_id_reader = Arc::clone(&codex_turn_id);
+        let codex_pending_reader = Arc::clone(&codex_pending);
         let stdout_activity = Arc::clone(&last_activity);
         // Claude/Gemini stream-json emit a terminal `result` event once the turn
         // is logically done. The process itself can linger afterward (lingering
@@ -15267,6 +15678,126 @@ async fn ai_cli(
                             Ok(event) => event,
                             Err(_) => continue,
                         };
+                        if let Some(id) = event.id.as_ref().and_then(|id| {
+                            id.as_str()
+                                .map(ToString::to_string)
+                                .or_else(|| id.as_u64().map(|id| id.to_string()))
+                        }) {
+                            if matches!(id.as_str(), "ugs-init" | "ugs-thread-start" | "ugs-turn-start")
+                                && event.error.is_some()
+                            {
+                                let message = event
+                                    .error
+                                    .as_ref()
+                                    .and_then(|error| error.get("message"))
+                                    .and_then(|message| message.as_str())
+                                    .unwrap_or("Codex App Server 请求失败");
+                                if let Ok(mut current) = codex_streamed_output_reader.lock() {
+                                    current.push_str(message);
+                                }
+                                progress.emit_now(&format!("⚠ {message}\n"));
+                                if let Ok(mut current) = codex_turn_status_reader.lock() {
+                                    *current = Some("failed".to_string());
+                                }
+                            }
+                            if id == "ugs-thread-start" {
+                                if let Some(thread_id) = event
+                                    .result
+                                    .as_ref()
+                                    .and_then(|result| result.pointer("/thread/id"))
+                                    .and_then(|id| id.as_str())
+                                {
+                                    if let Ok(mut current) = codex_thread_id_reader.lock() {
+                                        *current = Some(thread_id.to_string());
+                                    }
+                                }
+                            } else if id == "ugs-turn-start" {
+                                if let Some(turn_id) = event
+                                    .result
+                                    .as_ref()
+                                    .and_then(|result| result.pointer("/turn/id"))
+                                    .and_then(|id| id.as_str())
+                                {
+                                    if let Ok(mut current) = codex_turn_id_reader.lock() {
+                                        *current = Some(turn_id.to_string());
+                                    }
+                                }
+                            } else if id.starts_with("ugs-steer-") {
+                                let sender = codex_pending_reader
+                                    .lock()
+                                    .ok()
+                                    .and_then(|mut pending| pending.remove(&id));
+                                if let Some(sender) = sender {
+                                    let response = if let Some(error) = event.error.as_ref() {
+                                        Err(error
+                                            .get("message")
+                                            .and_then(|message| message.as_str())
+                                            .unwrap_or("Codex 拒绝了 steer 请求。")
+                                            .to_string())
+                                    } else {
+                                        Ok(())
+                                    };
+                                    let _ = sender.send(response);
+                                }
+                            }
+                        }
+                        match event.kind() {
+                            Some("thread/started") => {
+                                if let Some(thread_id) = event
+                                    .params
+                                    .as_ref()
+                                    .and_then(|params| params.item.as_ref())
+                                    .and_then(|item| item.id.as_deref())
+                                {
+                                    if let Ok(mut current) = codex_thread_id_reader.lock() {
+                                        *current = Some(thread_id.to_string());
+                                    }
+                                }
+                            }
+                            Some("turn/started") => {
+                                if let Some(turn_id) = event
+                                    .params
+                                    .as_ref()
+                                    .and_then(|params| params.turn.as_ref())
+                                    .and_then(|turn| turn.id.as_deref())
+                                {
+                                    if let Ok(mut current) = codex_turn_id_reader.lock() {
+                                        *current = Some(turn_id.to_string());
+                                    }
+                                }
+                            }
+                            Some("item/agentMessage/delta") => {
+                                if let Some(delta) = event
+                                    .params
+                                    .as_ref()
+                                    .and_then(|params| params.delta.as_deref())
+                                    .filter(|delta| !delta.is_empty())
+                                {
+                                    acc.push_str(delta);
+                                    if let Ok(mut current) = codex_streamed_output_reader.lock() {
+                                        current.push_str(delta);
+                                    }
+                                    progress.push(delta);
+                                    received_content_reader.store(true, Ordering::Relaxed);
+                                }
+                                continue;
+                            }
+                            Some("thread/tokenUsage/updated") => {
+                                if let Some(usage) = event
+                                    .params
+                                    .as_ref()
+                                    .and_then(|params| params.token_usage.as_ref())
+                                    .and_then(|usage| usage.get("last"))
+                                {
+                                    if let Ok(mut current) = codex_usage_reader.lock() {
+                                        *current = Some(usage.clone());
+                                    }
+                                    emit_usage(&app2, &run2, usage);
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
                         if let Some(usage) = event.turn_usage() {
                             if let Ok(mut current) = codex_usage_reader.lock() {
                                 *current = Some(usage.clone());
@@ -15280,7 +15811,17 @@ async fn ai_cli(
                             continue;
                         }
                         if let Some(item) = event.completed_item() {
-                            if item.item_type.as_deref() == Some("agent_message") {
+                            if matches!(
+                                item.item_type.as_deref(),
+                                Some("agent_message") | Some("agentMessage")
+                            ) {
+                                if codex_streamed_output_reader
+                                    .lock()
+                                    .ok()
+                                    .is_some_and(|current| !current.is_empty())
+                                {
+                                    continue;
+                                }
                                 let Some(line) = codex_progress_line(item) else {
                                     continue;
                                 };
@@ -15616,6 +16157,14 @@ async fn ai_cli(
                             }
                         }
                         Some("result") => {
+                            if let Some(stdin) = claude_stdin_reader.as_ref() {
+                                // Stop accepting lightning messages as soon as
+                                // Claude declares this agent loop complete. A
+                                // write that won the stdin lock before this
+                                // point remains buffered and can finish before
+                                // EOF; later writes fail and stay in UI FIFO.
+                                close_claude_stream_input(stdin);
+                            }
                             if let Some(r) = v.get("result").and_then(|t| t.as_str()) {
                                 result = r.to_string();
                             }
@@ -16817,6 +17366,58 @@ mod tests {
     }
 
     #[test]
+    fn parses_codex_app_server_delta_and_turn_ids() {
+        let started: CodexLiteEvent = serde_json::from_value(serde_json::json!({
+            "method": "turn/started",
+            "params": {
+                "turn": { "id": "turn-1", "status": "inProgress" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(started.kind(), Some("turn/started"));
+        assert_eq!(
+            started
+                .params
+                .as_ref()
+                .and_then(|params| params.turn.as_ref())
+                .and_then(|turn| turn.id.as_deref()),
+            Some("turn-1")
+        );
+
+        let delta: CodexLiteEvent = serde_json::from_value(serde_json::json!({
+            "method": "item/agentMessage/delta",
+            "params": { "delta": "STEER_OK" }
+        }))
+        .unwrap();
+        assert_eq!(
+            delta
+                .params
+                .as_ref()
+                .and_then(|params| params.delta.as_deref()),
+            Some("STEER_OK")
+        );
+    }
+
+    #[test]
+    fn parses_codex_app_server_steer_response() {
+        let event: CodexLiteEvent = serde_json::from_value(serde_json::json!({
+            "id": "ugs-steer-7",
+            "result": { "turnId": "turn-1" }
+        }))
+        .unwrap();
+        assert_eq!(event.id.as_ref().and_then(|id| id.as_str()), Some("ugs-steer-7"));
+        assert_eq!(
+            event
+                .result
+                .as_ref()
+                .and_then(|result| result.get("turnId"))
+                .and_then(|turn_id| turn_id.as_str()),
+            Some("turn-1")
+        );
+        assert!(event.error.is_none());
+    }
+
+    #[test]
     fn codex_tool_patch_keeps_file_change_paths() {
         let event: CodexLiteEvent = serde_json::from_str(
             r#"{
@@ -16973,6 +17574,29 @@ mod tests {
         assert!(!claude_help_supports_bare(
             "Options:\n  --print\n  --verbose"
         ));
+    }
+
+    #[test]
+    fn claude_stream_input_support_comes_from_help_text() {
+        assert!(claude_help_supports_stream_input(
+            "--input-format <format> text or stream-json (realtime streaming input)"
+        ));
+        assert!(!claude_help_supports_stream_input(
+            "--output-format <format> text or stream-json"
+        ));
+    }
+
+    #[test]
+    fn claude_stream_input_message_matches_cli_protocol() {
+        assert_eq!(
+            claude_stream_input_message("补充约束"),
+            serde_json::json!({
+                "type": "user",
+                "message": { "role": "user", "content": "补充约束" },
+                "parent_tool_use_id": serde_json::Value::Null,
+                "session_id": "default"
+            })
+        );
     }
 
     #[test]
@@ -17794,6 +18418,8 @@ pub fn run() {
             run_studio,
             ai_cli,
             cancel_ai_cli,
+            ai_cli_steer_supported,
+            steer_ai_cli,
             slash_catalog,
             refresh_slash_catalog,
             skill_install_targets,

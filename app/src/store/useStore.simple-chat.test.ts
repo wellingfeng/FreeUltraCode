@@ -31,7 +31,11 @@ const gatewayMocks = vi.hoisted(() => ({
 
 const tauriMocks = vi.hoisted(() => ({
   aiEditViaCli: vi.fn(),
+  aiCliSteerSupported: vi.fn(
+    async (adapter: string) => adapter === 'codex' || adapter === 'claude-code',
+  ),
   cancelAiCli: vi.fn(),
+  steerAiCli: vi.fn(),
   freeProxyEnsure: vi.fn(),
   isTauri: vi.fn(() => false),
   previewLocalFile: vi.fn(),
@@ -62,7 +66,9 @@ vi.mock('@/lib/tauri', async () => {
   return {
     ...actual,
     aiEditViaCli: tauriMocks.aiEditViaCli,
+    aiCliSteerSupported: tauriMocks.aiCliSteerSupported,
     cancelAiCli: tauriMocks.cancelAiCli,
+    steerAiCli: tauriMocks.steerAiCli,
     freeProxyEnsure: tauriMocks.freeProxyEnsure,
     isTauri: tauriMocks.isTauri,
     previewLocalFile: tauriMocks.previewLocalFile,
@@ -112,6 +118,7 @@ function resetStore(workflow: IRGraph): void {
     aiEditingSessions: [],
     chattingSessions: [],
     queuedChatMessageIds: [],
+    steerableQueuedChatMessageIds: [],
     blockedSendTip: null,
     dirty: false,
     currentFilePath: null,
@@ -193,7 +200,9 @@ afterEach(async () => {
   gatewayMocks.resolveDirectGatewayRoute.mockReset();
   gatewayMocks.resolveCliGatewayRoute.mockReset();
   tauriMocks.aiEditViaCli.mockReset();
+  tauriMocks.aiCliSteerSupported.mockReset();
   tauriMocks.cancelAiCli.mockReset();
+  tauriMocks.steerAiCli.mockReset();
   tauriMocks.freeProxyEnsure.mockReset();
   tauriMocks.isTauri.mockReset();
   tauriMocks.previewLocalFile.mockReset();
@@ -201,6 +210,9 @@ afterEach(async () => {
   notificationMocks.dismissSessionWaitingInputNotification.mockReset();
   notificationMocks.notifySessionComplete.mockReset();
   tauriMocks.freeProxyEnsure.mockResolvedValue({ port: 8766, token: 'test-token' });
+  tauriMocks.aiCliSteerSupported.mockImplementation(
+    async (adapter: string) => adapter === 'codex' || adapter === 'claude-code',
+  );
   tauriMocks.isTauri.mockReturnValue(false);
   tauriMocks.tauriAvailable.mockReturnValue(false);
   resetStore(defaultBlueprint('Current workflow'));
@@ -2171,7 +2183,7 @@ describe('simple-workflow chat mode', () => {
     expect(record?.title).toBe('首轮总结标题');
   });
 
-  it('does not start early title naming on CLI-only simple chats', async () => {
+  it('starts early title naming on CLI-only simple chats via CLI route fallback', async () => {
     window.localStorage.clear();
     await historyStore.ready();
     const workspace = await historyStore.resolveWorkspaceByPath('');
@@ -2226,20 +2238,29 @@ describe('simple-workflow chat mode', () => {
 
     useStore.getState().sendPrompt('分析 ScreenLeak 全屏彩光是否开启');
 
+    // Intent-phase title naming fires immediately (before the main CLI reply).
+    await waitFor(
+      () => gatewayMocks.completeGatewayText.mock.calls.length >= 1,
+      'intent-phase title naming call',
+    );
     await waitFor(
       () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
       'main CLI chat call',
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(gatewayMocks.completeGatewayText).not.toHaveBeenCalled();
 
     mainGate.resolve?.('ScreenLeak 没有开启，需要改 DefaultEngine.ini。');
     await waitFor(
       () => useStore.getState().sessions[0]?.title === 'GLM总结标题',
       'summary title after CLI reply',
     );
+    // Wait for the summary-phase title naming call to land.
+    await waitFor(
+      () => gatewayMocks.completeGatewayText.mock.calls.length >= 2,
+      'summary-phase title naming call',
+    );
 
-    expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(1);
+    // Both intent and summary phases called completeGatewayText.
+    expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(2);
   });
 
   it('auto-renames a new simple chat after the first assistant reply', async () => {
@@ -3610,6 +3631,362 @@ describe('simple-workflow chat mode', () => {
     expect(runId).toEqual(expect.any(String));
     expect(tauriMocks.cancelAiCli).toHaveBeenCalledWith(runId);
     expect(useStore.getState().chattingSessions.length).toBe(0);
+  });
+
+  it('resumes the same native Claude session after an interrupted turn', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Simple chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      modelClass: 'sonnet',
+      model: 'sonnet',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code',
+      source: 'fallback',
+      cliCommand: 'claude',
+    });
+    const calls: Array<{
+      prompt: string;
+      opts: {
+        sessionId?: string;
+        resume?: boolean;
+        onProgress?: (chunk: string) => void;
+      };
+    }> = [];
+    let rejectFirst!: (reason: unknown) => void;
+    tauriMocks.aiEditViaCli.mockImplementation((prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      if (calls.length === 1) {
+        opts.onProgress?.('正在编译引擎。');
+        return new Promise<string>((_resolve, reject) => {
+          rejectFirst = reject;
+        });
+      }
+      return Promise.resolve('已按新约束继续编译。');
+    });
+    tauriMocks.cancelAiCli.mockImplementation(async () => {
+      rejectFirst(new DOMException('Aborted', 'AbortError'));
+    });
+
+    useStore.getState().sendPrompt('用 Rider MCP + UBA 编译引擎直到成功');
+    await waitFor(() => calls.length === 1, 'first Claude turn');
+    useStore.getState().stopChat();
+    await waitFor(
+      () => tauriMocks.cancelAiCli.mock.calls.length === 1,
+      'Claude turn cancellation',
+    );
+
+    useStore.getState().sendPrompt('不要改代码');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 2,
+      'interrupted Claude continuation',
+    );
+
+    expect(calls[1].opts.sessionId).toBe(calls[0].opts.sessionId);
+    expect(calls[1].opts.resume).toBe(true);
+    expect(calls[1].prompt).toContain('上一轮任务被用户中断且尚未完成');
+    expect(calls[1].prompt).toContain('不要改代码');
+    expect(calls[1].prompt).not.toContain('会话已中断');
+    expect(
+      useStore.getState().messages.some((message) =>
+        message.text.includes('调用失败'),
+      ),
+    ).toBe(false);
+  });
+
+  it('replays the unfinished goal after interrupting a stateless direct turn', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const userContents: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async (request) => {
+        userContents.push(String(request.userContent));
+        if (userContents.length > 1) return '已在新约束下继续原任务。';
+        request.onDelta?.('正在编译引擎。');
+        return await new Promise<string>((_resolve, reject) => {
+          request.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true },
+          );
+        });
+      },
+    );
+
+    useStore.getState().sendPrompt('用 Rider MCP + UBA 编译引擎直到成功');
+    await waitFor(() => userContents.length === 1, 'first direct turn');
+    useStore.getState().stopChat();
+    useStore.getState().sendPrompt('不要改代码');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && userContents.length === 2,
+      'interrupted direct continuation',
+    );
+
+    expect(userContents[1]).toContain('上一轮任务被用户中断且尚未完成');
+    expect(userContents[1]).toContain('用 Rider MCP + UBA 编译引擎直到成功');
+    expect(userContents[1]).toContain('不要改代码');
+    expect(userContents[1]).not.toContain('会话已中断');
+    expect(
+      useStore.getState().messages.some((message) =>
+        message.text.includes('调用失败'),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps a Codex follow-up queued until the lightning action steers it into the active turn', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'codex', modelClass: 'codex' },
+      adapter: 'codex',
+      modelClass: 'codex',
+      model: 'gpt-5.4',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Codex',
+      source: 'fallback',
+      cliCommand: 'codex',
+    });
+    let resolveTurn!: (value: string) => void;
+    tauriMocks.aiEditViaCli.mockImplementation(
+      async () =>
+        await new Promise<string>((resolve) => {
+          resolveTurn = resolve;
+        }),
+    );
+    let resolveSteer!: (value: boolean) => void;
+    tauriMocks.steerAiCli.mockImplementation(
+      async () =>
+        await new Promise<boolean>((resolve) => {
+          resolveSteer = resolve;
+        }),
+    );
+
+    useStore.getState().sendPrompt('先检查项目');
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
+      'Codex turn to start',
+    );
+    const runId = tauriMocks.aiEditViaCli.mock.calls[0]?.[2]?.runId;
+
+    useStore.getState().sendPrompt('补充：也检查测试');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'Codex follow-up to enter the queue',
+    );
+    expect(tauriMocks.steerAiCli).not.toHaveBeenCalled();
+
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([queuedId]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(true);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(false);
+    await waitFor(
+      () => tauriMocks.steerAiCli.mock.calls.length === 1,
+      'lightning action to steer the active Codex turn',
+    );
+
+    expect(tauriMocks.steerAiCli).toHaveBeenCalledWith(
+      runId,
+      '补充：也检查测试',
+    );
+    expect(tauriMocks.cancelAiCli).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([]);
+    resolveSteer(true);
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 0,
+      'steered follow-up to leave the queue',
+    );
+    expect(useStore.getState().queuedChatMessageIds).toEqual([]);
+
+    resolveTurn('已同时检查项目和测试。');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'steered Codex turn to finish',
+    );
+    expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
+      '先检查项目',
+      '补充：也检查测试',
+    ]);
+  });
+
+  it('keeps a Claude follow-up queued until the lightning action steers it into the active turn', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'claude-code', modelClass: 'sonnet' },
+      adapter: 'claude-code',
+      modelClass: 'sonnet',
+      model: 'sonnet',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code',
+      source: 'fallback',
+      cliCommand: 'claude',
+    });
+    let resolveTurn!: (value: string) => void;
+    tauriMocks.aiEditViaCli.mockImplementation(
+      async () =>
+        await new Promise<string>((resolve) => {
+          resolveTurn = resolve;
+        }),
+    );
+    tauriMocks.steerAiCli.mockResolvedValue(true);
+
+    useStore.getState().sendPrompt('先分析项目');
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
+      'Claude turn to start',
+    );
+    const runId = tauriMocks.aiEditViaCli.mock.calls[0]?.[2]?.runId;
+
+    useStore.getState().sendPrompt('补充：也分析测试');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'Claude follow-up to enter the queue',
+    );
+    expect(tauriMocks.steerAiCli).not.toHaveBeenCalled();
+
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([queuedId]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(true);
+    await waitFor(
+      () => tauriMocks.steerAiCli.mock.calls.length === 1,
+      'lightning action to steer the active Claude turn',
+    );
+    expect(tauriMocks.steerAiCli).toHaveBeenCalledWith(
+      runId,
+      '补充：也分析测试',
+    );
+    expect(tauriMocks.cancelAiCli).not.toHaveBeenCalled();
+    expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+
+    resolveTurn('已同时分析项目和测试。');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'steered Claude turn to finish',
+    );
+    expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a Codex follow-up queued when its lightning steer is rejected', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'codex', modelClass: 'codex' },
+      adapter: 'codex',
+      modelClass: 'codex',
+      model: 'gpt-5.4',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Codex',
+      source: 'fallback',
+      cliCommand: 'codex',
+    });
+    const resolvers: Array<(value: string) => void> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(
+      async () =>
+        await new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    tauriMocks.steerAiCli.mockResolvedValue(false);
+
+    useStore.getState().sendPrompt('第一问');
+    await waitFor(() => resolvers.length === 1, 'first Codex turn');
+    useStore.getState().sendPrompt('第二问');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'Codex follow-up to enter the queue',
+    );
+    expect(tauriMocks.steerAiCli).not.toHaveBeenCalled();
+
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([queuedId]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(true);
+    await waitFor(
+      () => tauriMocks.steerAiCli.mock.calls.length === 1,
+      'Codex lightning steer rejection',
+    );
+    expect(useStore.getState().queuedChatMessageIds).toHaveLength(1);
+    expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+
+    resolvers[0]('第一答');
+    await waitFor(() => resolvers.length === 2, 'queued Codex follow-up');
+    expect(tauriMocks.cancelAiCli).not.toHaveBeenCalled();
+    resolvers[1]('第二答');
+    await waitFor(() => !useStore.getState().aiStreaming, 'Codex queue to finish');
+  });
+
+  it('does not expose or emulate lightning steering for an unsupported adapter', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    const signals: AbortSignal[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async (request) =>
+        await new Promise<string>((resolve) => {
+          signals.push(request.signal as AbortSignal);
+          resolvers.push(resolve);
+        }),
+    );
+
+    useStore.getState().sendPrompt('第一问');
+    await waitFor(() => resolvers.length === 1, 'first direct turn');
+    useStore.getState().sendPrompt('第二问');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'direct follow-up to enter the queue',
+    );
+
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(false);
+    expect(signals[0].aborted).toBe(false);
+    expect(tauriMocks.steerAiCli).not.toHaveBeenCalled();
+
+    resolvers[0]('第一答');
+    await waitFor(() => resolvers.length === 2, 'queued direct follow-up');
+    resolvers[1]('第二答');
+    await waitFor(() => !useStore.getState().aiStreaming, 'direct queue to finish');
   });
 
   it('queues an interjection behind the in-flight turn and merges it into the running chat', async () => {

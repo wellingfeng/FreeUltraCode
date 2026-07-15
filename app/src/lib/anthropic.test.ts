@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CAPTAIN_LOOP_GUIDANCE, UNIFIED_SYSTEM, streamAnthropic } from './anthropic';
+import {
+  CAPTAIN_LOOP_GUIDANCE,
+  SIMPLE_CHAT_SYSTEM,
+  UNIFIED_SYSTEM,
+  streamAnthropic,
+} from './anthropic';
 
 function mockAnthropicStream(text: string): Response {
   const sse =
@@ -53,6 +58,14 @@ describe('CAPTAIN_LOOP_GUIDANCE', () => {
 
   it('is injected into UNIFIED_SYSTEM', () => {
     expect(UNIFIED_SYSTEM).toContain(CAPTAIN_LOOP_GUIDANCE);
+  });
+});
+
+describe('SIMPLE_CHAT_SYSTEM', () => {
+  it('forbids silently switching a user-specified target or tool', () => {
+    expect(SIMPLE_CHAT_SYSTEM).toContain('不得自行切换到替代目标');
+    expect(SIMPLE_CHAT_SYSTEM).toContain('指定目标不可用');
+    expect(SIMPLE_CHAT_SYSTEM).toContain('必须先停止并用下方交互协议询问用户是否允许切换');
   });
 });
 

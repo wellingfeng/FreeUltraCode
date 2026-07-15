@@ -1,5 +1,5 @@
 import { isValidElement, type MouseEvent, type ReactNode } from 'react';
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon } from 'lucide-react';
 import { openExternal } from '@/lib/tauri';
 import { parseFileRef } from './lib/filePath';
 import FileChip, { type OpenFileFn } from './FileChip';
@@ -7,6 +7,7 @@ import AudioPlayer from './AudioPlayer';
 import VideoPlayer from './VideoPlayer';
 import ModelViewer from './ModelViewer';
 import { canPreviewModelUrl, isModelUrl } from './lib/modelLink';
+import { createImagePreviewRef, isHttpImageUrl } from './lib/imagePreview';
 
 /**
  * Anchor renderer for markdown links. External URLs (http/https/mailto) open in
@@ -36,6 +37,7 @@ export default function SmartLink({
     /^data:video\//i.test(url) ||
     /^https?:\/\/.+\.(?:mp4|mov|m4v|webm|mkv|avi)(?:[?#].*)?$/i.test(url);
   const isWebUrl = /^https?:/i.test(url);
+  const isImageUrl = isHttpImageUrl(url);
   const hasExplicitNonModelMediaExt =
     /\.(?:png|apng|jpe?g|jpe|jfif|pjpeg|pjp|gif|webp|bmp|svg|avif|ico|mp4|mov|webm|mp3|wav|m4a|aac|ogg|flac)(?:[?#].*)?$/i.test(
       url,
@@ -67,6 +69,20 @@ export default function SmartLink({
 
   if (isAudioUrl) {
     return <AudioPlayer src={url} label={labelText} />;
+  }
+
+  if (isImageUrl && onOpenFile) {
+    return (
+      <button
+        type="button"
+        onClick={() => void onOpenFile(createImagePreviewRef(url, labelText))}
+        title="在右侧预览"
+        className="inline-flex items-center gap-0.5 text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+      >
+        {children}
+        <ImageIcon size={11} className="opacity-60" />
+      </button>
+    );
   }
 
   if (!isExternal) {

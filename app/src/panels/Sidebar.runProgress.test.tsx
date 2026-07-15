@@ -140,12 +140,11 @@ vi.mock('@/store/useStore', () => {
     sessionLiveStatus,
     useStore,
     workflowDeleteProtectionReason: (
-      session: Pick<MockSession, 'id' | 'isWorkflow'>,
+      session: Pick<MockSession, 'id'>,
       workspaceId: string | null | undefined,
       liveState: Pick<MockStoreState, 'runningSessions' | 'aiEditingSessions'> &
         Partial<Pick<MockStoreState, 'chattingSessions'>>,
     ) => {
-      if (!session.isWorkflow) return null;
       return sessionLiveStatus(
         { workspaceId: workspaceId ?? null, sessionId: session.id },
         liveState,
@@ -1513,10 +1512,10 @@ describe('Sidebar running progress dot', () => {
 
 describe('Sidebar delete protection', () => {
   it.each([
-    ['running', '运行中的蓝图不能删除'],
-    ['aiEditing', 'AI 正在优化蓝图，暂不能删除'],
+    ['running', '运行中的会话不能删除'],
+    ['aiEditing', 'AI 正在处理，暂不能删除'],
   ] as const)(
-    'disables deleting protected %s workflow sessions',
+    'disables deleting protected %s sessions',
     async (reason, label) => {
       resetSidebarStore();
       if (reason === 'running') {
@@ -1542,8 +1541,8 @@ describe('Sidebar delete protection', () => {
   );
 
   it.each([
-    ['running', '运行中的蓝图不能删除'],
-    ['aiEditing', 'AI 正在优化蓝图，暂不能删除'],
+    ['running', '运行中的会话不能删除'],
+    ['aiEditing', 'AI 正在处理，暂不能删除'],
   ] as const)(
     'rechecks %s protection when delete is clicked from a stale menu',
     async (reason, label) => {

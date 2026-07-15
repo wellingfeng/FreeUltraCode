@@ -202,8 +202,12 @@ describe('parseFileRef', () => {
     ).toBe('Moon render report.html');
   });
 
-  it('accepts relative path with separator and no extension', () => {
-    expect(parseFileRef('./src/config')?.path).toBe('./src/config');
+  it('rejects relative path with separator but no filename-like last segment', () => {
+    expect(parseFileRef('./src/config')).toBeNull();
+  });
+
+  it('accepts relative path with separator and a dot in the last segment', () => {
+    expect(parseFileRef('./src/config.json')?.path).toBe('./src/config.json');
   });
 });
 

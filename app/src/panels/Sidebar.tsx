@@ -287,6 +287,7 @@ function deleteProtectionLabel(
   reason: WorkflowDeleteProtectionReason,
 ): string | null {
   if (reason === 'running') return t(locale, 'sidebar.deleteBlockedRunning');
+  if (reason === 'waiting') return t(locale, 'sidebar.deleteBlockedWaiting');
   if (reason === 'aiEditing') return t(locale, 'sidebar.deleteBlockedAiEditing');
   return null;
 }
@@ -296,13 +297,11 @@ function historySessionForProtection(
   workspaceId: string | null,
   sessions: Session[],
   sessionTree: Record<string, Session[]>,
-  fallbackIsWorkflow: boolean,
-): Pick<Session, 'id' | 'isWorkflow'> {
+): Pick<Session, 'id'> {
   const source = workspaceId ? sessionTree[workspaceId] ?? sessions : sessions;
   return (
     source.find((session) => session.id === sessionId) ?? {
       id: sessionId,
-      isWorkflow: fallbackIsWorkflow,
     }
   );
 }
@@ -601,7 +600,6 @@ export default function Sidebar({
       targetWorkspaceId,
       sessions,
       sessionTree,
-      menu.isWorkflow,
     );
     return workflowDeleteProtectionReason(session, targetWorkspaceId, {
       runningSessions,
@@ -756,7 +754,6 @@ export default function Sidebar({
     const targetSessionId = menu.sessionId;
     const targetWorkspaceMenuId = menu.workspaceId;
     const targetTitle = menu.title;
-    const targetIsWorkflow = menu.isWorkflow;
     const state = useStore.getState();
     const targetWorkspaceId =
       targetWorkspaceMenuId ?? state.activeWorkspaceId ?? null;
@@ -765,7 +762,6 @@ export default function Sidebar({
       targetWorkspaceId,
       state.sessions,
       state.sessionTree,
-      targetIsWorkflow,
     );
     const protectionReason = workflowDeleteProtectionReason(
       session,
@@ -1409,7 +1405,7 @@ export default function Sidebar({
                 onChange={(event) => setSearchQuery(event.target.value)}
                 onKeyDown={handleSearchKeyDown}
                 spellCheck={false}
-                className="h-8 w-full min-w-0 appearance-none rounded-md border border-transparent bg-panel-2/40 pl-7 pr-7 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-border-soft focus:bg-panel-2/60 disabled:cursor-wait disabled:opacity-60"
+                className="ugs-history-search-input h-8 w-full min-w-0 appearance-none rounded-md border border-transparent bg-panel-2/40 pl-7 pr-7 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-border-soft focus:bg-panel-2/60 disabled:cursor-wait disabled:opacity-60"
               />
               {searchQuery.length > 0 && (
                 <button

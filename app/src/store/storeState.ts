@@ -167,6 +167,7 @@ export interface StoreState {
   chattingSessions: WorkflowSessionKey[];
   /** User message ids for simple-chat turns accepted locally but not started yet. */
   queuedChatMessageIds: string[];
+  steerableQueuedChatMessageIds: string[];
   /**
    * Sessions whose in-flight turn is parked on a user interaction (a UGS_ASK
    * select/input/confirm). The turn is still "live" (its channel stays open),
@@ -424,7 +425,7 @@ export interface StoreState {
    * turn(s) for the same session so this queued turn starts immediately
    * instead of waiting for the current answer to finish naturally.
    */
-  interjectQueuedChatMessage: (messageId: string) => boolean;
+  steerQueuedChatMessage: (messageId: string) => boolean;
   /** Create a new chat session containing messages up to the chosen assistant reply. */
   branchSessionFromMessage: (messageId: string) => void;
   clearBlockedSendTip: () => void;

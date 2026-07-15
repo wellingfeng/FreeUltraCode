@@ -2,6 +2,15 @@
 @tailwind components;
 @tailwind utilities;
 
+.ugs-history-search-input::-webkit-search-cancel-button,
+.ugs-history-search-input::-webkit-search-decoration,
+.ugs-history-search-input::-webkit-search-results-button,
+.ugs-history-search-input::-webkit-search-results-decoration {
+  display: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 :root {
   /* Default primitive tokens. Style presets override these on html. */
   --ugs-color-bg: #0d1117;
@@ -1480,12 +1489,18 @@ html.ugs-stream-scheme-solarized-dark {
   min-width: 0;
   max-width: 100%;
   color: var(--stream-fg);
-  line-height: 1.7;
+  line-height: 1.75;
 }
 .ai-message,
 .ai-markdown {
   min-width: 0;
   max-width: 100%;
+}
+/* 连续 answer 段之间的自动分割线（被 tool/reasoning 隔开的） */
+.ai-message > .ai-answer-sep + .ai-answer-sep {
+  margin-top: 0.6em;
+  padding-top: 0.6em;
+  border-top: 1px solid var(--stream-surface-border);
 }
 .ai-markdown {
   overflow-wrap: anywhere;
@@ -1498,7 +1513,7 @@ html.ugs-stream-scheme-solarized-dark {
 }
 .ai-markdown > :first-child { margin-top: 0; }
 .ai-markdown > :last-child { margin-bottom: 0; }
-.ai-markdown p { margin: 0.65em 0; line-height: 1.7; }
+.ai-markdown p { margin: 0.75em 0; line-height: 1.75; }
 .ai-markdown h1,
 .ai-markdown h2,
 .ai-markdown h3,
@@ -1520,15 +1535,62 @@ html.ugs-stream-scheme-solarized-dark {
   padding-top: 1.1em;
   border-top: 1px solid var(--stream-surface-border);
 }
+/* 自动分割：代码块、表格、引用块之前画淡横线，首个元素不加 */
+.ai-markdown .ai-code:not(:first-child),
+.ai-markdown .ai-mermaid:not(:first-child),
+.ai-markdown .ai-table-wrap:not(:first-child),
+.ai-markdown .ai-model-viewer:not(:first-child),
+.ai-markdown .ai-plain-block:not(:first-child),
+.ai-markdown blockquote:not(:first-child) {
+  margin-top: 1.1em;
+  padding-top: 0.9em;
+  border-top: 1px solid var(--stream-surface-border);
+}
+/* ── 去重：模型输出的 hr 与 CSS 自动分割线不重复 ── */
+/* hr 紧邻标题/块元素之前 → hr 已充当分割线，去掉后者的 border-top */
+.ai-markdown hr + h1,
+.ai-markdown hr + h2,
+.ai-markdown hr + h3,
+.ai-markdown hr + .ai-code,
+.ai-markdown hr + .ai-mermaid,
+.ai-markdown hr + .ai-table-wrap,
+.ai-markdown hr + .ai-model-viewer,
+.ai-markdown hr + .ai-plain-block,
+.ai-markdown hr + blockquote {
+  margin-top: 0.6em;
+  padding-top: 0;
+  border-top: none;
+}
+/* 块元素紧跟 hr 之后 → 块元素的自动分割线已画，去掉 hr 的 border */
+.ai-markdown h1 + hr,
+.ai-markdown h2 + hr,
+.ai-markdown h3 + hr,
+.ai-markdown .ai-code + hr,
+.ai-markdown .ai-mermaid + hr,
+.ai-markdown .ai-table-wrap + hr,
+.ai-markdown .ai-model-viewer + hr,
+.ai-markdown .ai-plain-block + hr,
+.ai-markdown blockquote + hr,
+.ai-markdown p + hr,
+.ai-markdown ul + hr,
+.ai-markdown ol + hr {
+  margin-top: 0;
+  border-top: none;
+}
+/* 连续 hr 只保留一条 */
+.ai-markdown hr + hr {
+  border-top: none;
+  margin-top: 0;
+}
 .ai-markdown ul,
-.ai-markdown ol { margin: 0.5em 0; padding-left: 1.4em; }
+.ai-markdown ol { margin: 0.6em 0; padding-left: 1.4em; }
 .ai-markdown ul { list-style: disc; }
 .ai-markdown ol { list-style: decimal; }
-.ai-markdown li { margin: 0.2em 0; }
+.ai-markdown li { margin: 0.3em 0; }
 .ai-markdown li::marker { color: var(--fg-faint); }
 .ai-markdown li > input[type='checkbox'] { margin-right: 0.4em; }
 .ai-markdown a { color: var(--stream-link); }
-.ai-markdown :where(.ai-code, .ai-mermaid, .ai-comfy, .ai-world, .ai-table-wrap, .ai-model-viewer) {
+.ai-markdown :where(.ai-code, .ai-mermaid, .ai-comfy, .ai-world, .ai-table-wrap, .ai-model-viewer, .ai-plain-block) {
   min-width: 0;
   max-width: 100%;
 }
@@ -1544,6 +1606,18 @@ html.ugs-stream-scheme-solarized-dark {
   background: var(--stream-surface-bg);
   object-fit: contain;
 }
+.ai-generated-image-trigger {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.ai-generated-image-trigger .ai-generated-image { margin: 0.7rem 0; }
+.ai-generated-image-trigger:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .ai-audio-player audio {
   display: none;
 }

@@ -404,7 +404,7 @@ describe('AIDock pasted clipboard images', () => {
       const chip = view.container.querySelector<HTMLButtonElement>('.ai-file-chip');
       expect(chip).not.toBeNull();
       expect(chip!.textContent).toContain('app/src/App.tsx');
-      expect(chip!.title).toContain('E:\\UltraGameStudio\\app\\src\\App.tsx');
+      expect(chip!.title).toContain('app/src/App.tsx');
 
       await act(async () => {
         chip!.click();

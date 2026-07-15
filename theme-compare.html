@@ -1,0 +1,64 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>外观调整对比 aurora / midnight / ember</title>
+<style>
+:root{font-family:"Segoe UI",system-ui,sans-serif}
+body{margin:0;background:#0a0a0a;color:#e8e8e8;padding:28px}
+h1{font-size:18px;font-weight:600;margin:0 0 4px}
+.sub{color:#888;font-size:13px;margin:0 0 24px}
+.theme{margin-bottom:38px}
+.theme>h2{font-size:15px;margin:0 0 10px;color:#f0f0f0;display:flex;gap:10px;align-items:center}
+.tag{font-size:11px;padding:2px 8px;border-radius:99px;background:#1e1e1e;color:#aaa;font-weight:400}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.col-label{font-size:12px;color:#777;margin:0 0 6px;letter-spacing:.5px}
+.card{border-radius:10px;padding:14px;border:1px solid var(--bd)}
+.card{background:var(--bg)}
+.mock{display:flex;flex-direction:column;gap:10px}
+.toolbar{display:flex;gap:8px;align-items:center;background:var(--bgalt);border:1px solid var(--bd);border-radius:7px;padding:8px 10px}
+.dot{width:9px;height:9px;border-radius:99px}
+.tb-title{font-size:12px;color:var(--text);font-weight:600;margin-right:auto}
+.tb-btn{font-size:11px;color:var(--muted);border:1px solid var(--bdsoft);border-radius:5px;padding:3px 8px}
+.node{background:var(--panel);border:1px solid var(--bd);border-radius:8px;padding:10px 12px}
+.node .nh{font-size:12px;color:var(--text);font-weight:600;margin:0 0 8px;display:flex;align-items:center;gap:6px}
+.node .nh::before{content:"";width:8px;height:8px;border-radius:2px;background:var(--accent)}
+.inner{background:var(--panel2);border:1px solid var(--bd);border-radius:6px;padding:8px}
+.txt{font-size:12px;color:var(--text)}
+.txt.m{color:var(--muted);font-size:11px}
+.txt.f{color:var(--faint);font-size:11px}
+.pins{display:flex;gap:6px;margin-top:8px}
+.pin{width:11px;height:11px;border-radius:99px}
+.pin.exec{background:var(--accent);box-shadow:0 0 8px 1px var(--accent)}
+.pin.data{background:var(--accent2);box-shadow:0 0 8px 1px var(--accent2)}
+.swatches{display:flex;gap:0;margin-top:10px;border-radius:5px;overflow:hidden;width:fit-content;border:1px solid #222}
+.sw{width:34px;height:22px}
+</style></head><body>
+<h1>外观调整对比 · aurora / midnight / ember</h1>
+<p class="sub">左=改前(before) · 右=改后(after)。用真实 CSS 变量值离线渲染工具条+节点+嵌套面板+强调 pin+三级文字。</p>
+<div id="root"></div>
+<script>
+const themes=[
+ {name:"aurora",note:"Nord · 改动最大：压暗底色 + 拉开分层 + 青强调降饱和",
+  before:{bg:"#2e3440",bgalt:"#323846",panel:"#3b4252",panel2:"#434c5e",bd:"#4c566a",bdsoft:"#3b4252",text:"#eceff4",muted:"#c5cddb",faint:"#8a93a6",accent:"#88c0d0",accent2:"#a3be8c"},
+  after:{bg:"#232831",bgalt:"#282e38",panel:"#2f3641",panel2:"#39424f",bd:"#454f60",bdsoft:"#343c48",text:"#eceff4",muted:"#c0c8d6",faint:"#8a93a6",accent:"#8fbcbb",accent2:"#a3be8c"}},
+ {name:"midnight",note:"降蓝饱和、往中性靠 → 更像工具而非皮肤",
+  before:{bg:"#0b0e1a",bgalt:"#11152a",panel:"#171c38",panel2:"#1f2547",bd:"#2e3563",bdsoft:"#222845",text:"#eef1fb",muted:"#a7aecb",faint:"#6b7399",accent:"#7c6cff",accent2:"#2dd4d4"},
+  after:{bg:"#0c0e16",bgalt:"#101322",panel:"#161a2c",panel2:"#1e2340",bd:"#28304f",bdsoft:"#1f2540",text:"#eef1fb",muted:"#a7aecb",faint:"#6b7399",accent:"#7c6cff",accent2:"#2dd4d4"}},
+ {name:"ember",note:"加强 panel/border 分层、橙收敛",
+  before:{bg:"#1a1411",bgalt:"#221a15",panel:"#2b211a",panel2:"#352920",bd:"#473628",bdsoft:"#352a20",text:"#f5e9dc",muted:"#c2a890",faint:"#8c7461",accent:"#ff8c42",accent2:"#3fb8a8"},
+  after:{bg:"#1a1411",bgalt:"#221a15",panel:"#2b211a",panel2:"#352920",bd:"#4f3a29",bdsoft:"#38291d",text:"#f5e9dc",muted:"#c2a890",faint:"#8c7461",accent:"#f5843e",accent2:"#3fb8a8"}},
+];
+function vars(c){return `--bg:${c.bg};--bgalt:${c.bgalt};--panel:${c.panel};--panel2:${c.panel2};--bd:${c.bd};--bdsoft:${c.bdsoft};--text:${c.text};--muted:${c.muted};--faint:${c.faint};--accent:${c.accent};--accent2:${c.accent2}`}
+function mock(c){return `<div class="card" style="${vars(c)}"><div class="mock">
+ <div class="toolbar"><span class="dot" style="background:var(--accent)"></span><span class="tb-title">节点图</span><span class="tb-btn">运行</span><span class="tb-btn">保存</span></div>
+ <div class="node"><div class="nh">生成材质</div>
+   <div class="inner"><div class="txt">主要文字 primary</div><div class="txt m">次要说明 muted text</div><div class="txt f">占位 faint hint</div></div>
+   <div class="pins"><span class="pin exec"></span><span class="pin data"></span></div>
+ </div>
+ <div class="swatches">${[c.bg,c.panel,c.panel2,c.bd,c.accent,c.accent2].map(x=>`<span class="sw" style="background:${x}"></span>`).join("")}</div>
+</div></div>`}
+document.getElementById("root").innerHTML=themes.map(t=>`
+ <div class="theme"><h2>${t.name}<span class="tag">${t.note}</span></h2>
+ <div class="row">
+  <div><p class="col-label">BEFORE 改前</p>${mock(t.before)}</div>
+  <div><p class="col-label">AFTER 改后</p>${mock(t.after)}</div>
+ </div></div>`).join("");
+</script></body></html>

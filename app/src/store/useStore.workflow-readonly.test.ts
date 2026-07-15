@@ -7,6 +7,7 @@ import {
   sessionChangesRootPathForSession,
   sessionLiveStatus,
   useStore,
+  workflowSessionKeyId,
   workflowDeleteProtectionReason,
   workflowReadOnlyReason,
   type WorkflowSessionKey,
@@ -377,8 +378,8 @@ describe('workflow read-only guard', () => {
     expect(useStore.getState().dirty).toBe(true);
   });
 
-  it('protects only live workflow history sessions from deletion', () => {
-    const workflowSession = { id: 's_test', isWorkflow: true };
+  it('protects all live history sessions from deletion', () => {
+    const workflowSession = { id: 's_test' };
 
     expect(
       workflowDeleteProtectionReason(workflowSession, null, {
@@ -394,17 +395,17 @@ describe('workflow read-only guard', () => {
     ).toBe('aiEditing');
     expect(
       workflowDeleteProtectionReason(
-        { id: 's_test', isWorkflow: false },
+        { id: 's_test' },
         null,
         {
           runningSessions: [ACTIVE_SESSION_KEY],
           aiEditingSessions: [ACTIVE_SESSION_KEY],
         },
       ),
-    ).toBeNull();
+    ).toBe('running');
     expect(
       workflowDeleteProtectionReason(
-        { id: 's_done', isWorkflow: true },
+        { id: 's_done' },
         null,
         {
           runningSessions: [],
@@ -415,7 +416,7 @@ describe('workflow read-only guard', () => {
   });
 
   it.each(['running', 'aiEditing'] as const)(
-    'does not call history deletion for %s workflow sessions',
+    'does not call history deletion for %s sessions',
     async (reason) => {
       const workspaceId = 'ws_test';
       const protectedSession = {
@@ -501,43 +502,36 @@ describe('workflow read-only guard', () => {
     },
   );
 
-  it('keeps deleting non-workflow history sessions even when they are live', async () => {
+  it('blocks deletion of live non-workflow history sessions', async () => {
     const workspaceId = 'ws_test';
-    const deletableSession = {
+    const liveSession = {
       id: 's_live_chat',
       title: 'Live chat',
       createdAt: 1,
       isWorkflow: false,
     };
-    const sessionKey = { workspaceId, sessionId: deletableSession.id };
+    const sessionKey = { workspaceId, sessionId: liveSession.id };
     const deleteSpy = vi
       .spyOn(historyStore, 'deleteSession')
       .mockResolvedValue(undefined);
-    const listSpy = vi
-      .spyOn(historyStore, 'listWorkspaces')
-      .mockResolvedValue([]);
 
     try {
       resetStore('design', false);
       useStore.setState({
         activeWorkspaceId: workspaceId,
         activeSessionId: 's_other',
-        sessions: [deletableSession],
-        sessionTree: { [workspaceId]: [deletableSession] },
+        sessions: [liveSession],
+        sessionTree: { [workspaceId]: [liveSession] },
         runningSessions: [sessionKey],
         aiEditingSessions: [sessionKey],
       });
 
-      useStore.getState().deleteSession(deletableSession.id, workspaceId);
-      await Promise.resolve();
-      await Promise.resolve();
+      useStore.getState().deleteSession(liveSession.id, workspaceId);
       await Promise.resolve();
 
-      expect(deleteSpy).toHaveBeenCalledWith(workspaceId, deletableSession.id);
-      expect(useStore.getState().sessionTree[workspaceId]).toEqual([]);
+      expect(deleteSpy).not.toHaveBeenCalled();
     } finally {
       deleteSpy.mockRestore();
-      listSpy.mockRestore();
     }
   });
 
@@ -806,6 +800,7 @@ describe('workflow read-only guard', () => {
         workspace: '',
         workspaceFolders: [],
         modelStrategy: 'inherit',
+        knowledgeBaseMode: false,
         gddMode: false,
         imageMode: false,
         musicMode: false,
@@ -947,6 +942,75 @@ describe('workflow read-only guard', () => {
       adapter: 'claude-code',
       modelClass: 'sonnet',
     });
+  });
+
+  it('restores an old chat session route after the Settings default changes', async () => {
+    seedDefaultChannelProviders();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath(
+      'E:\\history-route',
+    );
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      title: '旧会话',
+      messages: [
+        {
+          id: 'm_old_route',
+          role: 'assistant',
+          text: '旧回答',
+          routeLabel: 'PackyCode · packy-code',
+          createdAt: 2,
+        },
+      ],
+    });
+    resetStore('design', false);
+    const summary: Session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: record.messages.length,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: 's_current',
+      workspaces: [workspace],
+      sessions: [summary],
+      sessionTree: { [workspace.id]: [summary] },
+      composerBySession: {},
+    });
+
+    useStore.getState().setDefaultRunSelection({
+      adapter: 'claude-code',
+      modelClass: 'claude-opus-4-8',
+      providerId: 'p_sss',
+      channelId: 'default',
+    });
+    useStore.getState().selectSession(record.id, workspace.id);
+
+    await waitForStore(
+      () => useStore.getState().activeSessionId === record.id,
+      'old chat session activation',
+    );
+    const selection = workflowDefaultGatewaySelection(useStore.getState().workflow);
+    expect(selection).toEqual({
+      adapter: 'claude-code',
+      modelClass: 'packy-code',
+      providerId: 'p_packy',
+      channelId: 'default',
+    });
+    expect(
+      useStore.getState().composerBySession[
+        workflowSessionKeyId({
+          workspaceId: workspace.id,
+          sessionId: record.id,
+        })
+      ]?.gatewaySelection,
+    ).toEqual(selection);
   });
 
   it.each([

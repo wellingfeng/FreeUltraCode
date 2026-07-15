@@ -13,6 +13,7 @@ import {
 import {
   ArrowDownToLine,
   ArrowUp,
+  BookOpen,
   Check,
   ChevronDown,
   ChevronRight,
@@ -1787,10 +1788,13 @@ export default function AIDock({
   const renameWorkflowSession = useStore((s) => s.renameWorkflowSession);
   const deleteMessage = useStore((s) => s.deleteMessage);
   const queuedChatMessageIds = useStore((s) => s.queuedChatMessageIds);
+  const steerableQueuedChatMessageIds = useStore(
+    (s) => s.steerableQueuedChatMessageIds,
+  );
   const updateQueuedChatMessage = useStore((s) => s.updateQueuedChatMessage);
   const deleteQueuedChatMessage = useStore((s) => s.deleteQueuedChatMessage);
-  const interjectQueuedChatMessage = useStore(
-    (s) => s.interjectQueuedChatMessage,
+  const steerQueuedChatMessage = useStore(
+    (s) => s.steerQueuedChatMessage,
   );
   const branchSessionFromMessage = useStore((s) => s.branchSessionFromMessage);
   const runSelection = useStore(
@@ -2466,13 +2470,11 @@ export default function AIDock({
       ? reusableChatText
       : draft.trim();
   const chatRunActive = useChatRunButton && activeChatting;
-  // Interjection ("插话"): while a chat turn is still streaming, a typed
-  // follow-up can be sent without waiting. It queues behind the in-flight turn
-  // and then resumes the same session (warm context) via --resume, instead of
-  // colliding on the native --session-id. With an empty box the button still
-  // acts as Stop. Favorite reruns (chatRunText from history) keep Stop-only so
-  // an accidental click can't fire a stale prompt mid-stream.
-  const chatInterject = chatRunActive && draft.trim().length > 0;
+  // Follow-up while a turn is streaming: normal send adds it to the per-session
+  // FIFO. Its lightning action may steer it into an active supported CLI turn.
+  // With an empty box the button still acts as Stop. Favorite reruns keep
+  // Stop-only so an accidental click cannot fire a stale prompt mid-stream.
+  const chatFollowUp = chatRunActive && draft.trim().length > 0;
   useEffect(() => {
     if (!chatTitleEditing) setChatTitleDraft(chatTitle);
   }, [chatTitle, chatTitleEditing]);
@@ -3355,13 +3357,14 @@ export default function AIDock({
       const fallback =
         selectedDefaultProvider.adapter === "claude-code"
           ? [
+              runSelection.modelOverride,
               runSelection.modelClass,
               ...composerModelOptions.map((option) => option.id),
               "sonnet",
               "opus",
               "haiku",
             ]
-          : ["default", runSelection.modelClass];
+          : ["default", runSelection.modelOverride, runSelection.modelClass];
       return uniqueModelSelectOptions([
         provider.model ?? "",
         ...providerModelOptions(provider),
@@ -4218,6 +4221,10 @@ export default function AIDock({
   const queuedChatMessageIdSet = useMemo(
     () => new Set(queuedChatMessageIds),
     [queuedChatMessageIds],
+  );
+  const steerableQueuedChatMessageIdSet = useMemo(
+    () => new Set(steerableQueuedChatMessageIds),
+    [steerableQueuedChatMessageIds],
   );
   const aiBusy = mode === "running" || activeAiEditing || activeChatting;
 
@@ -7791,7 +7798,7 @@ export default function AIDock({
                 {t(locale, isChat ? "dock.chatEmpty" : "dock.empty")}
               </div>
             ) : (
-              <ul ref={streamContentRef} className="flex flex-col gap-3">
+              <ul ref={streamContentRef} className="flex flex-col gap-4">
                 {hiddenMessageCount > 0 && (
                   <li className="flex justify-center py-1">
                     <button
@@ -7916,25 +7923,20 @@ export default function AIDock({
                         )}
                         {queuedUserMessage && !normalizedSearch && (
                           <>
-                            {/* Real interjection: token-level splicing into an
-                                answer that is still generating has no backing
-                                support (the native CLI subprocesses are fed one
-                                prompt over stdin, closed right after — no live
-                                channel left to push more input mid-run). What
-                                IS achievable: abort just the in-flight turn for
-                                this session and let this already-queued message
-                                start immediately instead of waiting for the
-                                current answer to finish naturally. See
-                                interjectRunningChatTurn in useStore.ts. */}
-                            <button
-                              type="button"
-                              onClick={() => interjectQueuedChatMessage(m.id)}
-                              title={t(locale, "dock.liveInterjectTip")}
-                              aria-label={t(locale, "dock.liveInterject")}
-                              className="shrink-0 rounded text-fg-faint opacity-0 transition-colors transition-opacity hover:text-accent-3 group-hover/msg:opacity-100"
-                            >
-                              <Zap size={13} />
-                            </button>
+                            {/* Explicit native CLI steer. Normal sends remain queued;
+                                unsupported or rejected steer requests leave the
+                                message in FIFO and never abort the active turn. */}
+                            {steerableQueuedChatMessageIdSet.has(m.id) && (
+                              <button
+                                type="button"
+                                onClick={() => steerQueuedChatMessage(m.id)}
+                                title={t(locale, "dock.liveInterjectTip")}
+                                aria-label={t(locale, "dock.liveInterject")}
+                                className="shrink-0 rounded text-fg-faint opacity-0 transition-colors transition-opacity hover:text-accent-3 group-hover/msg:opacity-100"
+                              >
+                                <Zap size={13} />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => beginQueuedMessageEdit(m)}
@@ -8994,6 +8996,33 @@ export default function AIDock({
                 <span>{t(locale, "dock.tabOrganization")}</span>
               </button>
             )}
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() =>
+                setComposer({
+                  knowledgeBaseMode: !composer.knowledgeBaseMode,
+                })
+              }
+              disabled={isReadOnly}
+              aria-pressed={composer.knowledgeBaseMode}
+              title={t(
+                locale,
+                composer.knowledgeBaseMode
+                  ? "dock.knowledgeBaseOnTitle"
+                  : "dock.knowledgeBaseOffTitle",
+              )}
+              aria-label={t(locale, "dock.knowledgeBaseLabel")}
+              className={cn(
+                composerToolButtonClass,
+                "gap-1 font-medium",
+                composer.knowledgeBaseMode &&
+                  "border-accent/45 bg-accent/10 text-accent",
+              )}
+            >
+              <BookOpen size={14} strokeWidth={2.1} />
+              <span>{t(locale, "dock.knowledgeBaseShort")}</span>
+            </button>
 
             {activeRemoteWorkspaceRoot ? (
               <>
@@ -9100,9 +9129,7 @@ export default function AIDock({
               <button
                 type="button"
                 onClick={() => {
-                  // Interjection wins over Stop: a typed follow-up sent mid-
-                  // stream queues behind the running turn and resumes it.
-                  if (chatInterject) {
+                  if (chatFollowUp) {
                     submit();
                     return;
                   }
@@ -9117,14 +9144,14 @@ export default function AIDock({
                   submit();
                 }}
                 disabled={
-                  !chatInterject &&
+                  !chatFollowUp &&
                   !chatRunActive &&
                   (!(useChatRunButton ? chatRunText : draft.trim()) ||
                     isReadOnly ||
                     activeAiEditing)
                 }
                 title={
-                  chatInterject
+                  chatFollowUp
                     ? t(locale, "dock.interjectTitle")
                     : chatRunActive
                       ? t(locale, "dock.stopChatTitle")
@@ -9137,7 +9164,7 @@ export default function AIDock({
                             : sendShortcutHint
                 }
                 aria-label={
-                  chatInterject
+                  chatFollowUp
                     ? t(locale, "dock.interjectTitle")
                     : chatRunActive
                       ? t(locale, "dock.stopChatTitle")
@@ -9147,12 +9174,12 @@ export default function AIDock({
                 }
                 className={
                   "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 " +
-                  (chatRunActive && !chatInterject
+                  (chatRunActive && !chatFollowUp
                     ? "border border-border bg-panel-2 text-fg-dim hover:border-accent hover:text-fg"
                     : "bg-fg-dim text-bg hover:bg-fg")
                 }
               >
-                {chatInterject ? (
+                {chatFollowUp ? (
                   <ArrowUp size={16} strokeWidth={2.4} />
                 ) : chatRunActive ? (
                   <Square size={12} strokeWidth={2.2} />
