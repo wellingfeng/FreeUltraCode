@@ -280,6 +280,8 @@ export function VisibleFileChip({
   const originalPath = refData.path;
   // Resolved path is still used for existence check, tooltip, and copy.
   const resolvedPath = displayFileRefPath(refData, cwd);
+  const pathTitle =
+    originalPath === resolvedPath ? resolvedPath : `${originalPath}\n${resolvedPath}`;
   const interactive = typeof onOpenFile === 'function';
   const isImage = isImageFileRef(refData);
   const thumb = useImageThumbnail(isImage ? resolvedPath : null, cwd);
@@ -394,8 +396,8 @@ export function VisibleFileChip({
           onContextMenu={openContextMenu}
           title={
             interactive
-              ? `${resolvedPath}\n${t(locale, 'chat.revealHint')}`
-              : resolvedPath
+              ? `${pathTitle}\n${t(locale, 'chat.revealHint')}`
+              : pathTitle
           }
           className={
             'ai-file-chip-thumb group relative inline-flex h-[72px] w-[72px] shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-panel-2 align-top ' +
@@ -420,10 +422,10 @@ export function VisibleFileChip({
   }
 
   const chipTitle = fileMissing
-    ? `${t(locale, 'chat.fileNotFound')}: ${resolvedPath}\n${t(locale, 'chat.fileNotFoundHint')}`
+    ? `${t(locale, 'chat.fileNotFound')}: ${pathTitle}\n${t(locale, 'chat.fileNotFoundHint')}`
     : interactive
-      ? `${resolvedPath}\n${t(locale, 'chat.revealHint')}`
-      : resolvedPath;
+      ? `${pathTitle}\n${t(locale, 'chat.revealHint')}`
+      : pathTitle;
 
   return (
     <span className="relative inline-flex max-w-full align-baseline">

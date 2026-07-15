@@ -170,7 +170,6 @@ import {
   modelClassFromModelId,
   normalizeGatewaySelection,
   normalizeGatewayWorkflow as migrateWorkflowGateway,
-  selectionKey,
   systemDefaultGatewaySelection,
   withoutWorkflowGatewayDefaults,
   workflowDefaultGatewaySelection,
@@ -4869,22 +4868,6 @@ export const useStore = create<StoreState>((set, get) => ({
       state.workflow,
       state.composer.model,
     );
-    const activeChatAppend =
-      state.workflow.meta?.simple === true
-        ? appendPromptToActiveSimpleChat(
-            aiEditingSession,
-            gatewaySelection,
-            trimmed,
-          )
-        : 'none';
-    if (activeChatAppend === 'selection-mismatch') {
-      set({ blockedSendTip: 'model-switched-while-chatting' });
-      return false;
-    }
-    if (activeChatAppend === 'appended') {
-      if (state.blockedSendTip) set({ blockedSendTip: null });
-      return true;
-    }
     if (state.blockedSendTip) set({ blockedSendTip: null });
     const workspaceRootPath = sessionChangesRootPathForSession(
       state,
@@ -6021,6 +6004,17 @@ ${previousReply.slice(0, 4000)}
         // otherwise "继续"/retry reuses it and claude rejects the duplicate.
         let nativeSession: ChatNativeSession | null = null;
         const usageBefore = readUsageMeterSnapshot(usageMeterContext);
+        // Elapsed time must advance even when the model/CLI emits no events.
+        // Streaming callbacks refresh the bubble opportunistically, but a
+        // stalled first token previously left it frozen at "耗时 0s".
+        const timingRefresh = globalThis.setInterval(() => {
+          if (!activeId || !aiEditActive(ch)) return;
+          const current = ch.messages.find((message) => message.id === activeId);
+          if (!current?.text.startsWith('⏱ ')) return;
+          const bodyStart = current.text.indexOf('\n');
+          if (bodyStart < 0) return;
+          setActive(withAiTiming(current.text.slice(bodyStart + 1)));
+        }, 1_000);
         try {
           newBubble(withAiTiming('⟳ 生成中…'));
           let routeLine = gatewayRouteLine(directRoute);
@@ -6377,6 +6371,7 @@ ${previousReply.slice(0, 4000)}
             }
           }
         } finally {
+          globalThis.clearInterval(timingRefresh);
           removeAiEditChannel(ch);
         }
       };
@@ -7149,47 +7144,6 @@ function isMissingClaudeConversationError(err: unknown): boolean {
 function isSessionAlreadyInUseError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? '');
   return /session ID .* is already in use/i.test(message);
-}
-
-// Currently unused (no caller wired up yet); kept commented to preserve intent.
-// function hasActiveChatForDifferentSelection(
-//   sessionKey: WorkflowSessionKey,
-//   selection: GatewaySelection,
-// ): boolean {
-//   const currentKey = selectionKey(normalizeGatewaySelection(selection));
-//   return getAiEditChatChannels(
-//     sessionKey.workspaceId,
-//     sessionKey.sessionId,
-//   ).some((ch) => {
-//     if (!ch.gatewaySelection) return false;
-//     return selectionKey(normalizeGatewaySelection(ch.gatewaySelection)) !== currentKey;
-//   });
-// }
-
-type ActiveChatAppendResult = 'none' | 'appended' | 'selection-mismatch';
-
-function appendPromptToActiveSimpleChat(
-  sessionKey: WorkflowSessionKey,
-  selection: GatewaySelection,
-  text: string,
-): ActiveChatAppendResult {
-  void text;
-  const channels = getAiEditChatChannels(
-    sessionKey.workspaceId,
-    sessionKey.sessionId,
-  );
-  if (channels.length === 0) return 'none';
-
-  const currentKey = selectionKey(normalizeGatewaySelection(selection));
-  const compatible = channels.filter((ch) => {
-    if (!ch.gatewaySelection) return false;
-    return selectionKey(normalizeGatewaySelection(ch.gatewaySelection)) === currentKey;
-  });
-  if (compatible.length !== channels.length || compatible.length === 0) {
-    return 'selection-mismatch';
-  }
-
-  return 'none';
 }
 
 function runningProgressFromChannel(ch: RunChannel): RunProgressSummary {

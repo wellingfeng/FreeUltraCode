@@ -742,6 +742,17 @@ function resolveChannelModel(
     channel.route.models?.[modelClass] ?? channel.models?.[modelClass];
   if (tierModel) return normalizeKnownProviderModel(baseUrl, tierModel);
 
+  if (provider.adapter !== 'claude-code') {
+    const selectedModel = normalizeKnownProviderModel(baseUrl, modelClass);
+    if (
+      selectedModel &&
+      selectedModel !== 'default' &&
+      !CLI_TIER_ALIASES.has(selectedModel)
+    ) {
+      return selectedModel;
+    }
+  }
+
   const channelModel = normalizeKnownProviderModel(
     baseUrl,
     isFreeAutoProvider && isFreeChannelAutoModel(channel.route.model ?? channel.model)

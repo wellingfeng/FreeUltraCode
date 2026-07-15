@@ -7,9 +7,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 use tauri::{
-    AppHandle, Manager, Runtime,
     menu::MenuBuilder,
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, Runtime,
 };
 
 mod cache_cleanup;
@@ -233,10 +233,10 @@ fn show_windows_waiting_input_notification(
 ) -> Result<bool, String> {
     use std::time::Duration as StdDuration;
     use windows::{
+        core::{IInspectable, HSTRING},
         Data::Xml::Dom::XmlDocument,
         Foundation::TypedEventHandler,
         UI::Notifications::{ToastNotification, ToastNotificationManager},
-        core::{HSTRING, IInspectable},
     };
 
     let app_id = windows_notification_app_id(&app);
@@ -288,7 +288,7 @@ fn dismiss_waiting_input_notification(
     workspace_id: Option<String>,
     session_id: Option<String>,
 ) -> Result<bool, String> {
-    use windows::{UI::Notifications::ToastNotificationManager, core::HSTRING};
+    use windows::{core::HSTRING, UI::Notifications::ToastNotificationManager};
 
     let app_id = windows_notification_app_id(&app);
     let tag = waiting_input_notification_tag(workspace_id.as_deref(), session_id.as_deref());
@@ -5831,7 +5831,10 @@ fn bun_command_for_shim(exe: &str) -> String {
     let path = std::path::Path::new(exe);
     if path.is_absolute() {
         if let Some(parent) = path.parent() {
-            return parent.join(bun_command_name()).to_string_lossy().to_string();
+            return parent
+                .join(bun_command_name())
+                .to_string_lossy()
+                .to_string();
         }
     }
     bun_command_name().to_string()
@@ -10541,8 +10544,7 @@ fn knowledge_base_allowed_text_ext(path: &Path) -> bool {
         .to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        ""
-            | "txt"
+        "" | "txt"
             | "md"
             | "mdx"
             | "markdown"
@@ -10772,8 +10774,8 @@ fn read_knowledge_base_file(path: &Path) -> Result<Option<KnowledgeBaseScannedFi
         .take(KNOWLEDGE_BASE_MAX_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| format!("读取文件失败：{e}"))?;
-    let truncated =
-        bytes.len() as u64 > KNOWLEDGE_BASE_MAX_FILE_BYTES || size_bytes > KNOWLEDGE_BASE_MAX_FILE_BYTES;
+    let truncated = bytes.len() as u64 > KNOWLEDGE_BASE_MAX_FILE_BYTES
+        || size_bytes > KNOWLEDGE_BASE_MAX_FILE_BYTES;
     if bytes.len() as u64 > KNOWLEDGE_BASE_MAX_FILE_BYTES {
         bytes.truncate(KNOWLEDGE_BASE_MAX_FILE_BYTES as usize);
     }
@@ -10893,9 +10895,10 @@ fn knowledge_base_scan_files_blocking(
             Err(err) => {
                 result.skipped_dirs += 1;
                 if result.errors.len() < 20 {
-                    result
-                        .errors
-                        .push(format!("{}: 读取目录失败：{err}", display_preview_path(&canonical)));
+                    result.errors.push(format!(
+                        "{}: 读取目录失败：{err}",
+                        display_preview_path(&canonical)
+                    ));
                 }
                 continue;
             }
@@ -13514,33 +13517,83 @@ fn extract_json(text: &str) -> String {
     t.to_string()
 }
 
-/// Default hard timeout for a single CLI invocation before it is killed.
-const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 1800;
+/// Default hard timeout for a single CLI invocation. 0 disables the total
+/// runtime limit; progress-aware idle detection is safer for long agent runs.
+const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 0;
 /// Default "no observable progress" timeout for a single CLI invocation.
-/// 0 disables idle detection; long-running tools often stay quiet while waiting
-/// for external work such as CI, package builds, or downloads.
-const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 0;
+/// This is not a total runtime limit: healthy long-running tools may continue
+/// indefinitely while they emit output. Set the env override to 0 to disable.
+const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 1800;
 const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
 /// Idle gap (no stdout activity) after which a "still running" heartbeat line is
 /// emitted to the run log, so a long node never looks completely frozen even
 /// during a long tool execution or a slow first token.
 const AI_CLI_HEARTBEAT_SECS: u64 = 12;
+const DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS: u64 = 1800;
+const DEFAULT_CODEX_TURN_START_TIMEOUT_SECS: u64 = 1800;
+const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS: u64 = 1800;
 
-/// Read the CLI timeout override from the environment, falling back to a
-/// longer default so legitimate long-running workflows are less likely to be
-/// killed too early.
+fn configured_stage_timeout_secs(name: &str, default_secs: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds >= 5)
+        .unwrap_or(default_secs)
+}
+
+fn codex_thread_start_timeout_secs() -> u64 {
+    configured_stage_timeout_secs(
+        "ULTRAGAMESTUDIO_CODEX_THREAD_START_TIMEOUT_SECS",
+        DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS,
+    )
+}
+
+fn codex_turn_start_timeout_secs() -> u64 {
+    configured_stage_timeout_secs(
+        "ULTRAGAMESTUDIO_CODEX_TURN_START_TIMEOUT_SECS",
+        DEFAULT_CODEX_TURN_START_TIMEOUT_SECS,
+    )
+}
+
+fn codex_first_event_timeout_secs() -> u64 {
+    configured_stage_timeout_secs(
+        "ULTRAGAMESTUDIO_CODEX_FIRST_EVENT_TIMEOUT_SECS",
+        DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS,
+    )
+}
+
+fn ai_cli_running_stage(
+    is_codex: bool,
+    thread_started: bool,
+    turn_started: bool,
+    first_event_seen: bool,
+) -> &'static str {
+    if !is_codex {
+        "模型/工具执行中"
+    } else if !thread_started {
+        "正在创建 Codex 线程"
+    } else if !turn_started {
+        "正在启动 Codex Turn"
+    } else if !first_event_seen {
+        "正在等待模型首个事件"
+    } else {
+        "模型/工具执行中"
+    }
+}
+
+/// Read the total-runtime timeout override. 0 disables the hard deadline.
 fn configured_ai_cli_timeout_secs() -> u64 {
     std::env::var("ULTRAGAMESTUDIO_AI_CLI_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|secs| *secs >= 60)
+        .filter(|secs| *secs == 0 || *secs >= 60)
         .unwrap_or(DEFAULT_AI_CLI_TIMEOUT_SECS)
 }
 
 fn ai_cli_timeout_secs(override_secs: Option<u64>) -> u64 {
     let configured = configured_ai_cli_timeout_secs();
     let dynamic = override_secs
-        .filter(|secs| *secs >= 60)
+        .filter(|secs| *secs == 0 || *secs >= 60)
         .unwrap_or(configured);
     configured.max(dynamic)
 }
@@ -14380,7 +14433,11 @@ fn summarize_tool_use(name: &str, input: &serde_json::Value) -> String {
     })
     .unwrap_or_else(|| {
         let s = input.to_string();
-        if s == "null" { String::new() } else { s }
+        if s == "null" {
+            String::new()
+        } else {
+            s
+        }
     });
 
     let detail: String = detail.replace(['\n', '\r'], " ");
@@ -14431,11 +14488,11 @@ fn encode_tool_patch(patch: &serde_json::Value) -> String {
     format!("\n<<UGS_TOOL>>{}<<UGS_TOOL_END>>\n", payload)
 }
 
-fn encode_running_status_patch(run_id: &str, elapsed_secs: u64) -> String {
+fn encode_running_status_patch(run_id: &str, elapsed_secs: u64, stage: &str) -> String {
     let patch = serde_json::json!({
         "id": format!("runtime-status-{run_id}"),
         "name": "运行状态",
-        "subject": format!("仍在运行…（已 {elapsed_secs}s）"),
+        "subject": format!("{stage} · 仍在运行…（已 {elapsed_secs}s）"),
         "status": "running",
         "ephemeral": true,
     });
@@ -14600,6 +14657,11 @@ impl CodexLiteEvent {
                 .or_else(|| self.params.as_ref().and_then(|p| p.item.as_ref())),
             _ => None,
         }
+    }
+
+    fn is_turn_progress(&self) -> bool {
+        self.kind()
+            .is_some_and(|kind| kind.starts_with("item/") || kind.starts_with("item."))
     }
 
     fn turn_completion_status(&self) -> Option<String> {
@@ -14898,6 +14960,42 @@ fn write_codex_app_server_message(
         .write_all(b"\n")
         .and_then(|_| stdin.flush())
         .map_err(|e| format!("写入 Codex App Server 失败: {e}"))
+}
+
+fn set_codex_startup_error(error: &Arc<Mutex<Option<String>>>, message: String) {
+    if let Ok(mut current) = error.lock() {
+        if current.is_none() {
+            *current = Some(message);
+        }
+    }
+}
+
+fn wait_for_codex_start_id(
+    value: &Arc<Mutex<Option<String>>>,
+    startup_error: &Arc<Mutex<Option<String>>>,
+    timeout: std::time::Duration,
+    stage: &str,
+) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(error) = startup_error
+            .lock()
+            .ok()
+            .and_then(|current| current.clone())
+        {
+            return Err(error);
+        }
+        if let Some(id) = value.lock().ok().and_then(|current| current.clone()) {
+            return Ok(id);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Codex {stage} 响应超时（{}s）。",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 fn write_claude_stream_message(
@@ -15439,6 +15537,11 @@ async fn ai_cli(
             })?;
         register_ai_cli(&run_id, child.id());
         let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
+        // Codex app-server may print repetitive diagnostics on stderr while a
+        // turn makes no real progress. Keep protocol progress separate so log
+        // spam cannot defeat the idle watchdog.
+        let last_meaningful_activity =
+            Arc::new(Mutex::new(std::time::Instant::now()));
 
         let mut stdin_pipe = child.stdin.take();
         // Codex/Gemini have no `--append-system-prompt`, so the extra-workspace
@@ -15459,6 +15562,9 @@ async fn ai_cli(
         };
         let codex_thread_id = Arc::new(Mutex::new(None::<String>));
         let codex_turn_id = Arc::new(Mutex::new(None::<String>));
+        let codex_startup_error = Arc::new(Mutex::new(None::<String>));
+        let codex_first_event_seen = Arc::new(AtomicBool::new(false));
+        let codex_turn_started_at = Arc::new(Mutex::new(None::<std::time::Instant>));
         let codex_pending = Arc::new(Mutex::new(HashMap::new()));
         let codex_stdin = if codex_app_server {
             stdin_pipe.take().map(|stdin| Arc::new(Mutex::new(stdin)))
@@ -15494,6 +15600,9 @@ async fn ai_cli(
         let writer_stdin = codex_stdin.clone();
         let writer_claude_stdin = claude_stdin.clone();
         let writer_thread_id = Arc::clone(&codex_thread_id);
+        let writer_turn_id = Arc::clone(&codex_turn_id);
+        let writer_startup_error = Arc::clone(&codex_startup_error);
+        let writer_turn_started_at = Arc::clone(&codex_turn_started_at);
         let writer_prompt = prompt.clone();
         let writer_model = model.clone();
         let writer_cwd = cwd.clone();
@@ -15503,7 +15612,7 @@ async fn ai_cli(
                 let Some(stdin) = writer_stdin else {
                     return;
                 };
-                let _ = write_codex_app_server_message(
+                if let Err(error) = write_codex_app_server_message(
                     &stdin,
                     &serde_json::json!({
                         "method": "initialize",
@@ -15516,11 +15625,23 @@ async fn ai_cli(
                             }
                         }
                     }),
-                );
-                let _ = write_codex_app_server_message(
+                ) {
+                    set_codex_startup_error(
+                        &writer_startup_error,
+                        format!("Codex initialize 写入失败：{error}"),
+                    );
+                    return;
+                }
+                if let Err(error) = write_codex_app_server_message(
                     &stdin,
                     &serde_json::json!({ "method": "initialized", "params": {} }),
-                );
+                ) {
+                    set_codex_startup_error(
+                        &writer_startup_error,
+                        format!("Codex initialized 写入失败：{error}"),
+                    );
+                    return;
+                }
 
                 let permission = writer_permission.as_deref().unwrap_or("full");
                 let approval_policy = if permission == "ask" {
@@ -15551,33 +15672,34 @@ async fn ai_cli(
                 {
                     thread_params["cwd"] = serde_json::Value::String(cwd.to_string());
                 }
-                if write_codex_app_server_message(
+                if let Err(error) = write_codex_app_server_message(
                     &stdin,
                     &serde_json::json!({
                         "method": "thread/start",
                         "id": "ugs-thread-start",
                         "params": thread_params
                     }),
-                )
-                .is_err()
-                {
+                ) {
+                    set_codex_startup_error(
+                        &writer_startup_error,
+                        format!("Codex thread/start 写入失败：{error}"),
+                    );
                     return;
                 }
 
-                let deadline =
-                    std::time::Instant::now() + std::time::Duration::from_secs(10);
-                let thread_id = loop {
-                    if let Some(thread_id) =
-                        writer_thread_id.lock().ok().and_then(|id| id.clone())
-                    {
-                        break thread_id;
-                    }
-                    if std::time::Instant::now() >= deadline {
+                let thread_id = match wait_for_codex_start_id(
+                    &writer_thread_id,
+                    &writer_startup_error,
+                    std::time::Duration::from_secs(codex_thread_start_timeout_secs()),
+                    "thread/start",
+                ) {
+                    Ok(thread_id) => thread_id,
+                    Err(error) => {
+                        set_codex_startup_error(&writer_startup_error, error);
                         return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
                 };
-                let _ = write_codex_app_server_message(
+                if let Err(error) = write_codex_app_server_message(
                     &stdin,
                     &serde_json::json!({
                         "method": "turn/start",
@@ -15587,7 +15709,26 @@ async fn ai_cli(
                             "input": [{ "type": "text", "text": writer_prompt }]
                         }
                     }),
-                );
+                ) {
+                    set_codex_startup_error(
+                        &writer_startup_error,
+                        format!("Codex turn/start 写入失败：{error}"),
+                    );
+                    return;
+                }
+                match wait_for_codex_start_id(
+                    &writer_turn_id,
+                    &writer_startup_error,
+                    std::time::Duration::from_secs(codex_turn_start_timeout_secs()),
+                    "turn/start",
+                ) {
+                    Ok(_) => {
+                        if let Ok(mut started_at) = writer_turn_started_at.lock() {
+                            *started_at = Some(std::time::Instant::now());
+                        }
+                    }
+                    Err(error) => set_codex_startup_error(&writer_startup_error, error),
+                }
             })
         } else if claude_stream_input {
             std::thread::spawn(move || {
@@ -15624,8 +15765,11 @@ async fn ai_cli(
         let codex_streamed_output_reader = Arc::clone(&codex_streamed_output);
         let codex_thread_id_reader = Arc::clone(&codex_thread_id);
         let codex_turn_id_reader = Arc::clone(&codex_turn_id);
+        let codex_startup_error_reader = Arc::clone(&codex_startup_error);
+        let codex_first_event_seen_reader = Arc::clone(&codex_first_event_seen);
         let codex_pending_reader = Arc::clone(&codex_pending);
         let stdout_activity = Arc::clone(&last_activity);
+        let meaningful_activity_reader = Arc::clone(&last_meaningful_activity);
         // Claude/Gemini stream-json emit a terminal `result` event once the turn
         // is logically done. The process itself can linger afterward (lingering
         // MCP servers / child processes), so polling `try_wait` alone can spin
@@ -15699,6 +15843,10 @@ async fn ai_cli(
                                 if let Ok(mut current) = codex_turn_status_reader.lock() {
                                     *current = Some("failed".to_string());
                                 }
+                                set_codex_startup_error(
+                                    &codex_startup_error_reader,
+                                    format!("Codex {id} 失败：{message}"),
+                                );
                             }
                             if id == "ugs-thread-start" {
                                 if let Some(thread_id) = event
@@ -15741,6 +15889,10 @@ async fn ai_cli(
                                 }
                             }
                         }
+                        if event.is_turn_progress() {
+                            codex_first_event_seen_reader.store(true, Ordering::Relaxed);
+                            touch_activity(&meaningful_activity_reader);
+                        }
                         match event.kind() {
                             Some("thread/started") => {
                                 if let Some(thread_id) = event
@@ -15779,6 +15931,7 @@ async fn ai_cli(
                                     }
                                     progress.push(delta);
                                     received_content_reader.store(true, Ordering::Relaxed);
+                                    codex_first_event_seen_reader.store(true, Ordering::Relaxed);
                                 }
                                 continue;
                             }
@@ -15811,6 +15964,8 @@ async fn ai_cli(
                             continue;
                         }
                         if let Some(item) = event.completed_item() {
+                            codex_first_event_seen_reader.store(true, Ordering::Relaxed);
+                            received_content_reader.store(true, Ordering::Relaxed);
                             if matches!(
                                 item.item_type.as_deref(),
                                 Some("agent_message") | Some("agentMessage")
@@ -16234,7 +16389,8 @@ async fn ai_cli(
         let idle_timeout_secs = ai_cli_idle_timeout_secs(idle_timeout_seconds);
         let idle_timeout = (idle_timeout_secs > 0)
             .then(|| std::time::Duration::from_secs(idle_timeout_secs));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+        let deadline = (timeout_secs > 0)
+            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs));
         let mut last_sidecar_len = 0_u64;
         let mut last_sidecar_modified: Option<std::time::SystemTime> = None;
         let run_started_at = std::time::Instant::now();
@@ -16246,7 +16402,39 @@ async fn ai_cli(
         let stream_complete_grace = std::time::Duration::from_secs(3);
         let mut stream_complete_at: Option<std::time::Instant> = None;
         let wait_result = loop {
+            let watchdog_activity = if is_codex {
+                &last_meaningful_activity
+            } else {
+                &last_activity
+            };
             if is_codex {
+                if let Some(error) = codex_startup_error
+                    .lock()
+                    .ok()
+                    .and_then(|current| current.clone())
+                {
+                    terminate_child_tree(&mut child);
+                    break Err(error);
+                }
+                if !codex_first_event_seen.load(Ordering::Relaxed) {
+                    let first_event_timed_out = codex_turn_started_at
+                        .lock()
+                        .ok()
+                        .and_then(|started_at| *started_at)
+                        .is_some_and(|started_at| {
+                            started_at.elapsed()
+                                >= std::time::Duration::from_secs(
+                                    codex_first_event_timeout_secs(),
+                                )
+                        });
+                    if first_event_timed_out {
+                        terminate_child_tree(&mut child);
+                        break Err(format!(
+                            "Codex turn 已启动，但 {}s 内未收到模型或工具事件，已终止。",
+                            codex_first_event_timeout_secs()
+                        ));
+                    }
+                }
                 let status = codex_turn_status
                     .lock()
                     .ok()
@@ -16287,12 +16475,12 @@ async fn ai_cli(
                             break Ok(WaitOutcome::StreamCompleted);
                         }
                     }
-                    if std::time::Instant::now() >= deadline {
+                    if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
                         terminate_child_tree(&mut child);
                         break Err(format!("CLI \"{binary}\" 超时（{timeout_secs}s）已终止。"));
                     }
                     if let Some(idle) = idle_timeout {
-                        if activity_elapsed(&last_activity) >= idle {
+                        if activity_elapsed(watchdog_activity) >= idle {
                             terminate_child_tree(&mut child);
                             break Err(format!(
                                 "CLI \"{binary}\" 空转超过 {idle_timeout_secs}s 未产生输出，已终止。"
@@ -16303,16 +16491,32 @@ async fn ai_cli(
                     // run, extended thinking with partial streaming off), drop a
                     // "still running" line so the node never looks frozen. Reads
                     // activity only — must NOT touch it, or idle detection breaks.
-                    if !is_codex {
-                        let beat = std::time::Duration::from_secs(AI_CLI_HEARTBEAT_SECS);
-                        let now = std::time::Instant::now();
-                        if activity_elapsed(&last_activity) >= beat
-                            && now.duration_since(last_heartbeat) >= beat
-                        {
-                            let total = run_started_at.elapsed().as_secs();
-                            emit_progress(&app, &run_id, &encode_running_status_patch(&run_id, total));
-                            last_heartbeat = now;
-                        }
+                    let beat = std::time::Duration::from_secs(AI_CLI_HEARTBEAT_SECS);
+                    let now = std::time::Instant::now();
+                    if activity_elapsed(watchdog_activity) >= beat
+                        && now.duration_since(last_heartbeat) >= beat
+                    {
+                        let total = run_started_at.elapsed().as_secs();
+                        let thread_started = codex_thread_id
+                            .lock()
+                            .ok()
+                            .is_some_and(|thread_id| thread_id.is_some());
+                        let turn_started = codex_turn_id
+                            .lock()
+                            .ok()
+                            .is_some_and(|turn_id| turn_id.is_some());
+                        let stage = ai_cli_running_stage(
+                            is_codex,
+                            thread_started,
+                            turn_started,
+                            codex_first_event_seen.load(Ordering::Relaxed),
+                        );
+                        emit_progress(
+                            &app,
+                            &run_id,
+                            &encode_running_status_patch(&run_id, total, stage),
+                        );
+                        last_heartbeat = now;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
@@ -16508,7 +16712,9 @@ mod tests {
     #[test]
     fn cli_version_probe_command_passes_version_arg() {
         let cmd = cli_version_probe_command("claude");
-        assert!(command_arg_strings(&cmd).iter().any(|arg| arg == "--version"));
+        assert!(command_arg_strings(&cmd)
+            .iter()
+            .any(|arg| arg == "--version"));
     }
 
     #[cfg(windows)]
@@ -16602,10 +16808,7 @@ mod tests {
         let cmd = cli_update_command(gemini, "gemini").unwrap();
         let args = command_arg_strings(&cmd);
         assert!(!args.iter().any(|arg| arg == "/C"));
-        assert_eq!(
-            args,
-            vec!["install", "-g", "@google/gemini-cli@latest"]
-        );
+        assert_eq!(args, vec!["install", "-g", "@google/gemini-cli@latest"]);
     }
 
     #[test]
@@ -16768,14 +16971,12 @@ mod tests {
             .map(|p| p["Name"].as_str().unwrap().to_string())
             .collect();
         assert!(names.contains(&"ExistingOther".to_string()));
-        assert!(
-            doc["Plugins"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|p| p["Name"].as_str() != Some("RemoteControl")
-                    || p["Enabled"].as_bool() == Some(true))
-        );
+        assert!(doc["Plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["Name"].as_str() != Some("RemoteControl")
+                || p["Enabled"].as_bool() == Some(true)));
 
         // Second run is a no-op (already enabled).
         let second = ue_mcp_enable_uproject_plugins(&uproject, &plugins).unwrap();
@@ -17396,6 +17597,15 @@ mod tests {
                 .and_then(|params| params.delta.as_deref()),
             Some("STEER_OK")
         );
+        assert!(delta.is_turn_progress());
+
+        let tool_started: CodexLiteEvent = serde_json::from_value(serde_json::json!({
+            "method": "item/started",
+            "params": { "item": { "id": "tool-1", "type": "command_execution" } }
+        }))
+        .unwrap();
+        assert!(tool_started.is_turn_progress());
+        assert!(!started.is_turn_progress());
     }
 
     #[test]
@@ -17405,7 +17615,10 @@ mod tests {
             "result": { "turnId": "turn-1" }
         }))
         .unwrap();
-        assert_eq!(event.id.as_ref().and_then(|id| id.as_str()), Some("ugs-steer-7"));
+        assert_eq!(
+            event.id.as_ref().and_then(|id| id.as_str()),
+            Some("ugs-steer-7")
+        );
         assert_eq!(
             event
                 .result
@@ -17415,6 +17628,38 @@ mod tests {
             Some("turn-1")
         );
         assert!(event.error.is_none());
+    }
+
+    #[test]
+    fn running_heartbeat_reports_codex_stage() {
+        let stage = ai_cli_running_stage(true, true, true, false);
+        assert_eq!(stage, "正在等待模型首个事件");
+        let patch = encode_running_status_patch("run-1", 12, stage);
+        assert!(patch.contains("正在等待模型首个事件"));
+        assert!(patch.contains("已 12s"));
+    }
+
+    #[test]
+    fn codex_startup_deadlines_are_stage_specific() {
+        assert_eq!(DEFAULT_AI_CLI_TIMEOUT_SECS, 0);
+        assert_eq!(DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS, 1800);
+        assert_eq!(DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS, 1800);
+        assert_eq!(DEFAULT_CODEX_TURN_START_TIMEOUT_SECS, 1800);
+        assert_eq!(DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS, 1800);
+    }
+
+    #[test]
+    fn codex_start_id_wait_surfaces_timeout_instead_of_silent_return() {
+        let value = Arc::new(Mutex::new(None));
+        let startup_error = Arc::new(Mutex::new(None));
+        let error = wait_for_codex_start_id(
+            &value,
+            &startup_error,
+            std::time::Duration::from_millis(1),
+            "thread/start",
+        )
+        .unwrap_err();
+        assert!(error.contains("thread/start 响应超时"));
     }
 
     #[test]
@@ -18046,18 +18291,14 @@ mod tests {
             commands,
             vec![vec!["opened"], vec!["reconcile", "-n", "-ead"]]
         );
-        assert!(
-            commands
-                .iter()
-                .all(|args| { args.first().copied() != Some("reconcile") || args.contains(&"-n") })
-        );
-        assert!(
-            !commands
-                .iter()
-                .any(|args| args.first().is_some_and(|command| {
-                    matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
-                }))
-        );
+        assert!(commands
+            .iter()
+            .all(|args| { args.first().copied() != Some("reconcile") || args.contains(&"-n") }));
+        assert!(!commands
+            .iter()
+            .any(|args| args.first().is_some_and(|command| {
+                matches!(*command, "add" | "edit" | "delete" | "revert" | "submit")
+            })));
     }
 
     #[test]

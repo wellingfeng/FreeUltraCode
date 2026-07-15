@@ -81,10 +81,10 @@ function codexToolArgs(item: Record<string, unknown>): Record<string, unknown> |
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-/** Default hard timeout (s) before the child is killed (mirrors lib.rs). */
-const DEFAULT_TIMEOUT_SECS = 1800;
+/** Default hard timeout (s) before the child is killed. 0 disables (mirrors lib.rs). */
+const DEFAULT_TIMEOUT_SECS = 0;
 /** Default "no observable progress" timeout (s) (mirrors lib.rs). 0 disables. */
-const DEFAULT_IDLE_TIMEOUT_SECS = 0;
+const DEFAULT_IDLE_TIMEOUT_SECS = 1800;
 
 /** Options for {@link spawnCliAgent}. */
 export interface SpawnCliAgentOpts {
@@ -115,11 +115,13 @@ export interface SpawnCliAgentOpts {
 function resolveTimeoutSecs(override?: number): number {
   const configuredRaw = Number(process.env.ULTRAGAMESTUDIO_AI_CLI_TIMEOUT_SECS);
   const configured =
-    Number.isFinite(configuredRaw) && configuredRaw >= 60
+    Number.isFinite(configuredRaw) && (configuredRaw === 0 || configuredRaw >= 60)
       ? Math.floor(configuredRaw)
       : DEFAULT_TIMEOUT_SECS;
   const dynamic =
-    typeof override === 'number' && override >= 60 ? Math.floor(override) : configured;
+    typeof override === 'number' && (override === 0 || override >= 60)
+      ? Math.floor(override)
+      : configured;
   return Math.max(configured, dynamic);
 }
 
@@ -792,7 +794,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     const startedAt = Date.now();
     const poll = setInterval(() => {
       if (settled) return;
-      if (Date.now() - startedAt >= timeoutSecs * 1000) {
+      if (timeoutSecs > 0 && Date.now() - startedAt >= timeoutSecs * 1000) {
         timedOutMessage = `CLI "${binary}" 超时（${timeoutSecs}s）已终止。`;
         terminateProcessTree(child.pid!);
         return;

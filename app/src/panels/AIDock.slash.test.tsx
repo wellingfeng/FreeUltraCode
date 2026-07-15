@@ -27,6 +27,7 @@ import {
   remoteWorkspacePath,
   saveRemoteWorkspace,
 } from "@/lib/remoteWorkspace";
+import { upsertProviders } from "@/lib/apiConfig";
 
 const slashCatalogMock = vi.hoisted(() => ({
   entries: [
@@ -1614,6 +1615,55 @@ describe("AIDock slash suggestions", () => {
         modelTrigger?.parentElement?.querySelector('[role="listbox"]')
           ?.textContent ?? "";
       expect(menuText).toContain("@cf/black-forest-labs/flux-1-schnell");
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it("shows the session run model instead of the provider default model", async () => {
+    resetStore("codex");
+    upsertProviders(
+      [
+        {
+          id: "p_kuro_codex",
+          kind: "codex",
+          name: "KuroAI",
+          apiKey: "sk-test",
+          baseUrl: "https://ai-gateway.kurogames.com",
+          transport: "cli",
+          model: "gpt-5.6-sol",
+          models: ["gpt-5.5"],
+        },
+      ],
+      { makeActiveId: "p_kuro_codex" },
+    );
+    const workflow = defaultBlueprint("Pinned model");
+    useStore.setState({
+      workflow: {
+        ...workflow,
+        meta: {
+          ...workflow.meta,
+          adapter: "codex",
+          gateway: {
+            defaults: {
+              adapter: "codex",
+              modelClass: "gpt-5.5",
+              providerId: "p_kuro_codex",
+              channelId: "default",
+            },
+          },
+        },
+      },
+    });
+    const view = await renderDock();
+
+    try {
+      const modelTrigger = Array.from(
+        view.container.querySelectorAll<HTMLButtonElement>("button"),
+      ).find((btn) => btn.textContent?.includes("gpt-5.5"));
+      expect(modelTrigger).toBeInstanceOf(HTMLButtonElement);
+      expect(modelTrigger?.textContent).toContain("gpt-5.5");
+      expect(modelTrigger?.textContent).not.toContain("gpt-5.6-sol");
     } finally {
       await view.cleanup();
     }

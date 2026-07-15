@@ -707,9 +707,14 @@ function removeGatewayProvider(providerId: string): void {
 }
 
 function selectGatewayProvider(provider: Provider): void {
+  const adapter = providerAdapter(provider);
+  const model = provider.model?.trim();
   setActiveGatewaySelection({
-    adapter: providerAdapter(provider),
-    modelClass: modelClassFromModelId(provider.model),
+    adapter,
+    modelClass:
+      adapter === 'claude-code'
+        ? modelClassFromModelId(model)
+        : model || 'default',
     providerId: provider.id,
     channelId: 'default',
   });

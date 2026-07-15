@@ -279,6 +279,40 @@ describe('model gateway compatibility', () => {
     });
   });
 
+  it('uses the selected Codex session model instead of the provider default', () => {
+    window.localStorage.setItem(
+      PROVIDERS_STORAGE,
+      JSON.stringify([
+        {
+          id: 'kuro_relay',
+          kind: 'codex',
+          transport: 'direct',
+          name: 'KuroAI',
+          apiKey: 'sk-kuro',
+          baseUrl: 'https://ai-gateway.kurogames.com/v1',
+          model: 'gpt-5.5',
+          models: ['gpt-5.6-sol'],
+        },
+      ]),
+    );
+    const workflow = buildWorkflow([]);
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'codex',
+        modelClass: 'gpt-5.6-sol',
+        providerId: 'kuro_relay',
+        channelId: 'default',
+      },
+    };
+
+    const route = resolveGatewayRoute(workflow);
+
+    expect(route.model).toBe('gpt-5.6-sol');
+    expect(route.env).toMatchObject({
+      OPENAI_MODEL: 'gpt-5.6-sol',
+    });
+  });
+
   it('uses a session model override without rewriting the provider default model', () => {
     window.localStorage.setItem(
       PROVIDERS_STORAGE,

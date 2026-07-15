@@ -8,6 +8,7 @@ import {
   getActiveProvider,
   getActiveProviderId,
   getProviderRuntimeInfo,
+  setActiveProviderId,
   importDefaultChannelsConfig,
   importProviders,
   isProviderBaseUrlLocal,
@@ -16,6 +17,7 @@ import {
   readBaseUrl,
   type Provider,
 } from './apiConfig';
+import { getExplicitActiveGatewaySelection } from './gatewayConfig';
 
 function seedProviders(entries: unknown[], activeId?: string): void {
   window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(entries));
@@ -269,6 +271,29 @@ describe('apiConfig provider compatibility', () => {
 
     expect(getActiveProviderId()).toBe('p_cli');
     expect(getActiveProvider()?.id).toBe('p_cli');
+  });
+
+  it('stores concrete model ids for non-Claude default channel selections', () => {
+    seedProviders([
+      {
+        id: 'p_codex',
+        kind: 'codex',
+        name: 'KuroAI',
+        apiKey: 'sk-test',
+        baseUrl: 'https://ai-gateway.kurogames.com',
+        transport: 'cli',
+        model: 'gpt-5.6-sol',
+      },
+    ]);
+
+    setActiveProviderId('p_codex');
+
+    expect(getExplicitActiveGatewaySelection()).toMatchObject({
+      adapter: 'codex',
+      modelClass: 'gpt-5.6-sol',
+      providerId: 'p_codex',
+      channelId: 'default',
+    });
   });
 
   it('treats cc-switch imported Claude providers as CLI-backed runtime entries', () => {

@@ -65,6 +65,14 @@ function markdownUrlTransform(url: string, key: string): string | null | undefin
   }
   if (key === 'href' && isModelUrl(url)) return url;
   if (key === 'href' && /^data:text\/plain;base64,/i.test(url)) return url;
+  // Windows drive-letter paths (E:\…) and UNC paths (\\host\…) look like
+  // unknown-protocol URLs to defaultUrlTransform, which sanitises them to
+  // "". When the AI wraps a clipboard-image path in a markdown link
+  // ([截图](E:\…\shot.png)) the href must survive so SmartLink can detect it
+  // as a local file reference and render a clickable FileChip.
+  // CommonMark percent-encodes backslashes in link destinations, so the URL
+  // arrives as "E:%5C…%5C…" rather than "E:\…\…". Match both forms.
+  if (key === 'href' && /^(?:[A-Za-z]:(?:[\\/]|%5[Cc])|\\\\)/.test(url)) return url;
   return defaultUrlTransform(url);
 }
 

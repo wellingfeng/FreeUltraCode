@@ -46,8 +46,8 @@ describe('model speed policy', () => {
     expect(effectiveRunConcurrency(1, selection)).toBe(1);
 
     const timeout = timeoutPolicyForSelection(selection, 'x'.repeat(12_000));
-    expect(timeout.timeoutSeconds).toBeGreaterThan(1800);
-    expect(timeout.idleTimeoutSeconds).toBe(0);
+    expect(timeout.timeoutSeconds).toBe(0);
+    expect(timeout.idleTimeoutSeconds).toBe(1800);
   });
 
   it('promotes a standard tier to fast after observed fast calls', () => {

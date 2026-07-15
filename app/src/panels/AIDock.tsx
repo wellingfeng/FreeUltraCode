@@ -3402,11 +3402,9 @@ export default function AIDock({
           : getFreeChannelModel(selectedFreeChannel.id) || "default"))
     : selectedDefaultProvider
       ? (runSelection.modelOverride ??
-        (runSelection.modelClass === "default"
-          ? "default"
-          : (selectedDefaultProvider.provider.model ?? "").trim() ||
-            runSelection.modelClass ||
-            "default"))
+        (runSelection.modelClass ||
+          (selectedDefaultProvider.provider.model ?? "").trim() ||
+          "default"))
       : runSelection.modelClass || "default";
   const [keyModalChannel, setKeyModalChannel] = useState<FreeChannel | null>(
     null,

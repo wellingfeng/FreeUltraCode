@@ -32,6 +32,9 @@ import type {
 export type RunFailureCode =
   | 'timeout'
   | 'idle_timeout'
+  | 'startup_timeout'
+  | 'first_event_timeout'
+  | 'protocol'
   | 'interrupted'
   | 'exit'
   | 'spawn'

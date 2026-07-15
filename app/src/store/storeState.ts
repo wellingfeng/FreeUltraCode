@@ -167,6 +167,7 @@ export interface StoreState {
   chattingSessions: WorkflowSessionKey[];
   /** User message ids for simple-chat turns accepted locally but not started yet. */
   queuedChatMessageIds: string[];
+  /** Queued messages that can be steered into the active native CLI turn. */
   steerableQueuedChatMessageIds: string[];
   /**
    * Sessions whose in-flight turn is parked on a user interaction (a UGS_ASK
@@ -420,11 +421,7 @@ export interface StoreState {
   updateQueuedChatMessage: (messageId: string, text: string) => boolean;
   /** Delete a simple-chat user message that is still waiting in the local queue. */
   deleteQueuedChatMessage: (messageId: string) => boolean;
-  /**
-   * Interject a queued simple-chat message right now: abort the in-flight
-   * turn(s) for the same session so this queued turn starts immediately
-   * instead of waiting for the current answer to finish naturally.
-   */
+  /** Steer a queued message into a compatible active native CLI turn. */
   steerQueuedChatMessage: (messageId: string) => boolean;
   /** Create a new chat session containing messages up to the chosen assistant reply. */
   branchSessionFromMessage: (messageId: string) => void;

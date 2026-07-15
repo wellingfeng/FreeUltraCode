@@ -1617,7 +1617,11 @@ html.ugs-stream-scheme-solarized-dark {
   text-align: left;
 }
 .ai-generated-image-trigger .ai-generated-image { margin: 0.7rem 0; }
-.ai-generated-image-trigger:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.ai-generated-image-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
 .ai-audio-player audio {
   display: none;
 }

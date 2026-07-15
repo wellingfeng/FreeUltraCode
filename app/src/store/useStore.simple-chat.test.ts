@@ -2076,6 +2076,39 @@ describe('simple-workflow chat mode', () => {
     expect(record?.meta?.runStatus).toBe('error');
   });
 
+  it('refreshes simple-chat elapsed time while the model emits no events', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-15T06:00:00.000Z'));
+    try {
+      resetStore(simpleBlueprint('Simple chat'));
+      mockDirectRoute();
+      let resolveReply!: (value: string) => void;
+      gatewayMocks.completeGatewayText.mockReturnValue(
+        new Promise<string>((resolve) => {
+          resolveReply = resolve;
+        }),
+      );
+
+      expect(useStore.getState().sendPrompt('等待首个事件')).toBe(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const runningText = () =>
+        useStore
+          .getState()
+          .messages.find((message) => message.role === 'assistant')?.text ?? '';
+      expect(runningText()).toContain('耗时 0s');
+
+      await vi.advanceTimersByTimeAsync(2_100);
+      expect(runningText()).toContain('耗时 2s');
+
+      resolveReply('完成');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(runningText()).toContain('完成');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('creates history entries with an untitled session placeholder', async () => {
     window.localStorage.clear();
     await historyStore.ready();
@@ -4175,7 +4208,7 @@ describe('simple-workflow chat mode', () => {
     );
   });
 
-  it('blocks sending to a different model while the current model is still answering', async () => {
+  it('queues a different-model follow-up while the current model is still answering', async () => {
     resetStore(simpleBlueprint('Simple chat'));
     mockDirectRoute();
     const resolvers: Array<(value: string) => void> = [];
@@ -4190,21 +4223,19 @@ describe('simple-workflow chat mode', () => {
       adapter: 'claude-code',
       modelClass: 'opus',
     });
-    expect(useStore.getState().sendPrompt('问题二')).toBe(false);
+    expect(useStore.getState().sendPrompt('问题二')).toBe(true);
 
     expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(1);
     expect(
-      useStore.getState().messages.filter((message) => message.role === 'user'),
-    ).toHaveLength(1);
-    expect(useStore.getState().blockedSendTip).toBe('model-switched-while-chatting');
+      useStore
+        .getState()
+        .messages.filter((message) => message.role === 'user')
+        .map((message) => message.text),
+    ).toEqual(['问题一', '问题二']);
+    expect(useStore.getState().queuedChatMessageIds).toHaveLength(1);
+    expect(useStore.getState().blockedSendTip).toBeNull();
 
     resolvers[0]('答一');
-    await waitFor(
-      () => !useStore.getState().aiStreaming,
-      'first chat to finish',
-    );
-
-    expect(useStore.getState().sendPrompt('问题二')).toBe(true);
     await waitFor(() => resolvers.length === 2, 'second chat after finish');
     expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(2);
     expect(useStore.getState().blockedSendTip).toBeNull();

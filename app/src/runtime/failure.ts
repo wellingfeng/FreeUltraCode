@@ -63,6 +63,41 @@ export function parseRunFailure(err: unknown): RunFailure {
     };
   }
 
+  const startupTimeout =
+    /Codex (thread\/start|turn\/start) 响应超时[（(](\d+)s[）)]/u.exec(raw);
+  if (startupTimeout) {
+    const seconds = Number(startupTimeout[2]);
+    return {
+      code: 'startup_timeout',
+      raw,
+      timeoutSeconds: seconds,
+      message: `Codex ${startupTimeout[1]} 在 ${seconds}s 内未响应，已终止。`,
+    };
+  }
+
+  const firstEventTimeout =
+    /Codex turn 已启动，但 (\d+)s 内未收到模型或工具事件，已终止/u.exec(raw);
+  if (firstEventTimeout) {
+    const seconds = Number(firstEventTimeout[1]);
+    return {
+      code: 'first_event_timeout',
+      raw,
+      timeoutSeconds: seconds,
+      message: `Codex turn 已启动，但 ${seconds}s 内没有模型或工具事件，已终止。`,
+    };
+  }
+
+  if (
+    /Codex (?:initialize|initialized|thread\/start|turn\/start) 写入失败/u.test(raw) ||
+    /Codex ugs-(?:init|thread-start|turn-start) 失败/u.test(raw)
+  ) {
+    return {
+      code: 'protocol',
+      raw,
+      message: raw,
+    };
+  }
+
   const interrupted = /CLI "([^"]+)" 已由用户中断/u.exec(raw);
   if (interrupted) {
     return {
@@ -118,6 +153,8 @@ export function parseRunFailure(err: unknown): RunFailure {
 export const RETRYABLE_FAILURE_CODES: ReadonlySet<RunFailureCode> = new Set([
   'timeout',
   'idle_timeout',
+  'startup_timeout',
+  'first_event_timeout',
   'exit',
   'wait',
   'unknown',
@@ -133,6 +170,12 @@ export function failureTitle(failure: RunFailure): string {
       return '超时';
     case 'idle_timeout':
       return '空转超时';
+    case 'startup_timeout':
+      return '启动超时';
+    case 'first_event_timeout':
+      return '首事件超时';
+    case 'protocol':
+      return '协议失败';
     case 'interrupted':
       return '已中断';
     case 'exit':

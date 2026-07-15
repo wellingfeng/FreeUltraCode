@@ -23,6 +23,7 @@ export interface ModelCallTiming {
 }
 
 export interface CliTimeoutPolicy {
+  /** Total runtime limit. 0 disables it in favour of progress-aware idle detection. */
   timeoutSeconds: number;
   /**
    * No-progress timeout in seconds. 0 disables the idle watchdog; long-running
@@ -125,7 +126,10 @@ export function recordModelCall(
   timing: ModelCallTiming,
 ): void {
   const relevantFailure =
-    timing.failureCode === 'timeout' || timing.failureCode === 'idle_timeout';
+    timing.failureCode === 'timeout' ||
+    timing.failureCode === 'idle_timeout' ||
+    timing.failureCode === 'startup_timeout' ||
+    timing.failureCode === 'first_event_timeout';
   if (!timing.ok && !relevantFailure) return;
 
   const key = modelSpeedKey(selection);
@@ -216,42 +220,19 @@ export function modelSpeedProfile(selection: GatewaySelection): ModelSpeedProfil
   };
 }
 
-function promptBoostSeconds(prompt?: string): number {
-  const len = prompt?.length ?? 0;
-  if (len >= 30_000) return 480;
-  if (len >= 12_000) return 240;
-  if (len >= 6_000) return 120;
-  return 0;
-}
-
-function clampSeconds(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.ceil(value)));
-}
-
 export function timeoutPolicyForSelection(
-  selection: GatewaySelection,
-  prompt?: string,
+  _selection: GatewaySelection,
+  _prompt?: string,
 ): CliTimeoutPolicy {
-  const profile = modelSpeedProfile(selection);
-  const boost = promptBoostSeconds(prompt);
-  const base =
-    profile.tier === 'fast'
-      ? { hard: 1800 }
-      : profile.tier === 'standard'
-        ? { hard: 2400 }
-        : { hard: 3600 };
-
-  const observedHard =
-    profile.ewmaMs == null
-      ? base.hard
-      : Math.ceil(profile.ewmaMs / 1000) * 3 + 300;
+  void _selection;
+  void _prompt;
   return {
-    timeoutSeconds: clampSeconds(
-      Math.max(base.hard, observedHard) + boost,
-      600,
-      7200,
-    ),
-    idleTimeoutSeconds: 0,
+    // Total runtime is intentionally unbounded. Active builds/tests must not be
+    // killed merely because the complete agent turn exceeds a fixed duration.
+    timeoutSeconds: 0,
+    // Only terminate after 30 minutes with no observable model/tool progress.
+    // Users can still override or disable this through the backend env setting.
+    idleTimeoutSeconds: 1800,
   };
 }
 
