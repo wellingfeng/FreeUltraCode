@@ -1,3 +1,4 @@
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -793,7 +794,7 @@ async function generateGenericAnimation(
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const response = await fetch(baseUrl, {
+  const response = await tauriFetch(baseUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify(animationRequestBody(prompt, model, providerId)),
@@ -817,7 +818,7 @@ async function generateFalAnimation(
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${modelPath}`, {
+  const response = await tauriFetch(`${baseUrl}/${modelPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ input: animationRequestBody(prompt, model, providerId) }),
@@ -854,7 +855,7 @@ async function readAndMaybePollAnimation(
     const url =
       statusUrl ||
       `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(taskId ?? '')}/status`;
-    const statusResponse = await fetch(url, { headers, signal });
+    const statusResponse = await tauriFetch(url, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const state = jsonState(status);
     if (isFailedState(state)) {
@@ -866,7 +867,7 @@ async function readAndMaybePollAnimation(
       const finalUrl =
         responseUrl ||
         `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(taskId ?? '')}`;
-      const finalResponse = await fetch(finalUrl, { headers, signal });
+      const finalResponse = await tauriFetch(finalUrl, { headers, signal });
       const finalJson = await readJsonResponse(finalResponse);
       const assets = animationAssetsFromJson(finalJson);
       if (hasAnyAsset(assets)) return assets;

@@ -17,6 +17,7 @@ mod cc_switch_import;
 mod cli_runtime;
 mod free_proxy;
 mod history;
+mod proxy_http;
 mod secure_store;
 mod storage_paths;
 
@@ -831,6 +832,82 @@ struct CachedAssetFile {
     size_bytes: u64,
     created_at_ms: Option<u64>,
     modified_at_ms: Option<u64>,
+}
+
+/// One background job's raw manifest text plus the filesystem observations the
+/// pure TS state-machine (`resolveJobStatus` in `lib/backgroundJobs.ts`) needs.
+/// The Rust side stays "dumb": it reads, probes existence/liveness, tails the
+/// progress file, and hands the facts to TS — it never decides success/failure.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundJobProbe {
+    /// The manifest's `.json` filename stem (used to delete it when terminal).
+    file_stem: String,
+    /// Workspace whose `.ultragamestudio/jobs/` this came from (echoed back so
+    /// the frontend can target the right dir when removing a finished job).
+    workspace_cwd: Option<String>,
+    /// Raw manifest JSON, parsed on the TS side into `BackgroundJobManifest`.
+    manifest_json: String,
+    artifact_exists: bool,
+    done_marker_exists: bool,
+    fail_marker_exists: bool,
+    /// None when the manifest had no pid; otherwise whether it is a live process.
+    pid_alive: Option<bool>,
+    /// Last few KB of the progress file, if configured and readable.
+    progress_tail: Option<String>,
+    /// Unix ms when this probe was taken.
+    probed_at_ms: u64,
+}
+
+/// Whether `pid` names a live process. Best-effort and cross-platform: any
+/// uncertainty resolves to `true` (assume alive) so a probe failure never
+/// spuriously flips a running job to "failed" — the TS side only fails a job on
+/// a *known-dead* pid.
+fn pid_is_alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                // Access-denied still implies the pid exists; only a clean
+                // "no such process" means dead, which we can't distinguish here
+                // without the error code — assume alive to stay conservative.
+                return false;
+            }
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(handle, &mut code);
+            CloseHandle(handle);
+            ok != 0 && code == STILL_ACTIVE as u32
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // signal 0 probes existence without delivering a signal.
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+}
+
+/// Read up to `max_bytes` from the END of a text file, lossily decoded. Used to
+/// scan a long-lived progress log's tail for the latest percentage without
+/// slurping a multi-MB file every poll tick.
+fn read_file_tail(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(max_bytes);
+    if start > 0 {
+        file.seek(SeekFrom::Start(start)).ok()?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -11819,6 +11896,113 @@ fn collect_cached_assets_from_dir(
     }
 }
 
+/// Pull the string field `key` out of a manifest JSON value, trimmed & non-empty.
+fn manifest_str<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Probe a single `.ultragamestudio/jobs/*.json` manifest into the fact bundle
+/// the TS state-machine consumes. Returns None for unreadable/foreign files so a
+/// stray non-job file in the dir is silently skipped.
+fn probe_background_job(
+    path: &Path,
+    workspace_cwd: Option<&str>,
+    now_ms: u64,
+) -> Option<BackgroundJobProbe> {
+    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        return None;
+    }
+    let manifest_json = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&manifest_json).ok()?;
+    // Only accept our own manifests; anything else in the dir is ignored.
+    if value.get("schema").and_then(|v| v.as_u64()) != Some(1) {
+        return None;
+    }
+    let done = value.get("done").cloned().unwrap_or(serde_json::Value::Null);
+    let artifact_path = manifest_str(&done, "artifactPath");
+    let done_marker = manifest_str(&done, "doneMarkerPath");
+    let fail_marker = manifest_str(&done, "failMarkerPath");
+
+    let pid_alive = value
+        .get("pid")
+        .and_then(|v| v.as_u64())
+        .map(|pid| pid_is_alive(pid as u32));
+
+    let progress_tail = manifest_str(&value, "progressFile")
+        .and_then(|p| read_file_tail(Path::new(p), 16 * 1024));
+
+    let file_stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    Some(BackgroundJobProbe {
+        file_stem,
+        workspace_cwd: workspace_cwd.map(|s| s.to_string()),
+        manifest_json,
+        artifact_exists: artifact_path.is_some_and(|p| Path::new(p).exists()),
+        done_marker_exists: done_marker.is_some_and(|p| Path::new(p).exists()),
+        fail_marker_exists: fail_marker.is_some_and(|p| Path::new(p).exists()),
+        pid_alive,
+        progress_tail,
+        probed_at_ms: now_ms,
+    })
+}
+
+/// Scan the `jobs/` dir under one workspace's `.ultragamestudio` and probe each
+/// manifest. `cwd` selects the workspace; None uses the global tmp fallback that
+/// `managed_artifact_dir` resolves to.
+fn list_background_jobs_blocking(cwd: Option<String>) -> Result<Vec<BackgroundJobProbe>, String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let jobs_dir = storage_paths::managed_artifact_dir(cwd.as_deref(), "jobs");
+    let mut out = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(&jobs_dir) {
+        for entry in read_dir.flatten() {
+            if let Some(probe) = probe_background_job(&entry.path(), cwd.as_deref(), now_ms) {
+                out.push(probe);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+async fn list_background_jobs(cwd: Option<String>) -> Result<Vec<BackgroundJobProbe>, String> {
+    tauri::async_runtime::spawn_blocking(move || list_background_jobs_blocking(cwd))
+        .await
+        .map_err(|e| format!("读取后台任务清单失败: {e}"))?
+}
+
+/// Delete a terminal job's manifest (and optional done/fail markers) from a
+/// workspace's `jobs/` dir so a finished job stops being re-probed. Missing
+/// files are treated as success (idempotent).
+#[tauri::command]
+async fn remove_background_job(cwd: Option<String>, file_stem: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        if file_stem.is_empty()
+            || file_stem.contains(['/', '\\', '.'])
+        {
+            return Err("非法的任务标识".into());
+        }
+        let jobs_dir = storage_paths::managed_artifact_dir(cwd.as_deref(), "jobs");
+        let manifest = jobs_dir.join(format!("{file_stem}.json"));
+        if manifest.exists() {
+            std::fs::remove_file(&manifest)
+                .map_err(|e| format!("删除任务清单失败: {e}"))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("删除后台任务失败: {e}"))?
+}
+
 fn list_cached_assets_blocking(cwd: Option<String>) -> Result<Vec<CachedAssetFile>, String> {
     let cwd = cwd.as_deref();
     let mut files = Vec::new();
@@ -13132,6 +13316,57 @@ fn normalize_node_entry_path(path: &Path) -> std::io::Result<PathBuf> {
         }
     }
     Ok(canonical)
+}
+
+/// Absolute path to the bundled `ugs-job.mjs` background-job wrapper, if it can
+/// be found. Checked in resource dir first (packaged app), then dev-tree
+/// fallbacks. Returned to the frontend so the chat system prompt can tell the
+/// model exactly which script to wrap long-running commands in.
+fn locate_ugs_job_wrapper(app: &AppHandle) -> Option<PathBuf> {
+    // Packaged: sits next to the bundled ugs.mjs under the resource dir.
+    if let Some(dir) = app.path().resource_dir().ok() {
+        let bundled = dir.join("cli").join("ugs-job.mjs");
+        if bundled.is_file() {
+            return normalize_node_entry_path(&bundled).ok();
+        }
+    }
+    // Dev tree fallbacks relative to the running exe.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for candidate in [
+                dir.join("ugs-job.mjs"),
+                dir.join("cli").join("ugs-job.mjs"),
+                dir.join("..")
+                    .join("..")
+                    .join("app")
+                    .join("cli")
+                    .join("ugs-job.mjs"),
+            ] {
+                if candidate.is_file() {
+                    return normalize_node_entry_path(&candidate).ok();
+                }
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for candidate in [
+            cwd.join("cli").join("ugs-job.mjs"),
+            cwd.join("app").join("cli").join("ugs-job.mjs"),
+        ] {
+            if candidate.is_file() {
+                return normalize_node_entry_path(&candidate).ok();
+            }
+        }
+    }
+    None
+}
+
+/// Frontend-facing resolver for the background-job wrapper path. Returns None
+/// (serialized as null) when the wrapper can't be found, so the prompt simply
+/// omits the guidance rather than pointing at a missing file.
+#[tauri::command]
+async fn ugs_job_wrapper_path(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(locate_ugs_job_wrapper(&app).map(|p| p.to_string_lossy().into_owned()))
 }
 
 fn default_studio_workdir(cli_path: &Path) -> PathBuf {
@@ -15523,7 +15758,16 @@ async fn ai_cli(
         if let Some(path) = gemini_system_settings_path.as_deref() {
             cmd.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", path);
         }
+        // Workspace cwd for background-job self-registration: a long-running
+        // process the agent detaches (yt-dlp/whisper/ffmpeg) reads this to locate
+        // `.ultragamestudio/jobs/` and write its manifest, so its real progress
+        // surfaces on the session's Sidebar dot instead of the dot going green
+        // when this CLI turn ends. The store session id is injected via the
+        // `env_vars` overlay above (UGS_SESSION_ID); we don't derive it from the
+        // native continuity `session_id`, which is a different identifier. See
+        // lib/backgroundJobs.ts + BackgroundJobRunner.
         if let Some(dir) = workdir.as_ref() {
+            cmd.env("UGS_WORKSPACE_CWD", dir);
             cmd.current_dir(dir);
         }
 
@@ -18719,6 +18963,9 @@ pub fn run() {
             download_model_asset,
             save_generated_asset,
             list_cached_assets,
+            list_background_jobs,
+            remove_background_job,
+            ugs_job_wrapper_path,
             history::history_root,
             history::history_read_json,
             history::history_write_json,
@@ -18729,7 +18976,8 @@ pub fn run() {
             secure_store::secure_secret_set,
             secure_store::secure_secret_delete,
             free_proxy::free_proxy_ensure,
-            free_proxy::free_proxy_stop
+            free_proxy::free_proxy_stop,
+            proxy_http::proxy_http
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

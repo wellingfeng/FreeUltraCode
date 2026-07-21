@@ -1,3 +1,4 @@
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -1012,7 +1013,7 @@ async function generateGoogleVeo(
   const apiKey = videoProviderKey('google-veo', settings);
   if (!apiKey) throw new Error('Google API key is missing.');
   const baseUrl = videoProviderBaseUrl('google-veo', settings);
-  const response = await fetch(
+  const response = await tauriFetch(
     `${baseUrl}/models/${encodeURIComponent(model)}:predictLongRunning`,
     {
       method: 'POST',
@@ -1038,7 +1039,7 @@ async function generateGoogleVeo(
   if (!operationName) throw new Error('Google Veo did not return an operation name.');
   for (let i = 0; i < 160; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}/${operationName.replace(/^\/+/, '')}`,
       { headers: { 'x-goog-api-key': apiKey }, signal },
     );
@@ -1066,7 +1067,7 @@ async function generateRunway(
     'Content-Type': 'application/json',
     'X-Runway-Version': '2024-11-06',
   };
-  const response = await fetch(`${baseUrl}/text_to_video`, {
+  const response = await tauriFetch(`${baseUrl}/text_to_video`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1083,7 +1084,7 @@ async function generateRunway(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('Runway did not return a task id.');
   return pollVideos(
-    () => fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, { headers, signal }),
     'Runway',
     signal,
   );
@@ -1103,7 +1104,7 @@ async function generateLumaRay(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/generations`, {
+  const response = await tauriFetch(`${baseUrl}/generations`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1120,7 +1121,7 @@ async function generateLumaRay(
   const id = taskIdFromJson(started);
   if (!id) throw new Error('Luma did not return a generation id.');
   return pollVideos(
-    () => fetch(`${baseUrl}/generations/${encodeURIComponent(id)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/generations/${encodeURIComponent(id)}`, { headers, signal }),
     'Luma',
     signal,
   );
@@ -1140,7 +1141,7 @@ async function generateKling(
     Authorization: apiKey.toLowerCase().startsWith('bearer ') ? apiKey : `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/videos/text2video`, {
+  const response = await tauriFetch(`${baseUrl}/videos/text2video`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1157,7 +1158,7 @@ async function generateKling(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('Kling did not return a task id.');
   return pollVideos(
-    () => fetch(`${baseUrl}/videos/text2video/${encodeURIComponent(taskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/videos/text2video/${encodeURIComponent(taskId)}`, { headers, signal }),
     'Kling',
     signal,
   );
@@ -1176,7 +1177,7 @@ async function generateMiniMaxVideo(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/video_generation`, {
+  const response = await tauriFetch(`${baseUrl}/video_generation`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1193,7 +1194,7 @@ async function generateMiniMaxVideo(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('MiniMax did not return a task id.');
   const done = await pollJson(
-    () => fetch(`${baseUrl}/query/video_generation?task_id=${encodeURIComponent(taskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/query/video_generation?task_id=${encodeURIComponent(taskId)}`, { headers, signal }),
     'MiniMax',
     signal,
   );
@@ -1201,7 +1202,7 @@ async function generateMiniMaxVideo(
   if (directVideos.length > 0) return directVideos;
   const fileId = stringValue(done.file_id) || stringValue(objectValue(done.output)?.file_id);
   if (fileId) {
-    const fileResponse = await fetch(`${baseUrl}/files/retrieve?file_id=${encodeURIComponent(fileId)}`, {
+    const fileResponse = await tauriFetch(`${baseUrl}/files/retrieve?file_id=${encodeURIComponent(fileId)}`, {
       headers,
       signal,
     });
@@ -1227,7 +1228,7 @@ async function generateDashScopeWan(
     'Content-Type': 'application/json',
     'X-DashScope-Async': 'enable',
   };
-  const response = await fetch(`${baseUrl}/services/aigc/video-generation/video-synthesis`, {
+  const response = await tauriFetch(`${baseUrl}/services/aigc/video-generation/video-synthesis`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1246,7 +1247,7 @@ async function generateDashScopeWan(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('DashScope did not return a task id.');
   return pollVideos(
-    () => fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+    () => tauriFetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal,
     }),
@@ -1274,7 +1275,7 @@ async function generateSeedanceVideo(
   const promptWithParams = `${prompt} --rs 720p --dur ${Math.round(
     targetDurationSeconds,
   )} --rt 16:9 --wm false`;
-  const response = await fetch(`${baseUrl}/contents/generations/tasks`, {
+  const response = await tauriFetch(`${baseUrl}/contents/generations/tasks`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1290,7 +1291,7 @@ async function generateSeedanceVideo(
   if (!taskId) throw new Error('Seedance did not return a task id.');
   return pollVideos(
     () =>
-      fetch(`${baseUrl}/contents/generations/tasks/${encodeURIComponent(taskId)}`, {
+      tauriFetch(`${baseUrl}/contents/generations/tasks/${encodeURIComponent(taskId)}`, {
         headers,
         signal,
       }),
@@ -1315,7 +1316,7 @@ async function generateGenericOnlineVideo(
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = apiKey.toLowerCase().startsWith('bearer ') ? apiKey : `Bearer ${apiKey}`;
-  const response = await fetch(videoProviderBaseUrl(providerId, settings), {
+  const response = await tauriFetch(videoProviderBaseUrl(providerId, settings), {
     method: 'POST',
     headers,
     body: JSON.stringify(videoRequestBody(prompt, model, targetDurationSeconds)),
@@ -1332,7 +1333,7 @@ async function generateGenericOnlineVideo(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl ||
           `${videoProviderBaseUrl(providerId, settings).replace(/\/+$/, '')}/${encodeURIComponent(
             taskId ?? '',
@@ -1368,7 +1369,7 @@ async function generateReplicateVideo(
   const endpoint = version
     ? `${baseUrl}/predictions`
     : `${baseUrl}/models/${encodeModelPath(modelPath)}/predictions`;
-  const response = await fetch(endpoint, {
+  const response = await tauriFetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1384,7 +1385,7 @@ async function generateReplicateVideo(
     stringValue(objectValue(started.urls)?.get) ||
     (stringValue(started.id) ? `${baseUrl}/predictions/${encodeURIComponent(stringValue(started.id))}` : '');
   if (!statusUrl) throw new Error('Replicate did not return a prediction URL.');
-  return pollVideos(() => fetch(statusUrl, { headers, signal }), 'Replicate', signal);
+  return pollVideos(() => tauriFetch(statusUrl, { headers, signal }), 'Replicate', signal);
 }
 
 async function generateFalVideo(
@@ -1402,7 +1403,7 @@ async function generateFalVideo(
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${modelPath}`, {
+  const response = await tauriFetch(`${baseUrl}/${modelPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ input: videoRequestBody(prompt, model, targetDurationSeconds) }),
@@ -1421,7 +1422,7 @@ async function generateFalVideo(
     `${baseUrl}/${modelPath}/requests/${encodeURIComponent(requestId)}`;
   for (let i = 0; i < 160; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const statusResponse = await tauriFetch(statusUrl, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const statusVideos = videosFromJson(status);
     if (statusVideos.length > 0 && isTerminalSuccess(status)) return statusVideos;
@@ -1430,7 +1431,7 @@ async function generateFalVideo(
       throw new Error(providerErrorMessage(status) || 'fal generation failed.');
     }
     if (isSuccessState(state, status)) {
-      const resultResponse = await fetch(responseUrl, { headers, signal });
+      const resultResponse = await tauriFetch(responseUrl, { headers, signal });
       const result = await readJsonResponse(resultResponse);
       const videos = videosFromJson(result);
       if (videos.length > 0) return videos;
@@ -1451,7 +1452,7 @@ async function generateHuggingFaceVideo(
   const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Hugging Face token is missing.');
   const modelPath = encodeModelPath(model);
-  const response = await fetch(`${videoProviderBaseUrl(providerId, settings)}/${modelPath}`, {
+  const response = await tauriFetch(`${videoProviderBaseUrl(providerId, settings)}/${modelPath}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1481,7 +1482,7 @@ async function generateGenericLocalVideo(
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await fetch(videoProviderBaseUrl(providerId, settings), {
+  const response = await tauriFetch(videoProviderBaseUrl(providerId, settings), {
     method: 'POST',
     headers: {
       Accept: 'video/mp4, video/*, application/json',
@@ -1501,7 +1502,7 @@ async function generateGenericLocalVideo(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl ||
           `${videoProviderBaseUrl(providerId, settings).replace(/\/+$/, '')}/${encodeURIComponent(
             taskId ?? '',

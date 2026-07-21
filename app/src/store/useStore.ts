@@ -184,6 +184,7 @@ import {
   isTauri,
   previewLocalFile,
   steerAiCli,
+  ugsJobWrapperPath,
 } from '@/lib/tauri';
 import {
   linkManagedAssetsFromMessageText,
@@ -250,6 +251,7 @@ import type { ResolvedGatewayRoute } from '@/lib/modelGateway/types';
 import {
   UNIFIED_SYSTEM,
   SIMPLE_CHAT_SYSTEM,
+  BACKGROUND_JOB_INSTRUCTION,
   extractJsonObject,
   modelStrategyGuidance,
   buildAssetCapabilityBlock,
@@ -494,7 +496,12 @@ type SessionLiveStatusState = Pick<
   StoreState,
   'runningSessions' | 'aiEditingSessions'
 > &
-  Partial<Pick<StoreState, 'chattingSessions' | 'waitingInputSessions'>>;
+  Partial<
+    Pick<
+      StoreState,
+      'chattingSessions' | 'waitingInputSessions' | 'jobSessions'
+    >
+  >;
 
 export function activeWorkflowSessionKey(
   state: WorkflowSessionState,
@@ -1041,6 +1048,17 @@ export function composerCliWorkspaceOptions(composer: ComposerSettings): {
   };
 }
 
+// The bundled ugs-job wrapper path is stable for the app's lifetime, so resolve
+// it once and cache the promise. Returns '' when unavailable (browser/dev or
+// not found) so the caller simply omits the background-job guidance.
+let ugsJobWrapperPathCache: Promise<string> | undefined;
+function resolveUgsJobWrapperPath(): Promise<string> {
+  ugsJobWrapperPathCache ??= ugsJobWrapperPath()
+    .then((p) => p ?? '')
+    .catch(() => '');
+  return ugsJobWrapperPathCache;
+}
+
 function aiEditCliWorkspaceOptions(
   ch: Pick<AiEditChannel, 'workspaceRootPath'>,
   composer: ComposerSettings,
@@ -1313,6 +1331,11 @@ export function sessionLiveStatus(
   if (hasSessionKey(state.runningSessions, sessionKey)) return 'running';
   if (hasSessionKey(state.chattingSessions ?? [], sessionKey)) return 'running';
   if (hasSessionKey(state.aiEditingSessions, sessionKey)) return 'aiEditing';
+  // A detached background job (external process still working after the CLI turn
+  // ended) keeps the session "running" so the Sidebar dot reflects the real
+  // work, not just the finished chat turn. Ranked last so an in-flight turn's
+  // own status (running/waiting/aiEditing) always takes precedence.
+  if (hasSessionKey(state.jobSessions ?? [], sessionKey)) return 'running';
   return null;
 }
 
@@ -4325,6 +4348,8 @@ export const useStore = create<StoreState>((set, get) => ({
   runningSessionProgress: {},
   runningSessionId: null,
   runningWorkspaceId: null,
+  jobSessions: [],
+  jobSessionProgress: {},
 
   initHistory: () => {
     initHistorySlice();
@@ -4577,6 +4602,9 @@ export const useStore = create<StoreState>((set, get) => ({
 
   runScheduledTaskSession: (sessionId, workspaceId, scheduledTask) =>
     runScheduledTaskHistorySession(sessionId, workspaceId, scheduledTask),
+
+  setBackgroundJobState: (jobSessions, jobSessionProgress) =>
+    useStore.setState({ jobSessions, jobSessionProgress }),
 
   // AI-driven graph edit (design mode only).
   //
@@ -5346,6 +5374,14 @@ ${previousReply.slice(0, 4000)}
       let firstProgressAt: number | undefined;
       const runId = opts.runId ?? makeCliRunId();
       ch.cliRunIds.add(runId);
+      // Carry the STORE session identity into the spawned CLI's env so any
+      // long-running process it detaches (yt-dlp/whisper/ffmpeg) can write a
+      // background-job manifest bound to this exact session. Without this the
+      // detached work is invisible and the Sidebar dot goes green the moment the
+      // turn ends. See lib/backgroundJobs.ts + BackgroundJobRunner.
+      const envWithSession: Record<string, string> = { ...(opts.env ?? {}) };
+      if (ch.sessionId) envWithSession.UGS_SESSION_ID = ch.sessionId;
+      if (ch.workspaceId) envWithSession.UGS_WORKSPACE_ID = ch.workspaceId;
       const liveSteerSupported = await aiCliSteerSupported(
         cli.adapter,
         opts.cliCommand,
@@ -5362,6 +5398,7 @@ ${previousReply.slice(0, 4000)}
       try {
         const text = await aiEditViaCli(prompt, cli.adapter, {
           ...opts,
+          env: envWithSession,
           timeoutSeconds: policy.timeoutSeconds,
           idleTimeoutSeconds: policy.idleTimeoutSeconds,
           runId,
@@ -5933,6 +5970,13 @@ ${previousReply.slice(0, 4000)}
               query: turnText,
             }).catch(() => '')
           : '';
+        // Only teach the ugs-job wrapper when this turn runs through a local CLI
+        // (the model can spawn processes there) AND the wrapper is actually
+        // resolvable. Substitutes the real script path into the guidance.
+        const jobWrapperPath = useCli ? await resolveUgsJobWrapperPath() : '';
+        const backgroundJobBlock = jobWrapperPath
+          ? BACKGROUND_JOB_INSTRUCTION.replace('<UGS_JOB_PATH>', jobWrapperPath)
+          : '';
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
@@ -5947,6 +5991,7 @@ ${previousReply.slice(0, 4000)}
           projectEngineGuidance,
           knowledgeContext,
           useCli ? projectMcpGuidance : '',
+          backgroundJobBlock,
         ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
         // prior conversation (text messages only, skipping system notices) into

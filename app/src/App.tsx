@@ -3,6 +3,7 @@ import Sidebar from '@/panels/Sidebar';
 import AIDock from '@/panels/AIDock';
 import ProjectFileTree from '@/panels/ProjectFileTree';
 import ScheduledTaskRunner from '@/components/ScheduledTaskRunner';
+import BackgroundJobRunner from '@/components/BackgroundJobRunner';
 import StatusBar from '@/components/StatusBar';
 import { primeCliRuntime } from '@/lib/cliConfig';
 import { primeCliUpdateStatus } from '@/lib/cliUpdateStatus';
@@ -72,6 +73,7 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-fg">
       <ScheduledTaskRunner />
+      <BackgroundJobRunner />
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <div className="hidden md:block">
           <Sidebar />

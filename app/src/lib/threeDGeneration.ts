@@ -1,3 +1,4 @@
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -1854,7 +1855,7 @@ async function generateMeshy(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const previewResponse = await fetch(`${baseUrl}/openapi/v2/text-to-3d`, {
+  const previewResponse = await tauriFetch(`${baseUrl}/openapi/v2/text-to-3d`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1874,14 +1875,14 @@ async function generateMeshy(
   const previewTaskId = taskIdFromJson(previewStarted);
   if (!previewTaskId) throw new Error('Meshy did not return a task id.');
   const preview = await pollJson(
-    () => fetch(`${baseUrl}/openapi/v2/text-to-3d/${encodeURIComponent(previewTaskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/openapi/v2/text-to-3d/${encodeURIComponent(previewTaskId)}`, { headers, signal }),
     'Meshy',
     signal,
   );
   const previewAssets = assetsFromJson(preview);
 
   try {
-    const refineResponse = await fetch(`${baseUrl}/openapi/v2/text-to-3d`, {
+    const refineResponse = await tauriFetch(`${baseUrl}/openapi/v2/text-to-3d`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -1898,7 +1899,7 @@ async function generateMeshy(
     const refineTaskId = taskIdFromJson(refineStarted);
     if (refineTaskId) {
       const refined = await pollJson(
-        () => fetch(`${baseUrl}/openapi/v2/text-to-3d/${encodeURIComponent(refineTaskId)}`, { headers, signal }),
+        () => tauriFetch(`${baseUrl}/openapi/v2/text-to-3d/${encodeURIComponent(refineTaskId)}`, { headers, signal }),
         'Meshy refine',
         signal,
       );
@@ -1927,7 +1928,7 @@ async function generateTripo(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/v2/openapi/task`, {
+  const response = await tauriFetch(`${baseUrl}/v2/openapi/task`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1943,7 +1944,7 @@ async function generateTripo(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('Tripo did not return a task id.');
   const done = await pollJson(
-    () => fetch(`${baseUrl}/v2/openapi/task/${encodeURIComponent(taskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/v2/openapi/task/${encodeURIComponent(taskId)}`, { headers, signal }),
     'Tripo',
     signal,
   );
@@ -1967,7 +1968,7 @@ async function generate3DAiStudio(
     'Content-Type': 'application/json',
   };
   const modelPath = model.replace(/^\/+/, '');
-  const response = await fetch(`${baseUrl}/v1/3d-models/${modelPath}/`, {
+  const response = await tauriFetch(`${baseUrl}/v1/3d-models/${modelPath}/`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1984,7 +1985,7 @@ async function generate3DAiStudio(
   if (!taskId) throw new Error('3D AI Studio did not return a generation request id.');
   const done = await pollJson(
     () =>
-      fetch(`${baseUrl}/v1/generation-request/${encodeURIComponent(taskId)}/status/`, {
+      tauriFetch(`${baseUrl}/v1/generation-request/${encodeURIComponent(taskId)}/status/`, {
         headers,
         signal,
       }),
@@ -2047,7 +2048,7 @@ async function generateMeshyRigging(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/openapi/v1/rigging`, {
+  const response = await tauriFetch(`${baseUrl}/openapi/v1/rigging`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -2062,7 +2063,7 @@ async function generateMeshyRigging(
   const taskId = taskIdFromJson(started);
   if (!taskId) throw new Error('Meshy Rigging did not return a task id.');
   const done = await pollJson(
-    () => fetch(`${baseUrl}/openapi/v1/rigging/${encodeURIComponent(taskId)}`, { headers, signal }),
+    () => tauriFetch(`${baseUrl}/openapi/v1/rigging/${encodeURIComponent(taskId)}`, { headers, signal }),
     'Meshy Rigging',
     signal,
   );
@@ -2110,7 +2111,7 @@ async function generateGenericRigging(
     default_animations: rigging.defaultAnimations,
     requested_animations: rigging.requestedAnimations,
   };
-  const response = await fetch(baseUrl, {
+  const response = await tauriFetch(baseUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -2127,7 +2128,7 @@ async function generateGenericRigging(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl || `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(taskId ?? '')}`,
         { headers, signal },
       ),
@@ -2168,7 +2169,7 @@ async function runFalQueueModel({
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${modelPath}`, {
+  const response = await tauriFetch(`${baseUrl}/${modelPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ input }),
@@ -2187,7 +2188,7 @@ async function runFalQueueModel({
     `${baseUrl}/${modelPath}/requests/${encodeURIComponent(requestId)}`;
   for (let i = 0; i < 160; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const statusResponse = await tauriFetch(statusUrl, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const statusAssets = assetsFromJson(status);
     if (statusAssets.length > 0 && isTerminalSuccess(status)) return statusAssets;
@@ -2196,7 +2197,7 @@ async function runFalQueueModel({
       throw new Error(providerErrorMessage(status) || `${providerLabel} generation failed.`);
     }
     if (isSuccessState(state, status)) {
-      const finalResponse = await fetch(responseUrl, { headers, signal });
+      const finalResponse = await tauriFetch(responseUrl, { headers, signal });
       const finalJson = await readJsonResponse(finalResponse);
       const assets = assetsFromJson(finalJson);
       if (assets.length > 0) return assets;
@@ -2224,7 +2225,7 @@ async function generateReplicate3D(
   const body = model.includes(':')
     ? { version: model, input: { prompt, output_format: 'glb' } }
     : { model, input: { prompt, output_format: 'glb' } };
-  const response = await fetch(`${baseUrl}/predictions`, {
+  const response = await tauriFetch(`${baseUrl}/predictions`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -2236,7 +2237,7 @@ async function generateReplicate3D(
   const getUrl = stringValue(objectValue(started.urls)?.get);
   if (!getUrl) throw new Error('Replicate did not return a prediction get URL.');
   const done = await pollJson(
-    () => fetch(getUrl, { headers, signal }),
+    () => tauriFetch(getUrl, { headers, signal }),
     'Replicate',
     signal,
   );
@@ -2255,7 +2256,7 @@ async function generateHuggingFace3D(
   const apiKey = threeDProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Hugging Face token is missing.');
   const baseUrl = threeDProviderBaseUrl(providerId, settings);
-  const response = await fetch(`${baseUrl}/${model}`, {
+  const response = await tauriFetch(`${baseUrl}/${model}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -2312,7 +2313,7 @@ async function generateGeneric3D(
     input.rigging = riggingRequest;
     body.rigging = riggingRequest;
   }
-  const response = await fetch(baseUrl, {
+  const response = await tauriFetch(baseUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -2329,7 +2330,7 @@ async function generateGeneric3D(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl || `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(taskId ?? '')}`,
         { headers, signal },
       ),

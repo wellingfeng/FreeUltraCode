@@ -15,6 +15,7 @@
 //                   search page with the query so the user can browse there
 //                   (Fab, Unity Asset Store, CGTrader, TurboSquid, Free3D, ...).
 
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -650,7 +651,7 @@ interface PolyPizzaSearchResponse {
 }
 
 async function fetchJson<T>(url: string, init: RequestInit, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, { ...init, signal, cache: 'no-store' });
+  const response = await tauriFetch(url, { ...init, signal, cache: 'no-store' });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }

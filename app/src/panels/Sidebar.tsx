@@ -407,6 +407,8 @@ export default function Sidebar({
   const aiEditingSessions = useStore((s) => s.aiEditingSessions);
   const chattingSessions = useStore((s) => s.chattingSessions);
   const waitingInputSessions = useStore((s) => s.waitingInputSessions);
+  const jobSessions = useStore((s) => s.jobSessions);
+  const jobSessionProgress = useStore((s) => s.jobSessionProgress);
   const newSession = useStore((s) => s.newSession);
   const setWorkspace = useStore((s) => s.setWorkspace);
   const selectSession = useStore((s) => s.selectSession);
@@ -1078,8 +1080,15 @@ export default function Sidebar({
       aiEditingSessions,
       chattingSessions,
       waitingInputSessions,
+      jobSessions,
     }),
-    [aiEditingSessions, chattingSessions, runningSessions, waitingInputSessions],
+    [
+      aiEditingSessions,
+      chattingSessions,
+      jobSessions,
+      runningSessions,
+      waitingInputSessions,
+    ],
   );
 
   // Session keys whose composer still holds unsent text. The active session's
@@ -1652,8 +1661,11 @@ export default function Sidebar({
                               workflowSessionKeyId(sessionKey),
                             ),
                           );
+                          const sessionKeyId =
+                            workflowSessionKeyId(sessionKey);
                           const runProgress =
-                            runningSessionProgress[workflowSessionKeyId(sessionKey)];
+                            runningSessionProgress[sessionKeyId] ??
+                            jobSessionProgress[sessionKeyId];
                           const statusLabel = historyStatusLabel(
                             locale,
                             status,
@@ -1845,8 +1857,10 @@ export default function Sidebar({
                     liveStatus,
                     draftSessionKeys.has(workflowSessionKeyId(sessionKey)),
                   );
+                  const sessionKeyId = workflowSessionKeyId(sessionKey);
                   const runProgress =
-                    runningSessionProgress[workflowSessionKeyId(sessionKey)];
+                    runningSessionProgress[sessionKeyId] ??
+                    jobSessionProgress[sessionKeyId];
                   const statusLabel = historyStatusLabel(
                     locale,
                     status,

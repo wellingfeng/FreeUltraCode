@@ -332,6 +332,22 @@ export const SIMPLE_CHAT_SYSTEM = `你正在「简单 Workflow」里直接为用
 ${INTERACTION_PROTOCOL}`;
 
 /**
+ * CLI-only guidance: how to launch a long-running external command so the app
+ * can track its REAL progress. Injected into the chat system prompt only when
+ * the turn runs through a local CLI (the model can spawn processes there). The
+ * problem it prevents: a process detached with `nohup ... &` outlives the CLI
+ * turn, so the session's Sidebar dot goes green while the work is still running.
+ * Wrapping the command in `ugs-job` writes a manifest the app polls, keeping the
+ * session "running" until the artifact lands. See lib/backgroundJobs.ts.
+ */
+export const BACKGROUND_JOB_INSTRUCTION = `
+【后台长任务（重要）】当你要启动一个会持续很久、且需要脱离本轮对话继续跑的外部命令（例如 yt-dlp 下载、whisper 转写、ffmpeg 合成、批处理脚本），不要直接用 \`nohup 命令 &\` 甩到后台——那样进程会脱离应用的进度跟踪，会话左侧的状态点会在本轮回复结束时立刻变成“已完成”的绿色，用户就看不到真实进度了。
+- 正确做法：用 \`ugs-job\` 包装器启动，它会登记一份任务清单，应用会轮询并把真实进度显示在该会话的状态点上，直到产物落地或失败：
+  \`node <UGS_JOB_PATH> --label "简短中文标签" --artifact "<最终产物绝对路径>" --progress "<进度日志绝对路径>" -- <你的命令> [参数...]\`
+- 其中 \`--artifact\` 是任务成功的判定依据（该文件出现即成功）；\`--progress\` 指向一个会持续写入的日志文件，应用会从中提取百分比（默认识别形如 \`63.5%\` 的进度）。会话与工作区身份已通过环境变量自动注入，无需手填。
+- 若确实需要 detach，仍要把命令放在 \`ugs-job\` 后面，由它负责登记与善后（自动写 done/fail 标记）。`;
+
+/**
  * CONTRACT: which built-in asset-generation channels are configured + ready.
  *
  * UltraGameStudio ships dedicated generation channels (image / music / 3D mesh /

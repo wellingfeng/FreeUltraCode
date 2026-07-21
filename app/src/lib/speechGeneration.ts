@@ -1,3 +1,4 @@
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -1131,7 +1132,7 @@ async function generateElevenLabs(
   const apiKey = speechProviderKey(providerId, settings);
   if (!apiKey) throw new Error('ElevenLabs API key is missing.');
   const baseUrl = speechProviderBaseUrl(providerId, settings);
-  const response = await fetch(
+  const response = await tauriFetch(
     `${baseUrl}/text-to-speech/${encodeURIComponent(voice)}?output_format=mp3_44100_128`,
     {
       method: 'POST',
@@ -1163,7 +1164,7 @@ async function generateOpenAiSpeech(
     Accept: 'audio/mpeg, application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const response = await fetch(`${speechProviderBaseUrl(providerId, settings)}/audio/speech`, {
+  const response = await tauriFetch(`${speechProviderBaseUrl(providerId, settings)}/audio/speech`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1187,7 +1188,7 @@ async function generateGeminiTts(
 ): Promise<string[]> {
   const apiKey = speechProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Google API key is missing.');
-  const response = await fetch(
+  const response = await tauriFetch(
     `${speechProviderBaseUrl(providerId, settings)}/models/${encodeURIComponent(
       model,
     )}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -1225,7 +1226,7 @@ async function generateAzureTts(
   const ssml =
     `<speak version="1.0" xml:lang="${escapeXml(locale)}">` +
     `<voice name="${escapeXml(voice)}">${escapeXml(prompt)}</voice></speak>`;
-  const response = await fetch(
+  const response = await tauriFetch(
     `${speechProviderBaseUrl(providerId, settings)}/cognitiveservices/v1`,
     {
       method: 'POST',
@@ -1251,7 +1252,7 @@ async function generateCartesia(
 ): Promise<string[]> {
   const apiKey = speechProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Cartesia API key is missing.');
-  const response = await fetch(`${speechProviderBaseUrl(providerId, settings)}/tts/bytes`, {
+  const response = await tauriFetch(`${speechProviderBaseUrl(providerId, settings)}/tts/bytes`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1283,7 +1284,7 @@ async function generateDeepgram(
   if (!apiKey) throw new Error('Deepgram API key is missing.');
   const url = new URL(`${speechProviderBaseUrl(providerId, settings)}/speak`);
   url.searchParams.set('model', voice.trim() || model);
-  const response = await fetch(url.toString(), {
+  const response = await tauriFetch(url.toString(), {
     method: 'POST',
     headers: {
       Authorization: `Token ${apiKey}`,
@@ -1310,7 +1311,7 @@ async function generateMiniMaxTts(
   if (!groupId) throw new Error('MiniMax GroupId is missing.');
   const url = new URL(`${speechProviderBaseUrl(providerId, settings)}/t2a_v2`);
   url.searchParams.set('GroupId', groupId);
-  const response = await fetch(url.toString(), {
+  const response = await tauriFetch(url.toString(), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1345,7 +1346,7 @@ async function generateDashScopeTts(
 ): Promise<string[]> {
   const apiKey = speechProviderKey(providerId, settings);
   if (!apiKey) throw new Error('DashScope API key is missing.');
-  const response = await fetch(
+  const response = await tauriFetch(
     `${speechProviderBaseUrl(providerId, settings)}/services/aigc/multimodal-generation/generation`,
     {
       method: 'POST',
@@ -1389,7 +1390,7 @@ async function generateReplicateSpeech(
   const endpoint = version
     ? `${baseUrl}/predictions`
     : `${baseUrl}/models/${encodeModelPath(modelPath)}/predictions`;
-  const response = await fetch(endpoint, {
+  const response = await tauriFetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1410,7 +1411,7 @@ async function generateReplicateSpeech(
     if (immediate.length > 0) return immediate;
     throw new Error('Replicate did not return a prediction URL.');
   }
-  return pollAudios(() => fetch(statusUrl, { headers, signal }), 'Replicate', signal);
+  return pollAudios(() => tauriFetch(statusUrl, { headers, signal }), 'Replicate', signal);
 }
 
 async function generateFalSpeech(
@@ -1429,7 +1430,7 @@ async function generateFalSpeech(
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${modelPath}`, {
+  const response = await tauriFetch(`${baseUrl}/${modelPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(speechRequestBody(prompt, voice)),
@@ -1448,7 +1449,7 @@ async function generateFalSpeech(
     `${baseUrl}/${modelPath}/requests/${encodeURIComponent(requestId)}`;
   for (let i = 0; i < 120; i += 1) {
     await delay(2000, signal);
-    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const statusResponse = await tauriFetch(statusUrl, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const statusAudios = audiosFromJson(status);
     if (statusAudios.length > 0 && isTerminalSuccess(status)) return statusAudios;
@@ -1457,7 +1458,7 @@ async function generateFalSpeech(
       throw new Error(providerErrorMessage(status) || 'fal generation failed.');
     }
     if (isSuccessState(state, status)) {
-      const resultResponse = await fetch(responseUrl, { headers, signal });
+      const resultResponse = await tauriFetch(responseUrl, { headers, signal });
       const result = await readJsonResponse(resultResponse);
       const audios = audiosFromJson(result);
       if (audios.length > 0) return audios;
@@ -1477,7 +1478,7 @@ async function generateHuggingFaceSpeech(
   const apiKey = speechProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Hugging Face token is missing.');
   const modelPath = encodeModelPath(model);
-  const response = await fetch(`${speechProviderBaseUrl(providerId, settings)}/${modelPath}`, {
+  const response = await tauriFetch(`${speechProviderBaseUrl(providerId, settings)}/${modelPath}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1517,7 +1518,7 @@ async function generateGenericOnlineSpeech(
     headers['X-App-Id'] = accountId;
   }
   const started = await readResponseJsonOrAudios(
-    await fetch(speechProviderBaseUrl(providerId, settings), {
+    await tauriFetch(speechProviderBaseUrl(providerId, settings), {
       method: 'POST',
       headers,
       body: JSON.stringify(speechRequestBody(prompt, voice, model)),
@@ -1535,7 +1536,7 @@ async function generateGenericOnlineSpeech(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl ||
           `${speechProviderBaseUrl(providerId, settings)}/${encodeURIComponent(taskId ?? '')}`,
         { headers, signal },
@@ -1558,7 +1559,7 @@ async function generateGenericLocalSpeech(
 ): Promise<string[]> {
   const provider = speechProviderById(providerId, settings);
   const started = await readResponseJsonOrAudios(
-    await fetch(speechProviderBaseUrl(providerId, settings), {
+    await tauriFetch(speechProviderBaseUrl(providerId, settings), {
       method: 'POST',
       headers: {
         Accept: 'audio/mpeg, audio/wav, audio/*, application/json',
@@ -1579,7 +1580,7 @@ async function generateGenericLocalSpeech(
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl ||
           `${speechProviderBaseUrl(providerId, settings)}/${encodeURIComponent(taskId ?? '')}`,
         { signal },

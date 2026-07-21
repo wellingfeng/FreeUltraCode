@@ -1792,6 +1792,56 @@ export async function listCachedAssets(cwd?: string | null): Promise<CachedAsset
   });
 }
 
+/**
+ * One background job's manifest text + filesystem probe, as gathered by the
+ * Rust `list_background_jobs` command. The pure `resolveJobStatus` in
+ * `lib/backgroundJobs.ts` turns this into a running/success/failed decision.
+ */
+export interface BackgroundJobProbeRaw {
+  fileStem: string;
+  workspaceCwd: string | null;
+  manifestJson: string;
+  artifactExists: boolean;
+  doneMarkerExists: boolean;
+  failMarkerExists: boolean;
+  pidAlive: boolean | null;
+  progressTail: string | null;
+  probedAtMs: number;
+}
+
+/** Probe every background-job manifest under a workspace's `jobs/` dir. */
+export async function listBackgroundJobs(
+  cwd?: string | null,
+): Promise<BackgroundJobProbeRaw[]> {
+  if (!tauriAvailable()) return [];
+  const invoke = await getInvoke();
+  return invoke<BackgroundJobProbeRaw[]>('list_background_jobs', {
+    cwd: cwd ?? null,
+  });
+}
+
+/** Delete a terminal job's manifest so it stops being re-probed. */
+export async function removeBackgroundJob(
+  cwd: string | null,
+  fileStem: string,
+): Promise<void> {
+  if (!tauriAvailable()) return;
+  const invoke = await getInvoke();
+  await invoke('remove_background_job', { cwd: cwd ?? null, fileStem });
+}
+
+/**
+ * Absolute path to the bundled `ugs-job.mjs` background-job wrapper, or null
+ * when it can't be located (or outside the desktop shell). The chat system
+ * prompt uses this to tell the model exactly which script to wrap long-running
+ * commands in.
+ */
+export async function ugsJobWrapperPath(): Promise<string | null> {
+  if (!tauriAvailable()) return null;
+  const invoke = await getInvoke();
+  return invoke<string | null>('ugs_job_wrapper_path');
+}
+
 /** Best-effort cancellation for an in-flight local agent CLI invocation. */
 export async function cancelAiCli(runId: string): Promise<void> {
   if (!tauriAvailable()) return;
@@ -2335,6 +2385,162 @@ export async function engineRevealAsset(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * CORS-free `fetch` replacement.
+ *
+ * The Tauri WebView runs `fetch()` in a browser context, so cross-origin
+ * upstreams that don't send `Access-Control-Allow-Origin` (many model / image
+ * gateways) fail with an opaque `Failed to fetch`. In the desktop shell we
+ * forward the request through Rust (`proxy_http`), which is not a browser
+ * context and is not subject to CORS. Outside Tauri (plain browser / Vite dev)
+ * we fall back to the native `fetch` unchanged.
+ *
+ * The wrapper accepts the subset of `fetch` we actually use across the asset
+ * generators (method, headers, body, signal) and returns a standard `Response`,
+ * so call sites can keep using `response.ok`, `.status`, `.text()`, `.json()`,
+ * `.blob()`, `.arrayBuffer()`, and `.headers.get()` unchanged.
+ */
+interface ProxyHttpHeader {
+  name: string;
+  value: string;
+}
+
+interface ProxyHttpResponsePayload {
+  status: number;
+  statusText: string;
+  headers: ProxyHttpHeader[];
+  bodyBase64: string;
+  url: string;
+}
+
+function normalizeHeaders(input?: HeadersInit): ProxyHttpHeader[] {
+  const out: ProxyHttpHeader[] = [];
+  if (!input) return out;
+  if (input instanceof Headers) {
+    input.forEach((value, name) => out.push({ name, value }));
+  } else if (Array.isArray(input)) {
+    for (const [name, value] of input) out.push({ name, value });
+  } else {
+    for (const [name, value] of Object.entries(input)) {
+      out.push({ name, value: String(value) });
+    }
+  }
+  return out;
+}
+
+async function bodyInitToBase64(body: BodyInit | null | undefined): Promise<string | null> {
+  if (body == null) return null;
+  let bytes: Uint8Array;
+  if (typeof body === 'string') {
+    bytes = new TextEncoder().encode(body);
+  } else if (body instanceof ArrayBuffer) {
+    bytes = new Uint8Array(body);
+  } else if (ArrayBuffer.isView(body)) {
+    bytes = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  } else if (body instanceof Blob) {
+    bytes = new Uint8Array(await body.arrayBuffer());
+  } else if (body instanceof URLSearchParams) {
+    bytes = new TextEncoder().encode(body.toString());
+  } else {
+    // FormData / ReadableStream are not used by the proxied call sites; encode
+    // its string form as a last resort so we never silently drop a body.
+    bytes = new TextEncoder().encode(String(body));
+  }
+  if (bytes.byteLength === 0) return null;
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  if (!base64) return new Uint8Array(0);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** `fetch`-compatible request that bypasses WebView CORS when in the desktop shell. */
+export async function tauriFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  if (!tauriAvailable()) {
+    return fetch(input as RequestInfo, init);
+  }
+
+  // Only Request/string/URL inputs are used by our call sites. Merge a Request's
+  // own fields with the explicit init (init wins, matching fetch()).
+  const reqObj = input instanceof Request ? input : null;
+  const url = reqObj ? reqObj.url : input instanceof URL ? input.toString() : String(input);
+
+  // Only remote http(s) requests can hit CORS. data:/blob:/relative URLs are
+  // local or same-origin and must go through the native fetch (the Rust proxy
+  // only understands http/https). This keeps the wrapper a safe drop-in.
+  if (!/^https?:\/\//i.test(url)) {
+    return fetch(input as RequestInfo, init);
+  }
+  const method = (init?.method ?? reqObj?.method ?? 'GET').toUpperCase();
+  const signal = init?.signal ?? reqObj?.signal ?? undefined;
+
+  if (signal?.aborted) {
+    throw new DOMException('The operation was aborted.', 'AbortError');
+  }
+
+  const headers = normalizeHeaders(init?.headers ?? reqObj?.headers ?? undefined);
+  const bodyBase64 = await bodyInitToBase64(init?.body ?? undefined);
+
+  const invoke = await getInvoke();
+  const call = invoke<ProxyHttpResponsePayload>('proxy_http', {
+    request: { method, url, headers, bodyBase64 },
+  });
+
+  // Bridge AbortSignal to a rejected promise; the Rust side still runs to
+  // completion but the caller sees the same AbortError as native fetch.
+  const payload = await (signal
+    ? Promise.race([
+        call,
+        new Promise<never>((_, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('The operation was aborted.', 'AbortError')),
+            { once: true },
+          );
+        }),
+      ])
+    : call);
+
+  const responseHeaders = new Headers();
+  for (const { name, value } of payload.headers) {
+    try {
+      responseHeaders.append(name, value);
+    } catch {
+      // Skip forbidden/invalid header names rather than failing the response.
+    }
+  }
+  const bodyBytes = base64ToBytes(payload.bodyBase64);
+  // 204/205/304 must not carry a body per the Response constructor contract.
+  const nullBody = payload.status === 204 || payload.status === 205 || payload.status === 304;
+  const responseBody: BodyInit | null = nullBody
+    ? null
+    : new Blob([bodyBytes.buffer as ArrayBuffer]);
+  const response = new Response(responseBody, {
+    status: payload.status,
+    statusText: payload.statusText,
+    headers: responseHeaders,
+  });
+  // `url` is read-only on Response; expose the final URL for callers that read it.
+  try {
+    Object.defineProperty(response, 'url', { value: payload.url || url });
+  } catch {
+    // Non-fatal: some engines lock the property. Callers rarely need it.
+  }
+  return response;
 }
 
 /** Join a relative path onto cwd using the Tauri path API; absolute paths pass through. */

@@ -17,6 +17,7 @@
 //      block therefore degrades gracefully: when a session URL is present it
 //      embeds the live world; otherwise it shows a structured "spec card" the
 //      user can launch externally once a provider session is available.
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -663,7 +664,7 @@ async function generateWorldLabsMarbleWorld({
     'WLT-Api-Key': apiKey,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(generateUrl, {
+  const response = await tauriFetch(generateUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -706,7 +707,7 @@ async function generateWorldLabsMarbleWorld({
   }
 
   const done = await pollJson(
-    () => fetch(operationUrl, { headers, signal }),
+    () => tauriFetch(operationUrl, { headers, signal }),
     'World Labs Marble',
     signal,
   );
@@ -738,7 +739,7 @@ async function generateGenericWorldModel({
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const response = await fetch(baseUrl, {
+  const response = await tauriFetch(baseUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -772,7 +773,7 @@ async function generateGenericWorldModel({
   }
   const done = await pollJson(
     () =>
-      fetch(
+      tauriFetch(
         statusUrl ||
           `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(taskId)}`,
         { headers, signal },

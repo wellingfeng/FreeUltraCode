@@ -239,6 +239,16 @@ export interface StoreState {
   /** Lightweight live progress keyed by the owning workflow session. */
   runningSessionProgress: Record<string, RunProgressSummary>;
   /**
+   * Sessions with a live background job (a detached external process such as
+   * yt-dlp/whisper/ffmpeg that outlives the CLI turn that started it). These
+   * keep the Sidebar dot in the running state until the job's artifact lands or
+   * it fails, so the dot reflects real work rather than just "the turn ended".
+   * Fed by `BackgroundJobRunner` polling `.ultragamestudio/jobs/`.
+   */
+  jobSessions: WorkflowSessionKey[];
+  /** Live background-job progress (0-100) keyed by owning session. */
+  jobSessionProgress: Record<string, RunProgressSummary>;
+  /**
    * Compatibility marker for older UI code: the first currently executing
    * session, or null when nothing is running. Prefer `runningSessions`.
    */
@@ -313,6 +323,15 @@ export interface StoreState {
     workspaceId: string | null,
     scheduledTask: ScheduledTaskConfig | null,
   ) => Promise<void>;
+  /**
+   * Replace the live background-job set + progress in one shot. Called by
+   * `BackgroundJobRunner` on each poll tick with the sessions that still have a
+   * running detached process and their latest progress.
+   */
+  setBackgroundJobState: (
+    jobSessions: WorkflowSessionKey[],
+    jobSessionProgress: Record<string, RunProgressSummary>,
+  ) => void;
   runScheduledTaskSession: (
     sessionId: string,
     workspaceId: string | null,

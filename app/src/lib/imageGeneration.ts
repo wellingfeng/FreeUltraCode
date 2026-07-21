@@ -3,7 +3,7 @@ import {
   type SettingsProfileOptions,
   writeSettingsRaw,
 } from '@/lib/generationSettingsStore';
-import { generateCloudflareImage, tauriAvailable } from '@/lib/tauri';
+import { generateCloudflareImage, tauriAvailable, tauriFetch } from '@/lib/tauri';
 import { APP_VERSION } from '@/lib/updateCheck';
 
 export type BuiltInImageProviderId =
@@ -1162,7 +1162,7 @@ async function generateCloudflare(
       }),
     ];
   }
-  const response = await fetch(
+  const response = await tauriFetch(
     `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(
       accountId,
     )}/ai/run/${encodeModelPath(model)}`,
@@ -1198,7 +1198,7 @@ async function generatePollinations(
   url.searchParams.set('height', '1024');
   url.searchParams.set('enhance', 'true');
   if (apiKey) url.searchParams.set('key', apiKey);
-  const response = await fetch(url.toString(), {
+  const response = await tauriFetch(url.toString(), {
     method: 'GET',
     headers,
     signal,
@@ -1215,7 +1215,7 @@ async function generateSiliconFlow(
   const apiKey = settings.providerKeys.siliconflow?.trim();
   if (!apiKey) throw new Error('SiliconFlow API key is missing.');
   const isQwenImage = model.startsWith('Qwen/Qwen-Image');
-  const response = await fetch(`${imageProviderBaseUrl('siliconflow', settings)}/images/generations`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('siliconflow', settings)}/images/generations`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1248,7 +1248,7 @@ async function generateOpenAiImages(
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const response = await fetch(`${imageProviderBaseUrl(providerId, settings)}/images/generations`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/images/generations`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1271,7 +1271,7 @@ async function generateGoogleGeminiImage(
 ): Promise<string[]> {
   const apiKey = settings.providerKeys['google-gemini-image']?.trim();
   if (!apiKey) throw new Error('Google API key is missing.');
-  const response = await fetch(
+  const response = await tauriFetch(
     `${imageProviderBaseUrl('google-gemini-image', settings)}/models/${encodeURIComponent(
       model,
     )}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -1303,7 +1303,7 @@ async function generateGoogleImagen(
 ): Promise<string[]> {
   const apiKey = settings.providerKeys['google-imagen']?.trim();
   if (!apiKey) throw new Error('Google API key is missing.');
-  const response = await fetch(
+  const response = await tauriFetch(
     `${imageProviderBaseUrl('google-imagen', settings)}/models/${encodeURIComponent(
       model,
     )}:predict?key=${encodeURIComponent(apiKey)}`,
@@ -1333,7 +1333,7 @@ async function generateBflFlux(
   const apiKey = settings.providerKeys['bfl-flux']?.trim();
   if (!apiKey) throw new Error('BFL API key is missing.');
   const baseUrl = imageProviderBaseUrl('bfl-flux', settings);
-  const response = await fetch(`${baseUrl}/v1/${encodeModelPath(model)}`, {
+  const response = await tauriFetch(`${baseUrl}/v1/${encodeModelPath(model)}`, {
     method: 'POST',
     headers: {
       'x-key': apiKey,
@@ -1361,7 +1361,7 @@ async function generateBflFlux(
     const statusUrl = /^https?:\/\//i.test(requestId)
       ? requestId
       : `${baseUrl}/v1/get_result?id=${encodeURIComponent(requestId)}`;
-    const statusResponse = await fetch(statusUrl, {
+    const statusResponse = await tauriFetch(statusUrl, {
       headers: { 'x-key': apiKey },
       signal,
     });
@@ -1388,7 +1388,7 @@ async function generateIdeogram(
   appendFormValue(form, 'text_prompt', prompt);
   appendFormValue(form, 'rendering_speed', model === 'ideogram-v4-turbo' ? 'TURBO' : 'DEFAULT');
   appendFormValue(form, 'aspect_ratio', '1x1');
-  const response = await fetch(`${imageProviderBaseUrl('ideogram', settings)}/v1/ideogram-v4/generate`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('ideogram', settings)}/v1/ideogram-v4/generate`, {
     method: 'POST',
     headers: { 'Api-Key': apiKey },
     body: form,
@@ -1417,7 +1417,7 @@ async function generateStabilityAi(
           ? '/stable-image/generate/sdxl'
           : '/stable-image/generate/sd3';
   if (endpoint.endsWith('/sd3')) appendFormValue(form, 'model', model);
-  const response = await fetch(`${imageProviderBaseUrl('stability-ai', settings)}${endpoint}`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('stability-ai', settings)}${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1446,7 +1446,7 @@ async function generateAdobeFirefly(
     client_secret: clientSecret,
     scope: 'openid,AdobeID,firefly_api,ff_apis',
   });
-  const tokenResponse = await fetch('https://ims-na1.adobelogin.com/ims/token/v3', {
+  const tokenResponse = await tauriFetch('https://ims-na1.adobelogin.com/ims/token/v3', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: tokenBody,
@@ -1455,7 +1455,7 @@ async function generateAdobeFirefly(
   const tokenJson = await readJsonResponse(tokenResponse);
   const token = stringValue(tokenJson.access_token) || stringValue(tokenJson.accessToken);
   if (!token) throw new Error('Adobe IMS did not return an access token.');
-  const response = await fetch(`${imageProviderBaseUrl('adobe-firefly', settings)}/images/generate`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('adobe-firefly', settings)}/images/generate`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1483,7 +1483,7 @@ async function generateLumaPhoton(
   const apiKey = settings.providerKeys['luma-photon']?.trim();
   if (!apiKey) throw new Error('Luma API key is missing.');
   const baseUrl = imageProviderBaseUrl('luma-photon', settings);
-  const response = await fetch(`${baseUrl}/generations/image`, {
+  const response = await tauriFetch(`${baseUrl}/generations/image`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1504,7 +1504,7 @@ async function generateLumaPhoton(
   if (!id) throw new Error('Luma did not return a generation id.');
   for (let i = 0; i < 120; i += 1) {
     await delay(1500, signal);
-    const statusResponse = await fetch(`${baseUrl}/generations/${encodeURIComponent(id)}`, {
+    const statusResponse = await tauriFetch(`${baseUrl}/generations/${encodeURIComponent(id)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal,
     });
@@ -1527,7 +1527,7 @@ async function generateXaiImages(
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await fetch(`${imageProviderBaseUrl('xai-grok-imagine', settings)}/images/generations`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('xai-grok-imagine', settings)}/images/generations`, {
     method: 'POST',
     headers: requestHeaders('xai-grok-imagine', settings),
     body: JSON.stringify({
@@ -1562,7 +1562,7 @@ async function generateReplicate(
   const endpoint = version
     ? `${baseUrl}/predictions`
     : `${baseUrl}/models/${encodeModelPath(modelPath)}/predictions`;
-  const response = await fetch(endpoint, {
+  const response = await tauriFetch(endpoint, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1585,7 +1585,7 @@ async function generateReplicate(
   if (!statusUrl) throw new Error('Replicate did not return a prediction URL.');
   for (let i = 0; i < 90; i += 1) {
     await delay(1000, signal);
-    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const statusResponse = await tauriFetch(statusUrl, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const state = stringValue(status.status).toLowerCase();
     if (state === 'failed' || state === 'canceled') {
@@ -1610,7 +1610,7 @@ async function generateFalAi(
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${model.replace(/^\/+/, '')}`, {
+  const response = await tauriFetch(`${baseUrl}/${model.replace(/^\/+/, '')}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1636,7 +1636,7 @@ async function generateFalAi(
     const url =
       statusUrl ||
       `${baseUrl}/${model.replace(/^\/+/, '')}/requests/${encodeURIComponent(requestId)}/status`;
-    const statusResponse = await fetch(url, { headers, signal });
+    const statusResponse = await tauriFetch(url, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const state = stringValue(status.status).toUpperCase();
     if (state === 'FAILED' || state === 'ERROR') {
@@ -1648,7 +1648,7 @@ async function generateFalAi(
       const finalUrl =
         responseUrl ||
         `${baseUrl}/${model.replace(/^\/+/, '')}/requests/${encodeURIComponent(requestId)}`;
-      const finalResponse = await fetch(finalUrl, { headers, signal });
+      const finalResponse = await tauriFetch(finalUrl, { headers, signal });
       const finalJson = await readJsonResponse(finalResponse);
       const images = imagesFromJson(finalJson);
       if (images.length > 0) return images;
@@ -1664,7 +1664,7 @@ async function generateRunware(
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await fetch(imageProviderBaseUrl('runware', settings), {
+  const response = await tauriFetch(imageProviderBaseUrl('runware', settings), {
     method: 'POST',
     headers: requestHeaders('runware', settings),
     body: JSON.stringify([
@@ -1692,7 +1692,7 @@ async function generateMiniMax(
 ): Promise<string[]> {
   const apiKey = settings.providerKeys.minimax?.trim();
   if (!apiKey) throw new Error('MiniMax API key is missing.');
-  const response = await fetch(`${imageProviderBaseUrl('minimax', settings)}/image_generation`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl('minimax', settings)}/image_generation`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1721,7 +1721,7 @@ async function generateVolcengineSeedream(
   const provider = imageProviderById(providerId, settings);
   const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error(`${provider.label} API key is missing.`);
-  const response = await fetch(
+  const response = await tauriFetch(
     `${imageProviderBaseUrl(providerId, settings)}/images/generations`,
     {
       method: 'POST',
@@ -1757,7 +1757,7 @@ async function generateDashScopeWanx(
     model.startsWith('qwen-image-2.0') ||
     model.startsWith('qwen-image-max')
   ) {
-    const response = await fetch(`${baseUrl}/services/aigc/multimodal-generation/generation`, {
+    const response = await tauriFetch(`${baseUrl}/services/aigc/multimodal-generation/generation`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -1786,7 +1786,7 @@ async function generateDashScopeWanx(
     return imagesFromResponse(response);
   }
 
-  const startedResponse = await fetch(`${baseUrl}/services/aigc/text2image/image-synthesis`, {
+  const startedResponse = await tauriFetch(`${baseUrl}/services/aigc/text2image/image-synthesis`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1811,7 +1811,7 @@ async function generateDashScopeWanx(
   if (!taskId) throw new Error('DashScope did not return a task id.');
   for (let i = 0; i < 60; i += 1) {
     await delay(5000, signal);
-    const statusResponse = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+    const statusResponse = await tauriFetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal,
     });
@@ -1836,7 +1836,7 @@ async function generateAiHorde(
 ): Promise<string[]> {
   const apiKey = settings.providerKeys['ai-horde']?.trim() || '0000000000';
   const baseUrl = imageProviderBaseUrl('ai-horde', settings);
-  const response = await fetch(`${baseUrl}/generate/async`, {
+  const response = await tauriFetch(`${baseUrl}/generate/async`, {
     method: 'POST',
     headers: {
       apikey: apiKey,
@@ -1863,7 +1863,7 @@ async function generateAiHorde(
   if (!id) throw new Error('AI Horde did not return a job id.');
   for (let i = 0; i < 90; i += 1) {
     await delay(2000, signal);
-    const statusResponse = await fetch(`${baseUrl}/generate/status/${encodeURIComponent(id)}`, {
+    const statusResponse = await tauriFetch(`${baseUrl}/generate/status/${encodeURIComponent(id)}`, {
       headers: { apikey: apiKey },
       signal,
     });
@@ -1893,7 +1893,7 @@ async function generateComfyUi(
   signal?: AbortSignal,
 ): Promise<string[]> {
   const baseUrl = imageProviderBaseUrl('local-comfyui', settings);
-  const response = await fetch(`${baseUrl}/prompt-text-to-image`, {
+  const response = await tauriFetch(`${baseUrl}/prompt-text-to-image`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, model }),

@@ -1,3 +1,4 @@
+import { tauriFetch } from '@/lib/tauri';
 import {
   readSettingsRaw,
   type SettingsProfileOptions,
@@ -1159,7 +1160,7 @@ async function generateElevenLabsMusic(
 ): Promise<string[]> {
   const apiKey = settings.providerKeys['elevenlabs-music']?.trim();
   if (!apiKey) throw new Error('ElevenLabs API key is missing.');
-  const response = await fetch(`${musicProviderBaseUrl('elevenlabs-music', settings)}/music`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl('elevenlabs-music', settings)}/music`, {
     method: 'POST',
     headers: {
       'xi-api-key': apiKey,
@@ -1185,7 +1186,7 @@ async function generateGoogleLyria(
   const apiKey = settings.providerKeys['google-lyria']?.trim();
   if (!apiKey) throw new Error('Google API key is missing.');
   const baseUrl = musicProviderBaseUrl('google-lyria', settings);
-  const response = await fetch(
+  const response = await tauriFetch(
     `${baseUrl}/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: 'POST',
@@ -1229,7 +1230,7 @@ async function generateMiniMaxMusic(
     },
   };
   if (lyrics) body.lyrics = lyrics;
-  const response = await fetch(`${musicProviderBaseUrl(providerId, settings)}/music_generation`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl(providerId, settings)}/music_generation`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1262,7 +1263,7 @@ async function generateStabilityStableAudio(
   const endpoint = model.includes('2')
     ? '/audio/stable-audio-2/text-to-audio'
     : '/audio/stable-audio/text-to-audio';
-  const response = await fetch(`${musicProviderBaseUrl('stability-stable-audio', settings)}${endpoint}`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl('stability-stable-audio', settings)}${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1288,7 +1289,7 @@ async function generateBeatovenMaestro(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/api/v1/tracks/compose`, {
+  const response = await tauriFetch(`${baseUrl}/api/v1/tracks/compose`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1305,7 +1306,7 @@ async function generateBeatovenMaestro(
   if (!taskId) throw new Error('Beatoven did not return a task id.');
   for (let i = 0; i < 90; i += 1) {
     await delay(2000, signal);
-    const statusResponse = await fetch(`${baseUrl}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
+    const statusResponse = await tauriFetch(`${baseUrl}/api/v1/tasks/${encodeURIComponent(taskId)}`, {
       headers,
       signal,
     });
@@ -1339,7 +1340,7 @@ async function generateMurekaMusic(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(
+  const response = await tauriFetch(
     `${baseUrl}${songMode ? '/v1/song/generate' : '/v1/instrumental/generate'}`,
     {
       method: 'POST',
@@ -1356,7 +1357,7 @@ async function generateMurekaMusic(
   const queryPath = songMode ? '/v1/song/query' : '/v1/instrumental/query';
   for (let i = 0; i < 120; i += 1) {
     await delay(5000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}${queryPath}/${encodeURIComponent(taskId)}`,
       { headers, signal },
     );
@@ -1390,7 +1391,7 @@ async function generateTemPolorMusic(
     Authorization: apiKey,
     'Content-Type': 'application/json; charset=utf-8',
   };
-  const response = await fetch(
+  const response = await tauriFetch(
     `${baseUrl}${songMode ? '/open-apis/v1/song/generate' : '/open-apis/v1/instrumental/generate'}`,
     {
       method: 'POST',
@@ -1407,7 +1408,7 @@ async function generateTemPolorMusic(
   if (taskIds.length === 0) throw new Error('TemPolor did not return item_ids.');
   for (let i = 0; i < 120; i += 1) {
     await delay(5000, signal);
-    const statusResponse = await fetch(`${baseUrl}/open-apis/v1/song/query`, {
+    const statusResponse = await tauriFetch(`${baseUrl}/open-apis/v1/song/query`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ item_ids: taskIds }),
@@ -1434,7 +1435,7 @@ async function generateMubert(
 ): Promise<string[]> {
   const pat = settings.providerKeys.mubert?.trim();
   if (!pat) throw new Error('Mubert personal access token is missing.');
-  const response = await fetch(`${musicProviderBaseUrl('mubert', settings)}/RecordTrackTTM`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl('mubert', settings)}/RecordTrackTTM`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1464,7 +1465,7 @@ async function generateSunoApiMusic(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/api/v1/generate`, {
+  const response = await tauriFetch(`${baseUrl}/api/v1/generate`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1483,7 +1484,7 @@ async function generateSunoApiMusic(
   if (!taskId) throw new Error('SunoAPI.org did not return a task id.');
   for (let i = 0; i < 120; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`,
       { headers, signal },
     );
@@ -1512,7 +1513,7 @@ async function generateKieSunoMusic(
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/api/v1/generate`, {
+  const response = await tauriFetch(`${baseUrl}/api/v1/generate`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1531,7 +1532,7 @@ async function generateKieSunoMusic(
   if (!taskId) throw new Error('Kie.ai Suno did not return a task id.');
   for (let i = 0; i < 120; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`,
       { headers, signal },
     );
@@ -1561,7 +1562,7 @@ async function generateSunoRelayMusic(
     'Content-Type': 'application/json',
   };
   // one-api/new-api 中转标准：/suno/submit/music 提交，/suno/fetch/{id} 轮询。
-  const response = await fetch(`${baseUrl}/suno/submit/music`, {
+  const response = await tauriFetch(`${baseUrl}/suno/submit/music`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1580,7 +1581,7 @@ async function generateSunoRelayMusic(
   if (!taskId) throw new Error('Suno relay did not return a task id.');
   for (let i = 0; i < 120; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}/suno/fetch/${encodeURIComponent(taskId)}`,
       { headers, signal },
     );
@@ -1623,7 +1624,7 @@ async function generateSonautoMusic(
     // Empty string tells Sonauto to auto-write lyrics from the prompt.
     body.lyrics = lyrics;
   }
-  const response = await fetch(`${baseUrl}/v1/generations`, {
+  const response = await tauriFetch(`${baseUrl}/v1/generations`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
@@ -1637,7 +1638,7 @@ async function generateSonautoMusic(
   if (!taskId) throw new Error('Sonauto did not return a task id.');
   for (let i = 0; i < 120; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(
+    const statusResponse = await tauriFetch(
       `${baseUrl}/v1/generations/status/${encodeURIComponent(taskId)}`,
       { headers, signal },
     );
@@ -1647,7 +1648,7 @@ async function generateSonautoMusic(
       throw new Error(providerErrorMessage(status) || 'Sonauto generation failed.');
     }
     if (isSuccessState(state, status)) {
-      const resultResponse = await fetch(
+      const resultResponse = await tauriFetch(
         `${baseUrl}/v1/generations/${encodeURIComponent(taskId)}`,
         { headers, signal },
       );
@@ -1675,7 +1676,7 @@ async function generateAliFunMusic(
   } else {
     input.prompt = prompt;
   }
-  const response = await fetch(
+  const response = await tauriFetch(
     `${musicProviderBaseUrl('ali-fun-music', settings)}/services/audio/music/generation`,
     {
       method: 'POST',
@@ -1710,7 +1711,7 @@ async function generateFalMusic(
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
   };
-  const response = await fetch(`${baseUrl}/${modelPath}`, {
+  const response = await tauriFetch(`${baseUrl}/${modelPath}`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ input: falInput(providerId, prompt, targetDurationSeconds) }),
@@ -1729,14 +1730,14 @@ async function generateFalMusic(
     `${baseUrl}/${modelPath}/requests/${encodeURIComponent(requestId)}`;
   for (let i = 0; i < 120; i += 1) {
     await delay(3000, signal);
-    const statusResponse = await fetch(statusUrl, { headers, signal });
+    const statusResponse = await tauriFetch(statusUrl, { headers, signal });
     const status = await readJsonResponse(statusResponse);
     const state = jsonState(status);
     if (isFailedState(state)) {
       throw new Error(providerErrorMessage(status) || 'fal generation failed.');
     }
     if (isSuccessState(state, status)) {
-      const resultResponse = await fetch(responseUrl, { headers, signal });
+      const resultResponse = await tauriFetch(responseUrl, { headers, signal });
       const result = await readJsonResponse(resultResponse);
       const audios = audiosFromJson(result);
       if (audios.length > 0) return audios;
@@ -1760,7 +1761,7 @@ async function generateHuggingFaceMusic(
     .split('/')
     .map((part) => encodeURIComponent(part))
     .join('/');
-  const response = await fetch(
+  const response = await tauriFetch(
     `${musicProviderBaseUrl(providerId, settings)}/${modelPath}`,
     {
       method: 'POST',
@@ -1792,7 +1793,7 @@ async function generateGenericLocalMusic(
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await fetch(musicProviderBaseUrl(providerId, settings), {
+  const response = await tauriFetch(musicProviderBaseUrl(providerId, settings), {
     method: 'POST',
     headers: {
       Accept: 'audio/mpeg, audio/*, application/json',
@@ -1827,7 +1828,7 @@ async function generateGenericOnlineMusic(
   if (apiKey) {
     headers.Authorization = apiKey.toLowerCase().startsWith('bearer ') ? apiKey : `Bearer ${apiKey}`;
   }
-  const response = await fetch(musicProviderBaseUrl(providerId, settings), {
+  const response = await tauriFetch(musicProviderBaseUrl(providerId, settings), {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -1936,7 +1937,7 @@ async function trimAudioToDuration(
 }
 
 async function audioBlobFromSource(src: string, signal?: AbortSignal): Promise<Blob> {
-  const response = await fetch(src, { signal });
+  const response = await tauriFetch(src, { signal });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     throw new Error(`${response.status} ${response.statusText}${text ? `: ${text}` : ''}`);

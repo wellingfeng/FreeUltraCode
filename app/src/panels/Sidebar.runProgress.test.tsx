@@ -63,6 +63,11 @@ type MockStoreState = {
   >;
   aiEditingSessions: SessionKey[];
   chattingSessions: SessionKey[];
+  jobSessions: SessionKey[];
+  jobSessionProgress: Record<
+    string,
+    { completed: number; incomplete: number; percent: number | null }
+  >;
   newWorkflow: () => void;
   newSession: () => void;
   exportWorkflowSession: (
@@ -224,6 +229,8 @@ function resetSidebarStore(): void {
     runningSessionProgress: {},
     aiEditingSessions: [],
     chattingSessions: [],
+    jobSessions: [],
+    jobSessionProgress: {},
     newWorkflow: vi.fn(),
     newSession: vi.fn(),
     exportWorkflowSession: vi.fn(),

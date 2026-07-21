@@ -41,7 +41,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../cli/dist/ugs.mjs": "cli/ugs.mjs"
+      "../cli/dist/ugs.mjs": "cli/ugs.mjs",
+      "../cli/ugs-job.mjs": "cli/ugs-job.mjs"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"
