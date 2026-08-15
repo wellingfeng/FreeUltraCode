@@ -349,6 +349,10 @@ const NARROW_INPUT_WIDTH_RATIO = 0.4;
 const CHAT_INPUT_HEIGHT_KEY = "ultragamestudio.chatInputHeight.v1";
 const MIN_CHAT_INPUT_HEIGHT = 180;
 const MIN_CHAT_RETURN_HEIGHT = 160; // keep the chat return area usable
+// Empty-session centered composer: base card height is min-h-[14rem] (224px).
+// Let the box grow with content up to 2.5x that base, then scroll internally.
+const CENTER_INPUT_BASE_HEIGHT = 224;
+const CENTER_INPUT_MAX_HEIGHT = Math.round(CENTER_INPUT_BASE_HEIGHT * 2.5);
 const MIN_CHAT_VISIBLE_WIDTH = 320;
 const MAX_CHAT_TITLE_LENGTH = 80;
 
@@ -943,28 +947,33 @@ function pathsFromDataTransfer(dataTransfer: DataTransfer): string[] {
 
 function clipboardImageFiles(dataTransfer: DataTransfer): File[] {
   const seen = new Set<string>();
-  const images: File[] = [];
+  const media: File[] = [];
+
+  const isMediaMime = (mime: string) => {
+    const t = mime.toLowerCase();
+    return t.startsWith("image/") || t.startsWith("video/");
+  };
 
   const add = (file: File | null, mimeHint = "") => {
     if (!file) return;
     const mime = (file.type || mimeHint).toLowerCase();
-    if (!mime.startsWith("image/")) return;
+    if (!isMediaMime(mime)) return;
     const key = [mime, file.name, file.size, file.lastModified].join("\0");
     if (seen.has(key)) return;
     seen.add(key);
-    images.push(file);
+    media.push(file);
   };
 
   for (const item of Array.from(dataTransfer.items)) {
     if (item.kind !== "file") continue;
-    if (!item.type.toLowerCase().startsWith("image/")) continue;
+    if (!isMediaMime(item.type)) continue;
     add(item.getAsFile(), item.type);
   }
-  if (images.length > 0) return images;
+  if (media.length > 0) return media;
 
   for (const file of Array.from(dataTransfer.files)) add(file);
 
-  return images;
+  return media;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -1183,6 +1192,7 @@ function defaultChannelRuntimeGroup(
 function providerKindToAdapter(kind: ProviderKind): RuntimeAdapterId {
   if (kind === "codex") return "codex";
   if (kind === "gemini") return "gemini";
+  if (kind === "deepseek-harness") return "deepseek-harness";
   return "claude-code";
 }
 
@@ -4782,6 +4792,40 @@ export default function AIDock({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  // Empty-session centered composer auto-grow: the card is a fixed min-h-[14rem]
+  // box, so long drafts would only scroll inside the textarea. Measure the
+  // textarea's natural content height and grow the card up to 2.5x the base
+  // height, then let it scroll internally.
+  // Height reserved by the toolbar + paddings inside the card, so the base
+  // 14rem card leaves this much visible text area before growing.
+  const CENTER_INPUT_CHROME = 96;
+  const CENTER_TEXTAREA_BASE = CENTER_INPUT_BASE_HEIGHT - CENTER_INPUT_CHROME;
+  const CENTER_TEXTAREA_MAX = CENTER_INPUT_MAX_HEIGHT - CENTER_INPUT_CHROME;
+  const [centerInputTextareaHeight, setCenterInputTextareaHeight] = useState(
+    CENTER_TEXTAREA_BASE,
+  );
+  useLayoutEffect(() => {
+    if (!centerInput) {
+      setCenterInputTextareaHeight(CENTER_TEXTAREA_BASE);
+      return;
+    }
+    const el = inputRef.current;
+    if (!el) return;
+    // Reset to measure the natural content height, then clamp to [base, max].
+    const prev = el.style.height;
+    el.style.height = "auto";
+    const content = el.scrollHeight;
+    el.style.height = prev;
+    setCenterInputTextareaHeight(
+      Math.min(Math.max(content, CENTER_TEXTAREA_BASE), CENTER_TEXTAREA_MAX),
+    );
+  }, [
+    centerInput,
+    draft,
+    CENTER_TEXTAREA_BASE,
+    CENTER_TEXTAREA_MAX,
+  ]);
 
   const rememberSelection = useCallback(
     (target: HTMLTextAreaElement | null = inputRef.current) => {
@@ -8829,9 +8873,24 @@ export default function AIDock({
                     : undefined
             }
             className={
-              "min-h-0 flex-1 resize-none border-0 bg-transparent text-sm leading-relaxed text-fg outline-none placeholder:text-fg-faint " +
-              (centerInput ? "px-4 pt-4 pb-3 " : "px-3 pt-3 pb-2 ") +
+              "min-h-0 resize-none border-0 bg-transparent text-sm leading-relaxed text-fg outline-none placeholder:text-fg-faint " +
+              (centerInput
+                ? "flex-1 px-4 pt-4 pb-3 overflow-y-auto ugs-autohide-scroll "
+                : "flex-1 px-3 pt-3 pb-2 ") +
               (isReadOnly ? "cursor-not-allowed" : "")
+            }
+            style={
+              centerInput
+                ? {
+                    // flex-1 lets the textarea absorb the card's min-h-[14rem]
+                    // slack so the toolbar stays flush with the bottom edge (no
+                    // empty gap). minHeight tracks the measured content so short
+                    // drafts still fill the base height and long ones grow the
+                    // card up to the 2.5x cap, then scroll internally.
+                    minHeight: centerInputTextareaHeight,
+                    maxHeight: CENTER_INPUT_MAX_HEIGHT - 96,
+                  }
+                : undefined
             }
           />
 

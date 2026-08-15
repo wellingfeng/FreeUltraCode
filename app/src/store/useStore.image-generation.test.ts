@@ -219,4 +219,52 @@ describe('image generation chat flow', () => {
       .messages.find((message) => message.role === 'assistant');
     expect(assistant?.text ?? '').not.toContain('图片生成完成');
   });
+
+  it('reports the settled result (locations) to onSettled on success', async () => {
+    writeImageSettings({
+      enabled: true,
+      preferredProviderId: 'minimax',
+      providerKeys: { minimax: 'test-key' },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: { image_urls: ['https://example.com/from-model.png'] },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
+    );
+
+    const settled: Array<{ ok: boolean; locations?: unknown }> = [];
+    useStore.getState().generateImagePrompt('/image a lone hero', {
+      onSettled: (result) => settled.push(result),
+    });
+
+    await waitFor(() => settled.length > 0, 'onSettled to fire');
+    expect(settled[0].ok).toBe(true);
+    // Remote URL sources round-trip through capture as remoteUrl locations.
+    expect(JSON.stringify(settled[0].locations)).toContain(
+      'https://example.com/from-model.png',
+    );
+  });
+
+  it('reports failure to onSettled when the provider errors', async () => {
+    writeImageSettings({
+      enabled: true,
+      preferredProviderId: 'minimax',
+      providerKeys: { minimax: 'test-key' },
+    });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('boom', { status: 500, statusText: 'Server Error' }),
+    );
+
+    const settled: Array<{ ok: boolean; error?: string }> = [];
+    useStore.getState().generateImagePrompt('/image anything', {
+      onSettled: (result) => settled.push(result),
+    });
+
+    await waitFor(() => settled.length > 0, 'onSettled failure to fire');
+    expect(settled[0].ok).toBe(false);
+    expect(settled[0].error ?? '').toBeTruthy();
+  });
 });

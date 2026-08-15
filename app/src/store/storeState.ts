@@ -14,6 +14,7 @@ import type {
 } from '@/core/interaction';
 import type { PersonalInstructionsByModel } from '@/core/personalInstructions';
 import type { GameExpertSettings } from '@/lib/gameExperts';
+import type { OnGenerationSettled } from '@/lib/assetCapture';
 import type { ImageProviderId } from '@/lib/imageGeneration';
 import type { MusicProviderId } from '@/lib/musicGeneration';
 import type { ThreeDProviderId } from '@/lib/threeDGeneration';
@@ -343,31 +344,60 @@ export interface StoreState {
   ) => boolean;
   generateImagePrompt: (
     text: string,
-    options?: { providerId?: ImageProviderId; model?: string },
+    options?: {
+      providerId?: ImageProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateMusicPrompt: (
     text: string,
-    options?: { providerId?: MusicProviderId; model?: string },
+    options?: {
+      providerId?: MusicProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateThreeDPrompt: (
     text: string,
-    options?: { providerId?: ThreeDProviderId; model?: string },
+    options?: {
+      providerId?: ThreeDProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateVideoPrompt: (
     text: string,
-    options?: { providerId?: VideoProviderId; model?: string },
+    options?: {
+      providerId?: VideoProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateAnimationPrompt: (
     text: string,
-    options?: { providerId?: AnimationProviderId; model?: string },
+    options?: {
+      providerId?: AnimationProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateSpeechPrompt: (
     text: string,
-    options?: { providerId?: SpeechProviderId; model?: string; voice?: string },
+    options?: {
+      providerId?: SpeechProviderId;
+      model?: string;
+      voice?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   generateSpritePrompt: (
     text: string,
-    options?: { providerId?: ImageProviderId; model?: string },
+    options?: {
+      providerId?: ImageProviderId;
+      model?: string;
+      onSettled?: OnGenerationSettled;
+    },
   ) => void;
   /**
    * GDD mode turn: route the request through the selected coding model with

@@ -11,6 +11,11 @@ vi.mock('@/lib/tauri', async (importOriginal) => ({
   workspaceFileDiff: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/core', () => ({
+  convertFileSrc: (path: string) =>
+    `http://asset.localhost/${encodeURIComponent(path)}`,
+}));
+
 describe('FilePreviewDrawer', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -296,6 +301,36 @@ describe('FilePreviewDrawer', () => {
       );
     });
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:preview-image');
+  });
+
+  it('renders video previews through the asset protocol', async () => {
+    vi.mocked(previewLocalFile).mockResolvedValue({
+      path: 'E:\\UltraGameStudio\\clip.mp4',
+      fileName: 'clip.mp4',
+      kind: 'video',
+      mime: 'video/mp4',
+      sizeBytes: 1024,
+      truncated: false,
+      text: null,
+      base64: null,
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(FilePreviewDrawer, {
+          refData: { path: 'clip.mp4', basename: 'clip.mp4' },
+          onClose: vi.fn(),
+        }),
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const video = container.querySelector<HTMLVideoElement>('video');
+    expect(video).not.toBeNull();
+    expect(video?.getAttribute('src')).toContain('asset.localhost');
+    expect(video?.getAttribute('src')).toContain('clip.mp4');
   });
 
   it('renders HTTP images directly without sending the URL to the local file backend', async () => {

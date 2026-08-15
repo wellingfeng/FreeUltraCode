@@ -22,8 +22,10 @@ app/src-tauri/.gstack/
 
 # Temp / run / release artifacts
 .tmp/
+.tmp-search/
 .tmp_pdf_pages/
 .release-logs/
+Ghost_of_Yotei_CN/
 
 # Local scratch / test outputs / screenshots
 /test100/

@@ -29,7 +29,7 @@ base64 = "0.22"
 getrandom = "0.2"
 keyring = "2"
 log = "0.4"
-tauri = { version = "2.11.2", features = ["tray-icon"] }
+tauri = { version = "2.11.2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"

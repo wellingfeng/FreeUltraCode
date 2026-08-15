@@ -73,6 +73,8 @@ export interface CliVersionStatus {
   updateAvailable: boolean;
   checkedAtMs: number;
   error?: string | null;
+  /** True when the CLI is missing but can be one-click installed via npm. */
+  installable?: boolean;
 }
 
 export type SlashCatalogEntryKind = 'command' | 'skill';
@@ -176,7 +178,7 @@ export interface LocalModelHardware {
 export interface LocalFilePreview {
   path: string;
   fileName: string;
-  kind: 'text' | 'image' | 'binary' | 'document';
+  kind: 'text' | 'image' | 'video' | 'binary' | 'document';
   mime?: string | null;
   sizeBytes: number;
   truncated: boolean;

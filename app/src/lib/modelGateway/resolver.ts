@@ -597,6 +597,11 @@ export function gatewayRouteEnv(
     } else if (route.adapter === 'codex') {
       if (route.apiKey) env.OPENAI_API_KEY = route.apiKey;
       if (route.baseUrl) env.OPENAI_BASE_URL = route.baseUrl;
+    } else if (route.adapter === 'deepseek-harness') {
+      // dsh reads its DeepSeek key from the inherited environment / credential
+      // store; the model itself lives in `$DSH_HOME/settings.yaml`, so only the
+      // key is injected here.
+      if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;
@@ -638,6 +643,7 @@ function normalizeKnownProviderModel(
 function adapterToProviderKind(adapter: string): ProviderKind {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'deepseek-harness') return 'deepseek-harness';
   return 'anthropic';
 }
 
@@ -816,6 +822,12 @@ function cliFallbackRoute(
 }
 
 function normalizeAdapter(value: unknown): RuntimeAdapterId {
-  if (value === 'codex' || value === 'gemini') return value;
+  if (
+    value === 'codex' ||
+    value === 'gemini' ||
+    value === 'deepseek-harness'
+  ) {
+    return value;
+  }
   return 'claude-code';
 }

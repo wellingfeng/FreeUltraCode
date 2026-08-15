@@ -213,6 +213,10 @@ import {
   startSpriteGenerationTurn,
   startMeshSearchTurn,
 } from './generationActions';
+import type {
+  GenerationTurnResult,
+  OnGenerationSettled,
+} from './generationActions';
 import {
   addPromptItem,
   updatePromptItem,
@@ -270,6 +274,16 @@ import {
   parseRecall,
   stripRecall,
 } from '@/core/recallProtocol';
+import {
+  genInstruction,
+  parseGenRequests,
+  stripGenRequests,
+  genKindLabel,
+  detectRequestedGenKinds,
+  mergeGenKinds,
+  type GenKind,
+  type GenRequest,
+} from '@/core/generationProtocol';
 import {
   searchSessions,
   formatRecallHits,
@@ -5977,6 +5991,20 @@ ${previousReply.slice(0, 4000)}
         const backgroundJobBlock = jobWrapperPath
           ? BACKGROUND_JOB_INSTRUCTION.replace('<UGS_JOB_PATH>', jobWrapperPath)
           : '';
+        // Which asset channels this turn may auto-generate. Only the sticky
+        // modes the user actually entered are authorized (敲 /image、/video 等);
+        // the UGS_GEN protocol is advertised only for those and ignored
+        // otherwise, so a stray sentinel in ordinary chat can never spend quota.
+        // Authorize a channel two ways: (1) the sticky mode the user entered
+        // (敲 /image-mode-start), or (2) an explicit one-shot command the user
+        // typed in THIS turn's message (e.g. "配图，用 /image ..."). Both are the
+        // user asking for that asset, so both let the model DRIVE generation via
+        // the UGS_GEN protocol instead of only recommending a command to click.
+        const genKinds = mergeGenKinds(
+          authorizedGenKinds(state.composer),
+          detectRequestedGenKinds(turnText),
+        );
+        const genInstructionBlock = genKinds.length ? genInstruction(genKinds) : '';
         const chatSystem = [
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
@@ -5988,10 +6016,28 @@ ${previousReply.slice(0, 4000)}
           ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
           gameExpertBlock,
           simpleAssetCapabilityBlock,
+          genInstructionBlock,
           projectEngineGuidance,
           knowledgeContext,
           useCli ? projectMcpGuidance : '',
           backgroundJobBlock,
+        ].join('');
+        // DeepSeek Harness (dsh) reads its task ONLY from an argv positional
+        // argument (no stdin), and on Windows it launches via `cmd /C dsh.cmd`,
+        // whose command line is hard-capped at ~8191 chars. The full chatSystem
+        // (system prompt + personal defaults + memory snapshot + game-expert +
+        // MCP + knowledge blocks) easily exceeds that, which truncates the
+        // TAIL of the argv — i.e. the user's actual request — leaving dsh with
+        // only the lead-in and making it reply with a generic "我已就绪" greeting.
+        // dsh carries its own harness system prompt, so it needs only a compact
+        // UGS system prefix; drop the heavy, dsh-redundant blocks to keep the
+        // real task inside the argv budget. See lib.rs `is_dsh` branch.
+        const dshChatSystem = [
+          SIMPLE_CHAT_SYSTEM,
+          languageAdaptationPrompt(state.locale),
+          personalBlock,
+          memoryConfig.writeEnabled ? MEMORY_WRITE_INSTRUCTION : '',
+          ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
         ].join('');
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
         // prior conversation (text messages only, skipping system notices) into
@@ -6115,7 +6161,10 @@ ${previousReply.slice(0, 4000)}
                 session: ChatNativeSession | null,
                 resume: boolean,
               ) =>
-                aiEditViaCliWithSpeed(`${chatSystem}\n\n${body}`, cli, {
+                aiEditViaCliWithSpeed(
+                  `${cli.adapter === 'deepseek-harness' ? dshChatSystem : chatSystem}\n\n${body}`,
+                  cli,
+                  {
                   permission: chatPermission,
                   model: cli.model,
                   cliCommand: cli.cliCommand,
@@ -6246,6 +6295,47 @@ ${previousReply.slice(0, 4000)}
               continuation = `历史会话检索结果（query: ${recall.query}）：\n${formatRecallHits(hits)}\n\n请基于以上检索结果继续回答用户。`;
               continue;
             }
+            // Model-driven asset generation (UGS_GEN protocol). Only honored when
+            // the user is in a matching asset mode — entering the mode is the
+            // authorization to spend that channel's quota automatically. Run each
+            // request through the same generation actions the input box uses,
+            // then feed a compact result summary back so the model can continue
+            // (e.g. fill saved paths into a doc, or retry a failed one).
+            if (genKinds.length) {
+              const genRequests = parseGenRequests(answer).filter((r) =>
+                genKinds.includes(r.kind),
+              );
+              if (genRequests.length) {
+                const capped = genRequests.slice(0, MAX_GEN_REQUESTS_PER_TURN);
+                const preface = stripGenRequests(answer);
+                setActive(
+                  withAiTiming(
+                    routedBody(
+                      routeLine,
+                      preface || `⟳ 正在生成 ${capped.length} 个素材…`,
+                    ),
+                  ),
+                  true,
+                );
+                persistAiMessages();
+                const actions = useStore.getState();
+                const summaries: string[] = [];
+                for (let gi = 0; gi < capped.length; gi += 1) {
+                  const result = await runGenRequest(actions, capped[gi]);
+                  summaries.push(formatGenResult(gi, capped[gi], result));
+                }
+                if (genRequests.length > capped.length) {
+                  summaries.push(
+                    `（本轮生成请求超过上限 ${MAX_GEN_REQUESTS_PER_TURN} 个，其余已忽略；如需继续请再发起。）`,
+                  );
+                }
+                newBubble(withAiTiming('⟳ 生成中…'));
+                continuation =
+                  `素材生成结果（已由系统实际执行）：\n${summaries.join('\n')}\n\n` +
+                  '请基于以上结果继续：把成功素材的路径写入需要的地方；对失败项可调整提示词后重试，或说明原因。';
+                continue;
+              }
+            }
             const req = parseInteraction(answer);
             if (!req) {
               finalAnswer = answer;
@@ -6279,6 +6369,10 @@ ${previousReply.slice(0, 4000)}
           // the round budget ran out before it was processed), strip it so the
           // protocol JSON never reaches the user.
           finalAnswer = stripRecall(finalAnswer);
+          // Same for any UGS_GEN block: strip it unconditionally so raw protocol
+          // JSON never shows, even when generation wasn't authorized this turn
+          // (no matching mode) or the round budget ran out before executing it.
+          finalAnswer = stripGenRequests(finalAnswer);
           // Long-term memory: parse any <<UGS_MEMORY>> block(s) the model
           // emitted this turn, strip them from the visible prose, and apply
           // them to disk in the background. The write lands on the NEXT turn's
@@ -7934,6 +8028,91 @@ const MAX_INTERACTION_ROUNDS = 6;
 /** How many prior chat turns simple-workflow mode folds into the prompt for
  *  multi-turn context (bounded so long chats don't overflow the model). */
 const SIMPLE_CHAT_HISTORY_TURNS = 20;
+
+// Bound how many asset-generation blocks a single model turn may drive, so a
+// runaway reply can't fan out into unbounded paid generations.
+const MAX_GEN_REQUESTS_PER_TURN = 8;
+
+/**
+ * The asset kinds the model is authorized to auto-generate this turn, derived
+ * from the composer's sticky modes. Entering a mode (敲 /image、/video 等) IS the
+ * user's authorization; outside every mode the list is empty and the UGS_GEN
+ * protocol is neither advertised nor honored.
+ */
+function authorizedGenKinds(composer: ComposerSettings): GenKind[] {
+  const kinds: GenKind[] = [];
+  if (composer.imageMode) kinds.push('image');
+  if (composer.musicMode) kinds.push('music');
+  if (composer.videoMode) kinds.push('video');
+  if (composer.spriteMode) kinds.push('sprite');
+  if (composer.speechMode) kinds.push('speech');
+  if (composer.threeDMode) kinds.push('threeD');
+  if (composer.animationMode) kinds.push('animation');
+  return kinds;
+}
+
+// Route a parsed UGS_GEN request to the matching generation turn, wrapped in a
+// Promise that resolves once the turn settles (success paths / failure error).
+// Reuses the exact same start*GenerationTurn actions the input box drives, so
+// the model-driven path behaves identically to a manual one.
+function runGenRequest(
+  actions: {
+    generateImagePrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateMusicPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateVideoPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateSpritePrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateSpeechPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateThreeDPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateAnimationPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+  },
+  req: GenRequest,
+): Promise<GenerationTurnResult> {
+  return new Promise<GenerationTurnResult>((resolve) => {
+    const onSettled: OnGenerationSettled = (result) => resolve(result);
+    const opts = { onSettled };
+    switch (req.kind) {
+      case 'image':
+        actions.generateImagePrompt(req.prompt, opts);
+        break;
+      case 'music':
+        actions.generateMusicPrompt(req.prompt, opts);
+        break;
+      case 'video':
+        actions.generateVideoPrompt(req.prompt, opts);
+        break;
+      case 'sprite':
+        actions.generateSpritePrompt(req.prompt, opts);
+        break;
+      case 'speech':
+        actions.generateSpeechPrompt(req.prompt, opts);
+        break;
+      case 'threeD':
+        actions.generateThreeDPrompt(req.prompt, opts);
+        break;
+      case 'animation':
+        actions.generateAnimationPrompt(req.prompt, opts);
+        break;
+      default:
+        resolve({ ok: false, error: `未知的素材类型：${String(req.kind)}` });
+    }
+  });
+}
+
+// Format one settled generation into the continuation line fed back to the
+// model so it knows where the asset landed (or why it failed).
+function formatGenResult(index: number, req: GenRequest, result: GenerationTurnResult): string {
+  const label = genKindLabel(req.kind);
+  if (!result.ok) {
+    return `第 ${index + 1} 个（${label}）生成失败：${result.error ?? '未知错误'}`;
+  }
+  const paths = (result.locations ?? [])
+    .map((loc) => loc.localPath ?? loc.remoteUrl ?? loc.title)
+    .filter(Boolean);
+  if (paths.length === 0) {
+    return `第 ${index + 1} 个（${label}）已生成，但未取得可用路径。`;
+  }
+  return `第 ${index + 1} 个（${label}）已生成：${paths.join('、')}`;
+}
 
 type RouteDisplay = Pick<
   ResolvedGatewayRoute,

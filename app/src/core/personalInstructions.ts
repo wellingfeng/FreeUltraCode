@@ -37,12 +37,17 @@ function normalized(value: string | null | undefined): string {
  * (Claude Code / Codex / Gemini). Provider/channel/model no longer split the
  * buckets, so any unknown adapter folds into the Claude Code bucket.
  */
-export type PersonalInstructionsAdapter = 'claude-code' | 'codex' | 'gemini';
+export type PersonalInstructionsAdapter =
+  | 'claude-code'
+  | 'codex'
+  | 'gemini'
+  | 'deepseek-harness';
 
 export const PERSONAL_INSTRUCTIONS_ADAPTERS: PersonalInstructionsAdapter[] = [
   'claude-code',
   'codex',
   'gemini',
+  'deepseek-harness',
 ];
 
 export function normalizePersonalInstructionsAdapter(
@@ -51,6 +56,9 @@ export function normalizePersonalInstructionsAdapter(
   const value = normalized(adapter);
   if (value === 'codex') return 'codex';
   if (value === 'gemini') return 'gemini';
+  if (value === 'deepseek-harness' || value === 'dsh') {
+    return 'deepseek-harness';
+  }
   return 'claude-code';
 }
 

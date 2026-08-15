@@ -213,7 +213,13 @@ export function resetGatewayConfigStoreForTests(): void {
 }
 
 function normalizeAdapter(value: unknown): RuntimeAdapterId {
-  if (value === 'codex' || value === 'gemini') return value;
+  if (
+    value === 'codex' ||
+    value === 'gemini' ||
+    value === 'deepseek-harness'
+  ) {
+    return value;
+  }
   return 'claude-code';
 }
 
@@ -495,7 +501,9 @@ function legacyKind(value: LegacyProvider): string {
     value.kind === 'codex' ||
     value.adapter === 'codex' ||
     value.kind === 'gemini' ||
-    value.adapter === 'gemini'
+    value.adapter === 'gemini' ||
+    value.kind === 'deepseek-harness' ||
+    value.adapter === 'deepseek-harness'
   ) {
     return normalizeAdapter(value.kind ?? value.adapter);
   }

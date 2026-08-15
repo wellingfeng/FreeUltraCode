@@ -2354,6 +2354,68 @@ describe('simple-workflow chat mode', () => {
     expect(record?.title).toBe('自动话题命名');
   });
 
+  it('sends DeepSeek Harness a compact system prefix so the argv task survives', async () => {
+    // dsh reads its task ONLY from an argv positional arg (no stdin) and, on
+    // Windows, launches via `cmd /C dsh.cmd`, whose command line is capped at
+    // ~8191 chars. The full chatSystem overflows that and truncates the TAIL —
+    // the user's real request — so dsh must get a compact prefix, not the heavy
+    // memory/game-expert/MCP blocks. Assert the real task is present and the
+    // dsh-redundant heavy blocks are dropped.
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    tauriMocks.isTauri.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'deepseek-harness', modelClass: 'default' },
+      adapter: 'deepseek-harness',
+      modelClass: 'default',
+      model: 'deepseek-v4-pro',
+      providerName: 'DeepSeek Harness',
+      channelName: 'deepseek-v4-pro',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'DeepSeek Harness',
+      source: 'global',
+      cliCommand: 'dsh',
+    });
+    gatewayMocks.completeGatewayText.mockResolvedValue('标题');
+    tauriMocks.aiEditViaCli.mockResolvedValue('已完成翻译。');
+
+    const task = '请把这篇 PDF 翻译成中文并生成 md 文件';
+    useStore.getState().sendPrompt(task);
+
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length >= 1,
+      'dsh CLI chat call',
+    );
+
+    const [prompt, adapter] = tauriMocks.aiEditViaCli.mock.calls[0];
+    expect(adapter).toBe('deepseek-harness');
+    // The user's real request must be inside the argv payload.
+    expect(String(prompt)).toContain(task);
+    // Compact prefix keeps the core system + interaction protocol …
+    expect(String(prompt)).toContain('简单 Workflow');
+    // … but drops the dsh-redundant heavy blocks that would overflow argv.
+    expect(String(prompt)).not.toContain('后台长任务');
+  });
+
   it('keeps pasted image paths out of pending simple chat titles', async () => {
     window.localStorage.clear();
     await historyStore.ready();

@@ -69,6 +69,11 @@ const CLI_SPECS: &[CliSpec] = &[
         label: "Gemini",
         commands: &["gemini"],
     },
+    CliSpec {
+        adapter: "deepseek-harness",
+        label: "DeepSeek Harness",
+        commands: &["dsh"],
+    },
 ];
 
 pub fn adapter_binary(adapter: &str) -> &str {
@@ -76,6 +81,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
         "claude-code" | "claude" => "claude",
         "codex" => "codex",
         "gemini" => "gemini",
+        "deepseek-harness" => "dsh",
         other => other,
     }
 }
@@ -85,6 +91,7 @@ pub fn adapter_protocol(adapter: &str) -> &str {
         "claude-code" | "claude" => "claude",
         "codex" => "codex",
         "gemini" => "gemini",
+        "deepseek-harness" => "deepseek-harness",
         other => other,
     }
 }
@@ -95,9 +102,14 @@ pub fn should_pass_model(adapter: &str, model: &str) -> bool {
         return false;
     }
     let lower = m.to_ascii_lowercase();
-    if matches!(adapter_protocol(adapter), "codex" | "gemini") {
+    let protocol = adapter_protocol(adapter);
+    if matches!(protocol, "codex" | "gemini") {
         return !matches!(lower.as_str(), "haiku" | "sonnet" | "opus")
             && !lower.starts_with("claude-");
+    }
+    if protocol == "deepseek-harness" {
+        // dsh resolves its model from `$DSH_HOME/settings.yaml`, never a flag.
+        return false;
     }
     // claude-code: only forward genuine Claude model ids or the bare tier
     // aliases the CLI maps. A relay route label (e.g. a cc-switch id like
@@ -327,6 +339,38 @@ pub fn resolve_command_path(command: &str) -> Option<PathBuf> {
     {
         search_path(&[command.to_string()])
     }
+}
+
+/// dsh (`@deepseek-ai/dsh`) ships as an npm `.cmd`/shell shim that ultimately
+/// runs `node <pkg>/lib/bin.js`. Its headless task is a single argv positional,
+/// and launching via `cmd /C dsh.cmd "<task>"` caps the whole command line at
+/// cmd.exe's ~8191-char limit — long enough that a chat prompt (system prefix +
+/// history + task) overflows and the task, sitting at the TAIL, gets truncated.
+/// dsh then sees only the lead-in and replies with a generic greeting.
+///
+/// Spawning the underlying `bin.js` directly with `node` bypasses cmd.exe and
+/// raises the ceiling to the Windows CreateProcess limit (~32767 chars, ~4x),
+/// which comfortably fits a chat turn. Given the resolved dsh launcher path,
+/// locate the sibling `node_modules/@deepseek-ai/dsh/lib/bin.js`. Returns
+/// `None` if the package layout isn't the expected npm shim so the caller can
+/// fall back to the historical `cmd /C` path.
+pub fn resolve_dsh_node_entry(dsh_binary: &str) -> Option<PathBuf> {
+    // Resolve the launcher to a concrete file (bare "dsh" -> full shim path).
+    let launcher = if looks_like_path(dsh_binary) {
+        let p = Path::new(dsh_binary);
+        p.exists().then(|| p.to_path_buf())?
+    } else {
+        resolve_command_path(dsh_binary)?
+    };
+    let dir = launcher.parent()?;
+    // Standard npm global/local layout: the shim sits next to `node_modules`.
+    let entry = dir
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh")
+        .join("lib")
+        .join("bin.js");
+    entry.is_file().then_some(entry)
 }
 
 #[cfg(windows)]
@@ -564,6 +608,42 @@ mod tests {
         // Claude tiers / ids are filtered out for codex/gemini.
         assert!(!should_pass_model("codex", "sonnet"));
         assert!(!should_pass_model("gemini", "claude-opus-4-8"));
+    }
+
+    #[test]
+    fn deepseek_harness_never_passes_model() {
+        // dsh reads its model from `$DSH_HOME/settings.yaml`, never `--model`.
+        assert!(!should_pass_model("deepseek-harness", "deepseek-v4-pro"));
+        assert!(!should_pass_model("deepseek-harness", "sonnet"));
+    }
+
+    #[test]
+    fn dsh_node_entry_found_next_to_launcher() {
+        use std::fs;
+        // Lay out an npm-style shim dir: <root>/dsh.cmd next to
+        // <root>/node_modules/@deepseek-ai/dsh/lib/bin.js.
+        let root = std::env::temp_dir().join(format!("ugs-dsh-entry-{}", std::process::id()));
+        let lib = root
+            .join("node_modules")
+            .join("@deepseek-ai")
+            .join("dsh")
+            .join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        let shim = root.join("dsh.cmd");
+        fs::write(&shim, b"@echo off").unwrap();
+        let entry = lib.join("bin.js");
+        fs::write(&entry, b"// dsh").unwrap();
+
+        // Given the launcher's full path, the sibling bin.js is located.
+        let got = resolve_dsh_node_entry(&shim.to_string_lossy());
+        assert_eq!(got.as_deref(), Some(entry.as_path()));
+
+        // Without the package present, it returns None so the caller falls back
+        // to the historical `cmd /C` shim path.
+        fs::remove_file(&entry).unwrap();
+        assert!(resolve_dsh_node_entry(&shim.to_string_lossy()).is_none());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[cfg(windows)]
