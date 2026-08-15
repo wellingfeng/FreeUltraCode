@@ -1446,12 +1446,18 @@ function GeneralSettings({
   );
 }
 
-const CLI_UPDATE_ADAPTER_ORDER = ['claude-code', 'codex', 'gemini'] as const;
+const CLI_UPDATE_ADAPTER_ORDER = [
+  'claude-code',
+  'codex',
+  'gemini',
+  'deepseek-harness',
+] as const;
 
 function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
   if (adapter === 'claude-code') return 'Claude Code';
   if (adapter === 'codex') return 'Codex';
   if (adapter === 'gemini') return 'Gemini CLI';
+  if (adapter === 'deepseek-harness') return 'DeepSeek Harness';
   return fallback;
 }
 
@@ -1514,7 +1520,13 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
           statuses.map((status) => {
             const label = cliUpdateAdapterLabel(status.adapter, status.label);
             const isUpdating = snapshot.updatingAdapters.includes(status.adapter);
-            const current = status.installedVersion ?? t(locale, 'settings.cliUpdate.unknown');
+            const canInstall = status.installable === true && !status.installedVersion;
+            const actionable = status.updateAvailable || canInstall;
+            const current = status.installedVersion
+              ? status.installedVersion
+              : canInstall
+                ? t(locale, 'settings.cliUpdate.notInstalled')
+                : t(locale, 'settings.cliUpdate.unknown');
             const latest = status.latestVersion ?? t(locale, 'settings.cliUpdate.unknown');
             return (
               <div
@@ -1524,7 +1536,11 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-xs font-medium text-fg">
                     <span>{label}</span>
-                    {status.updateAvailable ? (
+                    {canInstall ? (
+                      <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
+                        {t(locale, 'settings.cliUpdate.notInstalled')}
+                      </span>
+                    ) : status.updateAvailable ? (
                       <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
                         {t(locale, 'settings.cliUpdate.newVersion')}
                       </span>
@@ -1547,19 +1563,23 @@ function CliUpdatePanel({ locale }: { locale: Locale }) {
                 </div>
                 <button
                   type="button"
-                  disabled={!status.updateAvailable || isUpdating}
+                  disabled={!actionable || isUpdating}
                   onClick={() => void runUpdate(status.adapter)}
                   className={cn(
                     'inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
-                    status.updateAvailable && !isUpdating
+                    actionable && !isUpdating
                       ? 'border-accent bg-accent/15 text-fg hover:bg-accent/25'
                       : 'cursor-not-allowed border-border bg-panel-2 text-fg-faint',
                   )}
                 >
                   <UploadCloud size={13} strokeWidth={2.1} />
                   {isUpdating
-                    ? t(locale, 'settings.cliUpdate.updating')
-                    : t(locale, 'settings.cliUpdate.updateButton')}
+                    ? canInstall
+                      ? t(locale, 'settings.cliUpdate.installing')
+                      : t(locale, 'settings.cliUpdate.updating')
+                    : canInstall
+                      ? t(locale, 'settings.cliUpdate.installButton')
+                      : t(locale, 'settings.cliUpdate.updateButton')}
                 </button>
               </div>
             );
@@ -1885,6 +1905,7 @@ function stripCliErrorPrefix(raw: string): string {
 function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
+  if (kind === 'deepseek-harness') return 'deepseek-harness';
   return 'claude-code';
 }
 
@@ -1892,10 +1913,11 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
 function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'deepseek-harness') return 'deepseek-harness';
   return 'anthropic';
 }
 
-/** Order + dot color for the three provider categories in the Models tab. */
+/** Order + dot color for the provider categories in the Models tab. */
 const PROVIDER_ADAPTER_SECTIONS: ReadonlyArray<{
   adapter: RuntimeAdapterId;
   dotClassName: string;
@@ -1903,6 +1925,7 @@ const PROVIDER_ADAPTER_SECTIONS: ReadonlyArray<{
   { adapter: 'claude-code', dotClassName: 'bg-amber-400' },
   { adapter: 'codex', dotClassName: 'bg-fg-faint' },
   { adapter: 'gemini', dotClassName: 'bg-sky-400' },
+  { adapter: 'deepseek-harness', dotClassName: 'bg-indigo-400' },
 ];
 
 type BadgeState = 'direct' | 'cli' | 'unavailable' | 'default';

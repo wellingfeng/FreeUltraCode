@@ -75,6 +75,7 @@ const listeners = new Set<(next: CliRuntimeSnapshot) => void>();
 export function adapterDefaultCommand(adapter: RuntimeAdapterId): string {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'deepseek-harness') return 'dsh';
   return 'claude';
 }
 
@@ -716,10 +717,16 @@ function readLegacyAdapterHint(
 }
 
 function normalizeLegacyAdapter(value: unknown): LegacyCliSource['adapter'] | undefined {
-  if (value === 'claude-code' || value === 'codex' || value === 'gemini') {
+  if (
+    value === 'claude-code' ||
+    value === 'codex' ||
+    value === 'gemini' ||
+    value === 'deepseek-harness'
+  ) {
     return value;
   }
   if (value === 'claude') return 'claude-code';
+  if (value === 'dsh') return 'deepseek-harness';
   return undefined;
 }
 
@@ -1001,6 +1008,13 @@ function inferLegacyKnownCliFromToken(
       ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
     };
   }
+  if (stem === 'dsh' || stem === 'deepseek-harness') {
+    return {
+      adapter: 'deepseek-harness',
+      command: stem === 'dsh' ? 'dsh' : 'deepseek-harness',
+      ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
+    };
+  }
   return null;
 }
 
@@ -1271,10 +1285,16 @@ function statusFromBackend(
 }
 
 function normalizeAdapter(value: unknown): RuntimeAdapterId {
-  if (value === 'codex' || value === 'gemini' || value === 'claude-code') {
+  if (
+    value === 'codex' ||
+    value === 'gemini' ||
+    value === 'claude-code' ||
+    value === 'deepseek-harness'
+  ) {
     return value;
   }
   if (value === 'claude') return 'claude-code';
+  if (value === 'dsh') return 'deepseek-harness';
   return 'claude-code';
 }
 
@@ -1282,6 +1302,9 @@ function inferAdapterFromPath(path: string): RuntimeAdapterId {
   const lower = path.toLowerCase();
   if (lower.includes('codex')) return 'codex';
   if (lower.includes('gemini')) return 'gemini';
+  if (lower.includes('dsh') || lower.includes('deepseek')) {
+    return 'deepseek-harness';
+  }
   return 'claude-code';
 }
 

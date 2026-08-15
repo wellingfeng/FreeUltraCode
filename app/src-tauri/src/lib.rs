@@ -1831,6 +1831,7 @@ fn command_source_label(source: &str) -> (&'static str, &'static str) {
         "claude-code" => ("Claude Code", "Claude Code"),
         "codex" => ("Codex", "Codex"),
         "gemini" => ("Gemini", "Gemini"),
+        "deepseek-harness" => ("DeepSeek Harness", "DeepSeek Harness"),
         "agent" => ("Agent", "Agent"),
         _ => ("CLI", "CLI"),
     }
@@ -3351,6 +3352,7 @@ const PREVIEW_IMAGE_LIMIT: u64 = 12 * 1024 * 1024;
 const PREVIEW_DOCUMENT_LIMIT: u64 = 64 * 1024 * 1024;
 const PREVIEW_BASENAME_SEARCH_LIMIT: usize = 20_000;
 const CLIPBOARD_IMAGE_LIMIT: usize = 32 * 1024 * 1024;
+const CLIPBOARD_VIDEO_LIMIT: usize = 512 * 1024 * 1024;
 const SESSION_CAPTURE_LIMIT: usize = 128 * 1024 * 1024;
 const LOCAL_FILE_UPLOAD_LIMIT: u64 = 128 * 1024 * 1024;
 const KNOWLEDGE_BASE_MAX_FILES: usize = 1200;
@@ -3529,6 +3531,16 @@ const WORKSPACE_TREE_EXCLUDED_DIRS: &[&str] = &[
     "saved",
 ];
 
+/// `.ultragamestudio` 下对用户有意义的"素材产物"目录。文件树只在
+/// `.ultragamestudio` 这一层暴露这些目录（粘贴图片、生成的模型/截图等），
+/// 继续隐藏 jobs/session-changes/sidecar 等内部状态。
+const WORKSPACE_TREE_PRODUCT_DIRS: &[&str] = &[
+    "assets",
+    "clipboard-images",
+    "model-assets",
+    "session-captures",
+];
+
 fn workspace_tree_relative_key(relative_path: Option<String>) -> String {
     relative_path
         .unwrap_or_default()
@@ -3561,6 +3573,21 @@ fn workspace_tree_excluded_dir(name: &str) -> bool {
     WORKSPACE_TREE_EXCLUDED_DIRS
         .iter()
         .any(|excluded| lower == *excluded)
+}
+
+/// 文件树列表专用：根层放行 `.ultragamestudio`（作为隐藏的产物根），
+/// 进入 `.ultragamestudio` 后只保留素材产物目录，其余仍走通用排除规则。
+fn workspace_tree_list_excluded_dir(parent: &str, name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower == ".ultragamestudio" {
+        return false;
+    }
+    if parent == ".ultragamestudio" {
+        return !WORKSPACE_TREE_PRODUCT_DIRS
+            .iter()
+            .any(|product| lower == *product);
+    }
+    workspace_tree_excluded_dir(name)
 }
 
 fn workspace_tree_resolve_dir(
@@ -3616,7 +3643,7 @@ fn list_workspace_dir_blocking(
             continue;
         };
         let is_dir = file_type.is_dir();
-        if is_dir && workspace_tree_excluded_dir(&name) {
+        if is_dir && workspace_tree_list_excluded_dir(&relative_path, &name) {
             continue;
         }
 
@@ -10325,6 +10352,19 @@ fn document_mime_for_path(path: &std::path::Path) -> Option<&'static str> {
     }
 }
 
+fn video_mime_for_path(path: &std::path::Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    match ext.as_str() {
+        "mp4" | "m4v" => Some("video/mp4"),
+        "webm" => Some("video/webm"),
+        "mov" | "qt" => Some("video/quicktime"),
+        "ogv" => Some("video/ogg"),
+        "avi" => Some("video/x-msvideo"),
+        "mkv" => Some("video/x-matroska"),
+        _ => None,
+    }
+}
+
 fn image_mime_for_content_type(content_type: &str) -> Option<&'static str> {
     let media_type = content_type
         .split(';')
@@ -11100,6 +11140,22 @@ fn preview_local_file_blocking(
         });
     }
 
+    // Videos are streamed by the frontend through the asset protocol (Range
+    // requests), so we only report metadata instead of base64-encoding a
+    // potentially very large file into the IPC payload.
+    if let Some(mime) = video_mime_for_path(&resolved) {
+        return Ok(LocalFilePreview {
+            path,
+            file_name,
+            kind: "video".to_string(),
+            mime: Some(mime.to_string()),
+            size_bytes,
+            truncated: false,
+            text: None,
+            base64: None,
+        });
+    }
+
     let mut file = std::fs::File::open(&resolved).map_err(|e| format!("打开文件失败：{e}"))?;
     let mut bytes = Vec::new();
     std::io::Read::by_ref(&mut file)
@@ -11150,10 +11206,30 @@ fn preview_local_file_blocking(
 }
 
 #[tauri::command]
-async fn preview_local_file(path: String, cwd: Option<String>) -> Result<LocalFilePreview, String> {
-    tauri::async_runtime::spawn_blocking(move || preview_local_file_blocking(path, cwd))
-        .await
-        .map_err(|e| format!("文件预览任务失败: {e}"))?
+async fn preview_local_file(
+    app: AppHandle,
+    path: String,
+    cwd: Option<String>,
+) -> Result<LocalFilePreview, String> {
+    let preview = tauri::async_runtime::spawn_blocking(move || {
+        preview_local_file_blocking(path, cwd)
+    })
+    .await
+    .map_err(|e| format!("文件预览任务失败: {e}"))??;
+
+    // Let the frontend stream the video through the asset protocol
+    // (`convertFileSrc`). Scope the file's directory so the webview is allowed
+    // to load it; without this the asset protocol returns 403 for files
+    // outside the app's own resources.
+    if preview.kind == "video" {
+        if let Ok(abs) = std::fs::canonicalize(&preview.path) {
+            if let Some(parent) = abs.parent() {
+                let _ = app.asset_protocol_scope().allow_directory(parent, false);
+            }
+        }
+    }
+
+    Ok(preview)
 }
 
 fn upload_mime_for_path(path: &Path) -> Option<String> {
@@ -11210,6 +11286,12 @@ fn clipboard_image_extension(mime: &str, file_name: Option<&str>) -> Result<&'st
         "image/gif" => return Ok("gif"),
         "image/bmp" | "image/x-ms-bmp" => return Ok("bmp"),
         "image/avif" => return Ok("avif"),
+        "video/mp4" => return Ok("mp4"),
+        "video/webm" => return Ok("webm"),
+        "video/quicktime" => return Ok("mov"),
+        "video/ogg" => return Ok("ogv"),
+        "video/x-msvideo" => return Ok("avi"),
+        "video/x-matroska" => return Ok("mkv"),
         _ => {}
     }
 
@@ -11225,7 +11307,12 @@ fn clipboard_image_extension(mime: &str, file_name: Option<&str>) -> Result<&'st
         "gif" => Ok("gif"),
         "bmp" | "dib" => Ok("bmp"),
         "avif" => Ok("avif"),
-        _ => Err("仅支持 PNG/JPEG/WebP/GIF/BMP/AVIF 图片粘贴。".to_string()),
+        "mp4" | "m4v" => Ok("mp4"),
+        "mov" | "qt" => Ok("mov"),
+        "ogv" => Ok("ogv"),
+        "avi" => Ok("avi"),
+        "mkv" => Ok("mkv"),
+        _ => Err("仅支持 PNG/JPEG/WebP/GIF/BMP/AVIF 图片或 MP4/WebM/MOV/AVI/MKV 视频粘贴。".to_string()),
     }
 }
 
@@ -11452,13 +11539,23 @@ fn save_clipboard_image_blocking(
     let ext = clipboard_image_extension(&mime, file_name.as_deref())?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(bytes_base64.trim())
-        .map_err(|e| format!("解析粘贴图片失败：{e}"))?;
+        .map_err(|e| format!("解析粘贴内容失败：{e}"))?;
 
     if bytes.is_empty() {
-        return Err("粘贴图片为空。".to_string());
+        return Err("粘贴内容为空。".to_string());
     }
-    if bytes.len() > CLIPBOARD_IMAGE_LIMIT {
-        return Err("粘贴图片过大，最大支持 32MB。".to_string());
+    let is_video = matches!(ext, "mp4" | "webm" | "mov" | "ogv" | "avi" | "mkv");
+    let limit = if is_video {
+        CLIPBOARD_VIDEO_LIMIT
+    } else {
+        CLIPBOARD_IMAGE_LIMIT
+    };
+    if bytes.len() > limit {
+        return Err(if is_video {
+            "粘贴视频过大，最大支持 512MB。".to_string()
+        } else {
+            "粘贴图片过大，最大支持 32MB。".to_string()
+        });
     }
 
     let dir = clipboard_image_dir(cwd.as_deref());
@@ -12861,6 +12958,10 @@ struct CliUpdateSpec {
     adapter: &'static str,
     label: &'static str,
     npm_package: &'static str,
+    /// True when a missing CLI can be provisioned through the package manager
+    /// (`npm install -g <npm_package>@latest`) rather than requiring the
+    /// vendor's native installer. The same command doubles as the updater.
+    installable: bool,
 }
 
 const CLI_UPDATE_SPECS: &[CliUpdateSpec] = &[
@@ -12868,16 +12969,25 @@ const CLI_UPDATE_SPECS: &[CliUpdateSpec] = &[
         adapter: "claude-code",
         label: "Claude Code",
         npm_package: "@anthropic-ai/claude-code",
+        installable: false,
     },
     CliUpdateSpec {
         adapter: "codex",
         label: "Codex",
         npm_package: "@openai/codex",
+        installable: false,
     },
     CliUpdateSpec {
         adapter: "gemini",
         label: "Gemini CLI",
         npm_package: "@google/gemini-cli",
+        installable: true,
+    },
+    CliUpdateSpec {
+        adapter: "deepseek-harness",
+        label: "DeepSeek Harness",
+        npm_package: "@deepseek-ai/dsh",
+        installable: true,
     },
 ];
 
@@ -12892,6 +13002,8 @@ struct CliVersionStatus {
     update_available: bool,
     checked_at_ms: u64,
     error: Option<String>,
+    /// True when the CLI is missing but can be one-click installed via npm.
+    installable: bool,
 }
 
 #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
@@ -13072,11 +13184,18 @@ fn check_cli_updates_blocking() -> Vec<CliVersionStatus> {
                 (Some(cur), Some(latest)) => version_lt(cur, latest),
                 _ => false,
             };
+            // A missing npm-provisionable CLI (gemini/dsh) is not an error:
+            // the panel offers a one-click "install" instead of a red hint.
+            let installable = spec.installable && executable_path.is_none();
             let error = if executable_path.is_none() {
-                Some(format!(
-                    "未检测到 {} 可执行文件，请先在设置中配置 CLI 路径。",
-                    spec.label
-                ))
+                if installable {
+                    None
+                } else {
+                    Some(format!(
+                        "未检测到 {} 可执行文件，请先在设置中配置 CLI 路径。",
+                        spec.label
+                    ))
+                }
             } else if installed_version.is_none() {
                 Some("无法读取当前版本（--version 无输出或超时）。".to_string())
             } else if latest_version.is_none() {
@@ -13093,6 +13212,7 @@ fn check_cli_updates_blocking() -> Vec<CliVersionStatus> {
                 update_available,
                 checked_at_ms: now,
                 error,
+                installable,
             }
         })
         .collect();
@@ -13113,23 +13233,23 @@ fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
     let candidate = scan
         .candidates
         .iter()
-        .find(|c| c.adapter == spec.adapter && c.available)
-        .ok_or_else(|| {
-            format!(
-                "未检测到已安装的 {}，请先在设置中配置 CLI 路径。",
-                spec.label
-            )
-        })?;
-    let exe = candidate
-        .path
-        .clone()
-        .unwrap_or_else(|| candidate.command.clone());
+        .find(|c| c.adapter == spec.adapter && c.available);
+    let exe = candidate.and_then(|c| c.path.clone().or_else(|| Some(c.command.clone())));
+
+    // npm-provisionable CLIs (gemini/dsh) can be installed on first click when
+    // missing; native-installer CLIs still require the user to configure them.
+    if exe.is_none() && !spec.installable {
+        return Err(format!(
+            "未检测到已安装的 {}，请先在设置中配置 CLI 路径。",
+            spec.label
+        ));
+    }
 
     // Deliberately NOT setting DISABLE_UPDATES/DISABLE_AUTOUPDATER here: those
     // env vars only guard the ai_cli chat/run subprocess so a live session
     // never races a background self-update. This is the one path meant to
-    // actually trigger an update.
-    let cmd = cli_update_command(spec, &exe)?;
+    // actually trigger an update (or, for gemini/dsh, a fresh install).
+    let cmd = cli_update_command(spec, exe.as_deref())?;
 
     let output = command_text_output_with_timeout(cmd, std::time::Duration::from_secs(180))
         .map_err(|e| format!("更新 {} 失败：{e}", spec.label))?;
@@ -13143,19 +13263,27 @@ fn run_cli_update_blocking(adapter: &str) -> Result<String, String> {
     Ok(output)
 }
 
-fn cli_update_command(spec: &CliUpdateSpec, exe: &str) -> Result<Command, String> {
+fn cli_update_command(spec: &CliUpdateSpec, exe: Option<&str>) -> Result<Command, String> {
     match spec.adapter {
         "claude-code" | "codex" => {
+            let exe = exe.ok_or_else(|| {
+                format!(
+                    "未检测到已安装的 {}，请先在设置中配置 CLI 路径。",
+                    spec.label
+                )
+            })?;
             let mut c = spawn_cli_command(exe);
             c.arg("update");
             Ok(c)
         }
-        "gemini" => {
-            let uses_bun_shim = is_bun_global_shim_path(exe);
-            let installer = if uses_bun_shim {
-                bun_command_for_shim(exe)
-            } else {
-                npm_command_name().to_string()
+        "gemini" | "deepseek-harness" => {
+            // `npm install -g <pkg>@latest` installs when missing and updates
+            // when present, so one command covers both. Prefer the owning
+            // package manager of the detected shim (bun for ~/.bun/bin), else
+            // fall back to npm (also used when nothing is installed yet).
+            let installer = match exe {
+                Some(path) if is_bun_global_shim_path(path) => bun_command_for_shim(path),
+                _ => npm_command_name().to_string(),
             };
             let mut c = spawn_cli_command(&installer);
             c.arg("install")
@@ -14637,6 +14765,48 @@ fn ai_cli_result(text: String, usage: &Arc<Mutex<Option<serde_json::Value>>>) ->
     }
 }
 
+/// Inspect a claude/gemini stream-json terminal `result` event and, when it
+/// declares a FAILED turn (is_error:true or a "error*" subtype), return a
+/// human-readable failure detail. Returns `None` for a normal successful turn.
+/// A failed turn usually carries no usable `result` text, so callers use this
+/// to surface the real cause instead of a blank "（模型没有返回内容）" bubble.
+fn claude_result_failure(event: &serde_json::Value) -> Option<String> {
+    let is_error = event
+        .get("is_error")
+        .and_then(|t| t.as_bool())
+        .unwrap_or(false);
+    let subtype = event
+        .get("subtype")
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if !is_error && !subtype.starts_with("error") {
+        return None;
+    }
+    let detail = event
+        .get("result")
+        .and_then(|t| t.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            event.get("error").and_then(|e| {
+                e.as_str().map(|s| s.to_string()).or_else(|| {
+                    e.pointer("/message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
+            })
+        })
+        .unwrap_or_else(|| {
+            if subtype.is_empty() {
+                "模型报告本轮执行出错".to_string()
+            } else {
+                subtype.to_string()
+            }
+        });
+    Some(detail)
+}
+
 /// Summarize a `tool_use` event into one readable progress line, e.g.
 /// `🔧 Bash: ls app/src` / `🔧 Glob: **/*.tsx` / `🔧 Read: app/src/core/ir.ts`,
 /// so the run log shows *what* the agent is doing, not just the tool name.
@@ -15476,6 +15646,7 @@ async fn ai_cli(
         let is_claude = protocol == "claude";
         let is_codex = protocol == "codex";
         let is_gemini = protocol == "gemini";
+        let is_dsh = protocol == "deepseek-harness";
         let claude_stream_input =
             is_claude && claude_cli_supports_stream_input(&binary, &shell);
         // App Server approval callbacks need a live UI reviewer. Keep the
@@ -15508,6 +15679,9 @@ async fn ai_cli(
         let mut disable_autoupdater = false;
         let mut temp_files: Vec<TempFileGuard> = Vec::new();
         let mut gemini_system_settings_path: Option<String> = None;
+        // When set, dsh is launched as `node <bin.js> <args>` (bypassing the
+        // `.cmd` shim's cmd.exe command-line length cap). See the is_dsh branch.
+        let mut dsh_node_entry: Option<String> = None;
 
         if is_codex {
             if codex_app_server {
@@ -15613,6 +15787,45 @@ async fn ai_cli(
             for dir in &extra_workspace_paths {
                 args.push("--include-directories".into());
                 args.push(dir.clone());
+            }
+        } else if is_dsh {
+            // dsh (`@deepseek-ai/dsh`) runs one headless task via the
+            // `--profile headless "<task>"` positional argument and prints the
+            // final answer to stdout before exiting. There is no JSONL stream,
+            // no `--model` flag (the model lives in `$DSH_HOME/settings.yaml`),
+            // and the prompt is not read from stdin — so assemble the full task
+            // (extra-workspace note + language directive + prompt) inline here.
+            let mut task = String::new();
+            if inject_extra_workspace_note {
+                task.push_str(&extra_workspace_note);
+                if !task.is_empty() {
+                    task.push_str("\n\n");
+                }
+            }
+            task.push_str(&prompt);
+            if !language_directive.is_empty() {
+                task.push_str("\n\n");
+                task.push_str(&language_directive);
+            }
+            // Prefer spawning dsh's underlying `node bin.js` directly instead of
+            // the `.cmd` shim. cmd.exe caps the whole command line at ~8191
+            // chars, and a chat prompt (system prefix + history + the task,
+            // which sits LAST) easily overflows it — truncating the task so dsh
+            // only sees the lead-in and answers with a generic greeting. Node
+            // spawned directly gets the ~32767-char CreateProcess ceiling (~4x),
+            // which fits a real turn. Fall back to the shim if the package
+            // layout isn't the expected npm shim.
+            if let Some(entry) = cli_runtime::resolve_dsh_node_entry(&binary) {
+                dsh_node_entry = Some(entry.to_string_lossy().to_string());
+            }
+            args.push("--profile".into());
+            args.push("headless".into());
+            args.push(task);
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    workdir = Some(p.to_path_buf());
+                }
             }
         } else {
             // The prompt is fed via stdin (not a positional arg) so large
@@ -15735,7 +15948,17 @@ async fn ai_cli(
             }
         }
 
-        let mut cmd = build_launch_command(&binary, &args, &shell);
+        let mut cmd = if let Some(entry) = dsh_node_entry.as_deref() {
+            // dsh direct-node launch: `node <bin.js> --profile headless <task>`.
+            // Skip the launch-shell wrapper entirely so the long task argv goes
+            // straight to CreateProcess (no cmd.exe 8191-char truncation).
+            let mut node_args = Vec::with_capacity(args.len() + 1);
+            node_args.push(entry.to_string());
+            node_args.extend(args.iter().cloned());
+            build_launch_command("node", &node_args, &None)
+        } else {
+            build_launch_command(&binary, &args, &shell)
+        };
         if let Some(env_vars) = env_vars.as_ref() {
             for (key, value) in env_vars {
                 if !key.trim().is_empty() {
@@ -15980,6 +16203,13 @@ async fn ai_cli(
                     let _ = write_claude_stream_message(&stdin, &prompt);
                 }
             })
+        } else if is_dsh {
+            // dsh reads the task from argv (see the args branch above), not
+            // stdin. Close stdin immediately so it can't block on a half-open
+            // pipe; the task itself never uses this fd.
+            std::thread::spawn(move || {
+                drop(stdin_pipe);
+            })
         } else {
             std::thread::spawn(move || {
                 if let Some(mut stdin) = stdin_pipe {
@@ -15994,6 +16224,7 @@ async fn ai_cli(
         let run2 = run_id.clone();
         let parse_codex = is_codex;
         let parse_gemini = is_gemini;
+        let parse_dsh = is_dsh;
         let claude_stdin_reader = claude_stdin.clone();
         let progress_model_hint2 = progress_model_hint.clone();
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
@@ -16005,6 +16236,12 @@ async fn ai_cli(
         // status bar can show the real cache percentage instead of `--`.
         let claude_usage = Arc::new(Mutex::new(None::<serde_json::Value>));
         let claude_usage_reader = Arc::clone(&claude_usage);
+        // Claude/gemini stream-json can end on a terminal `result` event that
+        // reports a FAILED turn (is_error / subtype "error_*") with no usable
+        // text. Capture that error so an otherwise-empty turn surfaces the real
+        // cause instead of a blank "（模型没有返回内容）" bubble.
+        let claude_stream_error = Arc::new(Mutex::new(None::<String>));
+        let claude_stream_error_reader = Arc::clone(&claude_stream_error);
         let codex_streamed_output = Arc::new(Mutex::new(String::new()));
         let codex_streamed_output_reader = Arc::clone(&codex_streamed_output);
         let codex_thread_id_reader = Arc::clone(&codex_thread_id);
@@ -16059,6 +16296,18 @@ async fn ai_cli(
                     let line = line.trim_end_matches(['\r', '\n']);
                     touch_activity(&stdout_activity);
                     if line.trim().is_empty() {
+                        continue;
+                    }
+                    if parse_dsh {
+                        // dsh headless prints plain text (the final answer), not
+                        // JSONL. Accumulate it verbatim and stream it live so the
+                        // chat still fills in as the agent works; the process
+                        // exit code decides success (0=completed, else 1).
+                        acc.push_str(line);
+                        acc.push('\n');
+                        progress.push(line);
+                        progress.push("\n");
+                        received_content_reader.store(true, Ordering::Relaxed);
                         continue;
                     }
                     if parse_codex {
@@ -16567,6 +16816,17 @@ async fn ai_cli(
                             if let Some(r) = v.get("result").and_then(|t| t.as_str()) {
                                 result = r.to_string();
                             }
+                            // A terminal `result` can also declare the turn FAILED
+                            // (e.g. upstream overload / rate-limit surfaces as
+                            // subtype "error_during_execution" or "error_max_turns",
+                            // or is_error:true). The `result` text is then usually
+                            // empty, so record the failure and let the wait loop
+                            // turn it into a real error instead of a blank bubble.
+                            if let Some(detail) = claude_result_failure(&v) {
+                                if let Ok(mut slot) = claude_stream_error_reader.lock() {
+                                    *slot = Some(detail);
+                                }
+                            }
                             // Reaching the terminal `result` event at all means the
                             // turn genuinely completed (even a tool-only turn with
                             // no closing text is a real, finished turn).
@@ -16847,6 +17107,20 @@ async fn ai_cli(
             Ok(WaitOutcome::Exited(status))
                 if status.success() && received_content.load(Ordering::Relaxed) =>
             {
+                // The stream declared a failed turn (overload / rate-limit /
+                // max-turns) and left no usable text — surface the real cause
+                // instead of returning empty and rendering a blank bubble.
+                if output.trim().is_empty() {
+                    if let Some(detail) =
+                        claude_stream_error.lock().ok().and_then(|slot| slot.clone())
+                    {
+                        return Err(append_cli_error_context(
+                            format!("CLI \"{binary}\" 本轮执行出错：{detail}"),
+                            &output,
+                            &stderr,
+                        ));
+                    }
+                }
                 // Codex completions come through the dedicated outcomes above; a
                 // plain process exit is the claude/gemini path, so prefer the
                 // claude usage snapshot (falls back to codex for safety).
@@ -16902,7 +17176,20 @@ async fn ai_cli(
             Ok(WaitOutcome::CodexLastMessageReady) => Ok(ai_cli_result(output, &codex_usage)),
             Ok(WaitOutcome::StreamCompleted) => {
                 // Terminal `result` event already arrived; the lingering process
-                // was force-terminated. Prefer the claude usage snapshot.
+                // was force-terminated. If that terminal event declared a failed
+                // turn with no usable text, surface the real cause.
+                if output.trim().is_empty() {
+                    if let Some(detail) =
+                        claude_stream_error.lock().ok().and_then(|slot| slot.clone())
+                    {
+                        return Err(append_cli_error_context(
+                            format!("CLI \"{binary}\" 本轮执行出错：{detail}"),
+                            &output,
+                            &stderr,
+                        ));
+                    }
+                }
+                // Prefer the claude usage snapshot.
                 let usage = if claude_usage.lock().ok().is_some_and(|u| u.is_some()) {
                     &claude_usage
                 } else {
@@ -16986,19 +17273,46 @@ mod tests {
             .iter()
             .find(|spec| spec.adapter == "codex")
             .unwrap();
-        let codex_cmd = cli_update_command(codex, "codex").unwrap();
+        let codex_cmd = cli_update_command(codex, Some("codex")).unwrap();
         assert!(command_arg_strings(&codex_cmd).ends_with(&["update".to_string()]));
 
         let gemini = CLI_UPDATE_SPECS
             .iter()
             .find(|spec| spec.adapter == "gemini")
             .unwrap();
-        let gemini_cmd = cli_update_command(gemini, "gemini").unwrap();
+        let gemini_cmd = cli_update_command(gemini, Some("gemini")).unwrap();
         assert!(command_arg_strings(&gemini_cmd).ends_with(&[
             "install".to_string(),
             "-g".to_string(),
             "@google/gemini-cli@latest".to_string(),
         ]));
+    }
+
+    #[test]
+    fn cli_update_command_installs_dsh_when_missing() {
+        // A missing npm-provisionable CLI (dsh) must install via the package
+        // manager instead of erroring -- this is the "one-click install" path.
+        let dsh = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "deepseek-harness")
+            .unwrap();
+        let dsh_cmd = cli_update_command(dsh, None).unwrap();
+        assert!(command_arg_strings(&dsh_cmd).ends_with(&[
+            "install".to_string(),
+            "-g".to_string(),
+            "@deepseek-ai/dsh@latest".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn cli_update_command_rejects_missing_native_installer_cli() {
+        // claude/codex have no npm one-click provision path; a missing CLI must
+        // still be reported as an error rather than silently installing.
+        let codex = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "codex")
+            .unwrap();
+        assert!(cli_update_command(codex, None).is_err());
     }
 
     #[cfg(windows)]
@@ -17008,7 +17322,7 @@ mod tests {
             .iter()
             .find(|spec| spec.adapter == "gemini")
             .unwrap();
-        let cmd = cli_update_command(gemini, "gemini").unwrap();
+        let cmd = cli_update_command(gemini, Some("gemini")).unwrap();
         let program = cmd.get_program().to_string_lossy().to_ascii_lowercase();
         assert!(program == "cmd" || program.ends_with("cmd.exe"));
         assert_eq!(
@@ -17031,7 +17345,7 @@ mod tests {
             .find(|spec| spec.adapter == "gemini")
             .unwrap();
         let shim = r"C:\Users\me\.bun\bin\gemini.exe";
-        let cmd = cli_update_command(gemini, shim).unwrap();
+        let cmd = cli_update_command(gemini, Some(shim)).unwrap();
         assert_eq!(
             cmd.get_program().to_string_lossy(),
             r"C:\Users\me\.bun\bin\bun.exe"
@@ -17049,7 +17363,7 @@ mod tests {
             .iter()
             .find(|spec| spec.adapter == "gemini")
             .unwrap();
-        let cmd = cli_update_command(gemini, "gemini").unwrap();
+        let cmd = cli_update_command(gemini, Some("gemini")).unwrap();
         let args = command_arg_strings(&cmd);
         assert!(!args.iter().any(|arg| arg == "/C"));
         assert_eq!(args, vec!["install", "-g", "@google/gemini-cli@latest"]);
@@ -17552,6 +17866,34 @@ mod tests {
     }
 
     #[test]
+    fn preview_video_mime_supports_common_formats() {
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("clip.mp4")),
+            Some("video/mp4")
+        );
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("clip.webm")),
+            Some("video/webm")
+        );
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("clip.mov")),
+            Some("video/quicktime")
+        );
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("clip.avi")),
+            Some("video/x-msvideo")
+        );
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("clip.mkv")),
+            Some("video/x-matroska")
+        );
+        assert_eq!(
+            video_mime_for_path(std::path::Path::new("readme.txt")),
+            None
+        );
+    }
+
+    #[test]
     fn preview_text_mime_marks_html_and_markdown() {
         assert_eq!(
             text_mime_for_path(std::path::Path::new("Moon亮晶分析和渲染整体架构.html")),
@@ -17963,6 +18305,57 @@ mod tests {
         });
         assert!(claude_message_usage(&empty).is_none());
         assert!(claude_message_usage(&serde_json::json!({ "type": "result" })).is_none());
+    }
+
+    #[test]
+    fn claude_result_failure_detects_errors_and_ignores_success() {
+        // Successful turn with text — no failure.
+        let ok = serde_json::json!({
+            "type": "result",
+            "subtype": "success",
+            "result": "done",
+        });
+        assert_eq!(claude_result_failure(&ok), None);
+
+        // is_error with empty result — falls back to a generic message.
+        let flagged = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "result": "",
+        });
+        assert_eq!(
+            claude_result_failure(&flagged).as_deref(),
+            Some("模型报告本轮执行出错"),
+        );
+
+        // Error subtype with no text — reports the subtype.
+        let max_turns = serde_json::json!({
+            "type": "result",
+            "subtype": "error_max_turns",
+        });
+        assert_eq!(
+            claude_result_failure(&max_turns).as_deref(),
+            Some("error_max_turns"),
+        );
+
+        // During-execution error carrying a nested error message.
+        let during = serde_json::json!({
+            "type": "result",
+            "subtype": "error_during_execution",
+            "error": { "message": "Overloaded" },
+        });
+        assert_eq!(claude_result_failure(&during).as_deref(), Some("Overloaded"));
+
+        // Prefer the human-readable result text when present.
+        let with_text = serde_json::json!({
+            "type": "result",
+            "is_error": true,
+            "result": "rate limited, retry later",
+        });
+        assert_eq!(
+            claude_result_failure(&with_text).as_deref(),
+            Some("rate limited, retry later"),
+        );
     }
 
     #[test]

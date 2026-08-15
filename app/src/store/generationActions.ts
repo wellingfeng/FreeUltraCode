@@ -72,6 +72,10 @@ import { formatClock, formatDuration } from '@/runtime';
 
 // --- lib leaf imports (gateway / channels / assets / i18n / id / translation) ---
 import { captureGeneratedAssets } from '@/lib/assetCapture';
+import type {
+  CapturedAssetLocation,
+  OnGenerationSettled,
+} from '@/lib/assetCapture';
 import { verifyAsset, canVerifyAsset } from '@/lib/assetVerify';
 import { markAssetDone, markAssetFailed } from '@/lib/downloadRegistry';
 import { ensureFreeProxy, isFreeChannelSelection } from '@/lib/freeChannels';
@@ -371,6 +375,10 @@ function spritePromptSystem(settingsProfile: SettingsProfileOptions = {}): strin
 - 帧锚点：${settings.frameAnchor}；主体保留模式：${settings.componentMode}；${settings.rejectEdgeTouch ? '拒绝贴边帧' : '允许贴边帧'}。
 - 交付目标：raw sheet 能被确定性流程切帧、对齐、打包、生成 manifest 和验收报告。`;
 }
+
+// Re-export the shared generation-result types (defined in the leaf
+// assetCapture module) so existing importers of generationActions keep working.
+export type { GenerationTurnResult, OnGenerationSettled } from '@/lib/assetCapture';
 
 // ComfyUI authoring instruction. Unlike the image/music/3D prompt refiners
 // (which produce a plain prompt string), this asks the coding model to emit a
@@ -1277,12 +1285,22 @@ async function refineSpritePromptViaModel(
 
 export function startImageGenerationTurn(
   text: string,
-  options: { providerId?: ImageProviderId; model?: string } = {},
+  options: {
+    providerId?: ImageProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripImageCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的生图提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'image', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -1295,6 +1313,10 @@ export function startImageGenerationTurn(
       ? requestedProviderId
       : preferredReadyImageProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: friendlyImageGenerationError('NO_READY_IMAGE_PROVIDER'),
+    });
     useStore
       .getState()
       .appendChatNote(
@@ -1304,6 +1326,10 @@ export function startImageGenerationTurn(
     return;
   }
   if (!imageProviderReady(providerId, settings)) {
+    options.onSettled?.({
+      ok: false,
+      error: friendlyImageGenerationError(`IMAGE_PROVIDER_NOT_READY:${providerId}`),
+    });
     useStore
       .getState()
       .appendChatNote(
@@ -1526,7 +1552,7 @@ export function startImageGenerationTurn(
       setAssistant(`${elapsed()}\n${promptModelLine}${body}${verifyNote}`, true);
       const capturePendingAssetId = pendingAssetId;
       pendingAssetId = null;
-      void captureGeneratedAssets({
+      const locations = await captureGeneratedAssets({
         kind: 'image',
         sources: result.images,
         origin: imageProviderById(result.providerId, settings).local ? 'local' : 'remote',
@@ -1542,9 +1568,13 @@ export function startImageGenerationTurn(
       });
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
-      if (ch.abortController.signal.aborted) return;
+      if (ch.abortController.signal.aborted) {
+        options.onSettled?.({ ok: false, error: '生成已取消。' });
+        return;
+      }
       const rawMsg = err instanceof Error ? err.message : String(err);
       const msg = friendlyImageGenerationError(rawMsg);
       if (pendingAssetId) markAssetFailed(pendingAssetId, msg);
@@ -1553,6 +1583,7 @@ export function startImageGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -1561,12 +1592,22 @@ export function startImageGenerationTurn(
 
 export function startMusicGenerationTurn(
   text: string,
-  options: { providerId?: MusicProviderId; model?: string } = {},
+  options: {
+    providerId?: MusicProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripMusicCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的音乐提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'music', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -1579,6 +1620,10 @@ export function startMusicGenerationTurn(
       ? requestedProviderId
       : preferredReadyMusicProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的音乐生成渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的音乐生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
@@ -1738,7 +1783,7 @@ export function startMusicGenerationTurn(
       setAssistant(`${elapsed()}\n${promptModelLine}${musicResultMarkdown(result)}`, true);
       const capturePendingAssetId = pendingAssetId;
       pendingAssetId = null;
-      void captureGeneratedAssets({
+      const locations = await captureGeneratedAssets({
         kind: 'music',
         sources: result.audios,
         origin: musicProviderById(result.providerId, settings).local ? 'local' : 'remote',
@@ -1754,6 +1799,7 @@ export function startMusicGenerationTurn(
       });
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -1763,6 +1809,7 @@ export function startMusicGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -1771,12 +1818,22 @@ export function startMusicGenerationTurn(
 
 export function startThreeDGenerationTurn(
   text: string,
-  options: { providerId?: ThreeDProviderId; model?: string } = {},
+  options: {
+    providerId?: ThreeDProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripThreeDCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的建模提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'threeD', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -1789,6 +1846,10 @@ export function startThreeDGenerationTurn(
       ? requestedProviderId
       : preferredReadyThreeDProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的 3D 生成渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的 3D 生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
@@ -1990,6 +2051,15 @@ export function startThreeDGenerationTurn(
       );
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      const threeDLocations: CapturedAssetLocation[] = downloads.downloaded.length
+        ? downloads.downloaded.map((item) => ({
+            localPath: item.path,
+            title: '3d-model.glb',
+          }))
+        : (result.assets ?? [])
+            .filter((src): src is string => typeof src === 'string' && !!src.trim())
+            .map((src) => ({ remoteUrl: src, title: '3d-model.glb' }));
+      options.onSettled?.({ ok: true, locations: threeDLocations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -1999,6 +2069,7 @@ export function startThreeDGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -2199,12 +2270,22 @@ export function startWorldModelGenerationTurn(
 
 export function startVideoGenerationTurn(
   text: string,
-  options: { providerId?: VideoProviderId; model?: string } = {},
+  options: {
+    providerId?: VideoProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripVideoCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的视频提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'video', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -2217,6 +2298,10 @@ export function startVideoGenerationTurn(
       ? requestedProviderId
       : preferredReadyVideoProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的视频生成渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的视频生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
@@ -2376,7 +2461,7 @@ export function startVideoGenerationTurn(
       setAssistant(`${elapsed()}\n${promptModelLine}${videoResultMarkdown(result)}`, true);
       const capturePendingAssetId = pendingAssetId;
       pendingAssetId = null;
-      void captureGeneratedAssets({
+      const locations = await captureGeneratedAssets({
         kind: 'video',
         sources: result.videos,
         origin: videoProviderById(result.providerId, settings).local ? 'local' : 'remote',
@@ -2392,6 +2477,7 @@ export function startVideoGenerationTurn(
       });
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -2401,6 +2487,7 @@ export function startVideoGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -2409,12 +2496,22 @@ export function startVideoGenerationTurn(
 
 export function startAnimationGenerationTurn(
   text: string,
-  options: { providerId?: AnimationProviderId; model?: string } = {},
+  options: {
+    providerId?: AnimationProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripAnimationCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的动画提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'animation', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -2434,6 +2531,10 @@ export function startAnimationGenerationTurn(
         preferredReadyAnimationProviderIdForProfile(settings, settingsProfile)
       : preferredReadyAnimationProviderIdForProfile(settings, settingsProfile));
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的动画渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的动画渠道。请在设置 > 动画渠道中启用 Mixamo 或配置 AI 动画 Provider。', 'system');
@@ -2599,8 +2700,9 @@ export function startAnimationGenerationTurn(
         });
       }
       const animationAssets = [...result.models, ...result.clips];
+      let animationLocations: CapturedAssetLocation[] = [];
       if (animationAssets.length) {
-        void captureGeneratedAssets({
+        animationLocations = await captureGeneratedAssets({
           kind: 'mesh',
           sources: animationAssets,
           origin,
@@ -2633,6 +2735,7 @@ export function startAnimationGenerationTurn(
       }
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations: animationLocations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -2641,6 +2744,7 @@ export function startAnimationGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -2649,12 +2753,23 @@ export function startAnimationGenerationTurn(
 
 export function startSpeechGenerationTurn(
   text: string,
-  options: { providerId?: SpeechProviderId; model?: string; voice?: string } = {},
+  options: {
+    providerId?: SpeechProviderId;
+    model?: string;
+    voice?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripSpeechCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的语音文本。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'speech', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -2667,6 +2782,10 @@ export function startSpeechGenerationTurn(
       ? requestedProviderId
       : preferredReadySpeechProviderIdForProfile(settings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的语音生成渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的语音生成渠道。请在设置中为当前项目配置在线渠道。', 'system');
@@ -2842,7 +2961,7 @@ export function startSpeechGenerationTurn(
       setAssistant(`${elapsed()}\n${promptModelLine}${speechResultMarkdown(result)}`, true);
       const capturePendingAssetId = pendingAssetId;
       pendingAssetId = null;
-      void captureGeneratedAssets({
+      const locations = await captureGeneratedAssets({
         kind: 'speech',
         sources: result.audios,
         origin: speechProviderById(result.providerId, settings).local ? 'local' : 'remote',
@@ -2858,6 +2977,7 @@ export function startSpeechGenerationTurn(
       });
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -2867,6 +2987,7 @@ export function startSpeechGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: msg });
     } finally {
       removeAiEditChannel(ch);
     }
@@ -2875,12 +2996,22 @@ export function startSpeechGenerationTurn(
 
 export function startSpriteGenerationTurn(
   text: string,
-  options: { providerId?: ImageProviderId; model?: string } = {},
+  options: {
+    providerId?: ImageProviderId;
+    model?: string;
+    onSettled?: OnGenerationSettled;
+  } = {},
 ): void {
   const prompt = stripSpriteCommand(text);
-  if (!prompt) return;
+  if (!prompt) {
+    options.onSettled?.({ ok: false, error: '空的精灵图提示词。' });
+    return;
+  }
   const state = useStore.getState();
-  if (isWorkflowReadOnly(state)) return;
+  if (isWorkflowReadOnly(state)) {
+    options.onSettled?.({ ok: false, error: '当前工作流只读，无法生成。' });
+    return;
+  }
   const generationPrompt = modeContextPrompt(state, 'sprite', prompt);
   const sessionKey = activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
@@ -2894,12 +3025,20 @@ export function startSpriteGenerationTurn(
       ? requestedProviderId
       : preferredReadyImageProviderIdForProfile(imageSettings, settingsProfile);
   if (!providerId) {
+    options.onSettled?.({
+      ok: false,
+      error: '当前项目没有可用的 Sprite 生图渠道。',
+    });
     useStore
       .getState()
       .appendChatNote('✗ 当前项目没有可用的 Sprite 生图渠道。请在设置中为当前项目配置在线生图渠道。', 'system');
     return;
   }
   if (!imageProviderReady(providerId, imageSettings)) {
+    options.onSettled?.({
+      ok: false,
+      error: friendlyImageGenerationError(`IMAGE_PROVIDER_NOT_READY:${providerId}`),
+    });
     useStore
       .getState()
       .appendChatNote(
@@ -3060,6 +3199,7 @@ export function startSpriteGenerationTurn(
         `${elapsed()}\n${promptModelLine}${spriteResultMarkdown(result)}`,
         true,
       );
+      const spriteLocations: CapturedAssetLocation[] = [];
       {
         const spriteOrigin = imageProviderById(result.providerId, imageSettings).local
           ? 'local'
@@ -3072,43 +3212,48 @@ export function startSpriteGenerationTurn(
         const capturePendingAssetId = pendingAssetId;
         pendingAssetId = null;
         if (spriteSources.length || !result.videos.length) {
-          void captureGeneratedAssets({
-            kind: 'sprite',
-            sources: spriteSources,
-            origin: spriteOrigin,
-            provider: result.providerLabel,
-            model: result.model,
-            prompt: result.prompt,
-            sessionId: ch.sessionId ?? undefined,
-            workspaceId: ch.workspaceId,
-            messageId: assistantId,
-            cwd: ch.workspaceRootPath ?? undefined,
-            titlePrefix: 'sprite',
-            pendingAssetId: capturePendingAssetId ?? undefined,
-            meta: { mode: result.mode, frameCount: result.frameCount },
-          });
+          spriteLocations.push(
+            ...(await captureGeneratedAssets({
+              kind: 'sprite',
+              sources: spriteSources,
+              origin: spriteOrigin,
+              provider: result.providerLabel,
+              model: result.model,
+              prompt: result.prompt,
+              sessionId: ch.sessionId ?? undefined,
+              workspaceId: ch.workspaceId,
+              messageId: assistantId,
+              cwd: ch.workspaceRootPath ?? undefined,
+              titlePrefix: 'sprite',
+              pendingAssetId: capturePendingAssetId ?? undefined,
+              meta: { mode: result.mode, frameCount: result.frameCount },
+            })),
+          );
         }
         if (result.videos.length) {
-          void captureGeneratedAssets({
-            kind: 'video',
-            sources: result.videos,
-            origin: spriteOrigin,
-            provider: result.providerLabel,
-            model: result.model,
-            prompt: result.prompt,
-            sessionId: ch.sessionId ?? undefined,
-            workspaceId: ch.workspaceId,
-            messageId: assistantId,
-            cwd: ch.workspaceRootPath ?? undefined,
-            titlePrefix: 'sprite-video',
-            pendingAssetId: spriteSources.length
-              ? undefined
-              : (capturePendingAssetId ?? undefined),
-          });
+          spriteLocations.push(
+            ...(await captureGeneratedAssets({
+              kind: 'video',
+              sources: result.videos,
+              origin: spriteOrigin,
+              provider: result.providerLabel,
+              model: result.model,
+              prompt: result.prompt,
+              sessionId: ch.sessionId ?? undefined,
+              workspaceId: ch.workspaceId,
+              messageId: assistantId,
+              cwd: ch.workspaceRootPath ?? undefined,
+              titlePrefix: 'sprite-video',
+              pendingAssetId: spriteSources.length
+                ? undefined
+                : (capturePendingAssetId ?? undefined),
+            })),
+          );
         }
       }
       commitAiChannelBlueprint(ch, appendStartUserInputs(ch.workflow, [text]));
       syncAndPersistSessionRunStatus(sessionKey, 'success');
+      options.onSettled?.({ ok: true, locations: spriteLocations });
     } catch (err) {
       if (!aiEditRegistered(ch)) return;
       const msg = err instanceof Error ? err.message : String(err);
@@ -3119,6 +3264,7 @@ export function startSpriteGenerationTurn(
         true,
       );
       syncAndPersistSessionRunStatus(sessionKey, 'error');
+      options.onSettled?.({ ok: false, error: friendlyMsg });
     } finally {
       removeAiEditChannel(ch);
     }

@@ -26,28 +26,57 @@ function StatusGlyph({ status }: { status: ToolEvent['status'] }) {
   return <Check size={11} className="ai-tool-status-done" />;
 }
 
+function isPlainTextLanguage(language: string): boolean {
+  return (
+    language === '' ||
+    language === 'text' ||
+    language === 'txt' ||
+    language === 'plain' ||
+    language === 'plaintext'
+  );
+}
+
 /** Render a tool's args/result body with the same code chrome as AI code blocks. */
 function Panel({
   label,
   body,
   language,
+  onOpenFile,
+  cwd,
+  linkify = false,
 }: {
   label: string;
   body: string;
   language: string;
+  onOpenFile?: OpenFileFn;
+  cwd?: string;
+  linkify?: boolean;
 }) {
+  const shouldLinkify = linkify && isPlainTextLanguage(language.toLowerCase());
   return (
     <div className="mt-1">
       <div className="ai-tool-label mb-0.5 font-mono text-[10px] uppercase tracking-wider">
         {label}
       </div>
-      <RawCodeBlock
-        raw={body}
-        language={language}
-        compact
-        className="ai-tool-panel"
-        maxLines={14}
-      />
+      {shouldLinkify ? (
+        <div className="ai-tool-panel rounded-sm border border-[var(--code-border)] bg-[var(--code-bg)] p-2.5 text-[12.5px] leading-relaxed text-fg">
+          {scanFileRefs(body).map((p, i) =>
+            typeof p === 'string' ? (
+              <span key={i}>{p}</span>
+            ) : (
+              <FileChip key={i} refData={p} onOpenFile={onOpenFile} cwd={cwd} />
+            ),
+          )}
+        </div>
+      ) : (
+        <RawCodeBlock
+          raw={body}
+          language={language}
+          compact
+          className="ai-tool-panel"
+          maxLines={14}
+        />
+      )}
     </div>
   );
 }
@@ -171,6 +200,9 @@ export default function ToolCard({
               label={event.truncated ? t(locale, 'chat.responseTruncated') : t(locale, 'chat.response')}
               body={event.result}
               language={toolLanguage('response', event.result)}
+              onOpenFile={onOpenFile}
+              cwd={cwd}
+              linkify
             />
           )}
           {childrenEvents?.map((child) => (

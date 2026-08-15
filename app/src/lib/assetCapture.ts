@@ -87,24 +87,55 @@ function titleFor(prefix: string, kind: AssetKind, index: number, total: number)
 }
 
 /**
+ * One saved/registered asset location, returned so a caller (e.g. the model's
+ * auto-generation loop) can report the concrete path/URL back to the model.
+ */
+export interface CapturedAssetLocation {
+  /** On-disk absolute path when persisted locally, else undefined. */
+  localPath?: string;
+  /** Remote URL when the source was already a URL, else undefined. */
+  remoteUrl?: string;
+  /** Display title / file name. */
+  title: string;
+}
+
+/**
+ * Terminal outcome of an asset-generation turn, reported to an optional
+ * `onSettled` callback. Lets the chat auto-generation loop (UGS_GEN protocol)
+ * learn the concrete saved paths / error so it can report them back to the
+ * model. Defined in this leaf module so both the store state contract and the
+ * generation actions can share it without importing the actions module (which
+ * has a deliberate one-edge import cycle with the store).
+ */
+export interface GenerationTurnResult {
+  ok: boolean;
+  locations?: CapturedAssetLocation[];
+  error?: string;
+}
+
+export type OnGenerationSettled = (result: GenerationTurnResult) => void;
+
+/**
  * Register every media source from a generation result into the Asset Hub,
  * persisting inline data URLs to disk when a desktop backend is available.
- * Best-effort: failures are recorded on the entry but never thrown.
+ * Best-effort: failures are recorded on the entry but never thrown. Returns the
+ * concrete saved locations (paths / URLs) in source order for callers that need
+ * to report them (empty entries are skipped).
  */
 export async function captureGeneratedAssets(
   input: CaptureGeneratedAssetsInput,
-): Promise<void> {
+): Promise<CapturedAssetLocation[]> {
   const { kind, sources } = input;
   if (!sources?.length) {
     if (input.pendingAssetId) markAssetFailed(input.pendingAssetId, 'No generated asset output.');
-    return;
+    return [];
   }
   const prefix = input.titlePrefix ?? `generated-${kind}`;
   const total = sources.length;
 
-  await Promise.all(
-    sources.map(async (src, index) => {
-      if (typeof src !== 'string' || !src.trim()) return;
+  const located = await Promise.all(
+    sources.map(async (src, index): Promise<CapturedAssetLocation | null> => {
+      if (typeof src !== 'string' || !src.trim()) return null;
       const title = titleFor(prefix, kind, index, total);
       const isRemote = /^https?:\/\//i.test(src);
       const pendingId = index === 0 ? input.pendingAssetId : undefined;
@@ -117,7 +148,7 @@ export async function captureGeneratedAssets(
             title,
             meta: input.meta,
           });
-          return;
+          return { remoteUrl: src, title };
         }
         registerAsset({
           kind,
@@ -135,7 +166,7 @@ export async function captureGeneratedAssets(
           messageId: input.messageId,
           meta: input.meta,
         });
-        return;
+        return { remoteUrl: src, title };
       }
 
       const parsed = src.startsWith('data:') ? parseDataUrl(src) : null;
@@ -149,7 +180,7 @@ export async function captureGeneratedAssets(
             title,
             meta: input.meta,
           });
-          return;
+          return { title };
         }
         registerAsset({
           kind,
@@ -166,7 +197,7 @@ export async function captureGeneratedAssets(
           messageId: input.messageId,
           meta: input.meta,
         });
-        return;
+        return { title };
       }
 
       const id =
@@ -198,9 +229,12 @@ export async function captureGeneratedAssets(
           sizeBytes: saved.sizeBytes,
           title: saved.fileName,
         });
+        return { localPath: saved.path, title: saved.fileName };
       } catch (err) {
         markAssetFailed(id, err instanceof Error ? err.message : String(err));
+        return { title };
       }
     }),
   );
+  return located.filter((entry): entry is CapturedAssetLocation => entry !== null);
 }

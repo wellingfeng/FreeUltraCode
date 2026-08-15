@@ -198,6 +198,8 @@ const KNOWN_EXT = new Set([
   'bmp', 'dib', 'ico', 'cur', 'svg', 'avif',
   // 3D model assets
   'glb', 'gltf', 'obj', 'stl', 'fbx', 'ply', 'usdz', 'blend',
+  // video assets
+  'mp4', 'm4v', 'webm', 'mov', 'qt', 'ogv', 'avi', 'mkv',
 ]);
 
 const KNOWN_BASENAME = new Set([
