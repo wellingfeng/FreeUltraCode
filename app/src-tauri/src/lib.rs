@@ -1831,6 +1831,7 @@ fn command_source_label(source: &str) -> (&'static str, &'static str) {
         "claude-code" => ("Claude Code", "Claude Code"),
         "codex" => ("Codex", "Codex"),
         "gemini" => ("Gemini", "Gemini"),
+        "kimi" => ("Kimi Code", "Kimi Code"),
         "deepseek-harness" => ("DeepSeek Harness", "DeepSeek Harness"),
         "agent" => ("Agent", "Agent"),
         _ => ("CLI", "CLI"),
@@ -12984,9 +12985,21 @@ const CLI_UPDATE_SPECS: &[CliUpdateSpec] = &[
         installable: true,
     },
     CliUpdateSpec {
+        adapter: "kimi",
+        label: "Kimi Code",
+        npm_package: "@moonshot-ai/kimi-code",
+        installable: true,
+    },
+    CliUpdateSpec {
         adapter: "deepseek-harness",
         label: "DeepSeek Harness",
         npm_package: "@deepseek-ai/dsh",
+        installable: true,
+    },
+    CliUpdateSpec {
+        adapter: "zcode",
+        label: "ZCode / GLM",
+        npm_package: "zcode-app-cli",
         installable: true,
     },
 ];
@@ -13276,7 +13289,7 @@ fn cli_update_command(spec: &CliUpdateSpec, exe: Option<&str>) -> Result<Command
             c.arg("update");
             Ok(c)
         }
-        "gemini" | "deepseek-harness" => {
+        "gemini" | "deepseek-harness" | "zcode" => {
             // `npm install -g <pkg>@latest` installs when missing and updates
             // when present, so one command covers both. Prefer the owning
             // package manager of the detected shim (bun for ~/.bun/bin), else
@@ -14807,6 +14820,94 @@ fn claude_result_failure(event: &serde_json::Value) -> Option<String> {
     Some(detail)
 }
 
+/// Extract the assistant text from a kimi stream-json assistant message.
+/// The Python kimi-cli (with `--final-message-only`) serializes `content` as a
+/// plain string; the npm kimi-code follows the Claude wire protocol where
+/// `content` can be a block array (`[{"type":"text","text":…}]`). Returns the
+/// concatenated text, or `None` when the message carries no text.
+fn extract_kimi_assistant_text(content: Option<&serde_json::Value>) -> Option<String> {
+    let value = content?;
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    let blocks = value.as_array()?;
+    let mut out = String::new();
+    for block in blocks {
+        if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                out.push_str(text);
+            }
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Parse the structured envelope `zcode --json` prints for a headless turn
+/// (`{sessionId, turnId, response, usage, projection}`). The envelope may be
+/// pretty-printed across multiple lines and could be preceded by stray
+/// diagnostics, so locate the outermost JSON object in the accumulated stdout
+/// rather than requiring line-oriented JSONL. Returns `None` when no object
+/// parses, letting the caller fall back to the raw accumulated text.
+fn zcode_envelope_from_output(output: &str) -> Option<serde_json::Value> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Fast path: the whole output is one JSON object.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if value.is_object() {
+            return Some(value);
+        }
+    }
+    // Fallback: walk to the first `{` and try to parse a balanced object from
+    // there, retrying at successive `{` positions so a leading log line cannot
+    // hide the envelope.
+    let bytes = trimmed.as_bytes();
+    let mut search_from = 0;
+    while let Some(offset) = trimmed[search_from..].find('{') {
+        let start = search_from + offset;
+        let mut depth = 0_i64;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut end = None;
+        for (i, byte) in bytes.iter().enumerate().skip(start) {
+            let ch = *byte;
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == b'\\' {
+                    escaped = true;
+                } else if ch == b'"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match ch {
+                b'"' => in_string = true,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(end) = end {
+            let candidate = &trimmed[start..=end];
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(candidate) {
+                if value.is_object() {
+                    return Some(value);
+                }
+            }
+        }
+        search_from = start + 1;
+    }
+    None
+}
+
 /// Summarize a `tool_use` event into one readable progress line, e.g.
 /// `🔧 Bash: ls app/src` / `🔧 Glob: **/*.tsx` / `🔧 Read: app/src/core/ir.ts`,
 /// so the run log shows *what* the agent is doing, not just the tool name.
@@ -15646,7 +15747,9 @@ async fn ai_cli(
         let is_claude = protocol == "claude";
         let is_codex = protocol == "codex";
         let is_gemini = protocol == "gemini";
+        let is_kimi = protocol == "kimi";
         let is_dsh = protocol == "deepseek-harness";
+        let is_zcode = protocol == "zcode";
         let claude_stream_input =
             is_claude && claude_cli_supports_stream_input(&binary, &shell);
         // App Server approval callbacks need a live UI reviewer. Keep the
@@ -15682,6 +15785,11 @@ async fn ai_cli(
         // When set, dsh is launched as `node <bin.js> <args>` (bypassing the
         // `.cmd` shim's cmd.exe command-line length cap). See the is_dsh branch.
         let mut dsh_node_entry: Option<String> = None;
+        // Same trick for zcode: its npm shim runs `node <pkg>/bin/zcode.js`,
+        // whose headless prompt is a `--prompt` argv value, so cmd.exe's
+        // ~8191-char cap would truncate a long chat turn. Launching the launcher
+        // directly with node raises the ceiling ~4x. See the is_zcode branch.
+        let mut zcode_node_entry: Option<String> = None;
 
         if is_codex {
             if codex_app_server {
@@ -15788,6 +15896,46 @@ async fn ai_cli(
                 args.push("--include-directories".into());
                 args.push(dir.clone());
             }
+        } else if is_kimi {
+            // Kimi Code CLI print mode (headless one-shot). The prompt is
+            // piped in via stdin — when no `-p` is given and stdin is not a
+            // TTY, kimi reads the whole stdin as the single command. Print
+            // mode auto-approves tool calls and auto-dismisses questions, and
+            // `--final-message-only` shrinks the stream-json output to just
+            // the terminal assistant message, so parsing is trivial:
+            // each stdout line is `{"role":"assistant","content":"..."}`.
+            args.push("--print".into());
+            args.push("--output-format".into());
+            args.push("stream-json".into());
+            args.push("--input-format".into());
+            args.push("text".into());
+            args.push("--final-message-only".into());
+
+            if let Some(m) = model
+                .as_deref()
+                .filter(|m| cli_runtime::should_pass_model(&adapter, m))
+            {
+                args.push("--model".into());
+                args.push(m.to_string());
+            }
+
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    args.push("--plan".into());
+                }
+                _ => {}
+            }
+
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    workdir = Some(p.to_path_buf());
+                }
+            }
+            for dir in &extra_workspace_paths {
+                args.push("--add-dir".into());
+                args.push(dir.clone());
+            }
         } else if is_dsh {
             // dsh (`@deepseek-ai/dsh`) runs one headless task via the
             // `--profile headless "<task>"` positional argument and prints the
@@ -15821,6 +15969,69 @@ async fn ai_cli(
             args.push("--profile".into());
             args.push("headless".into());
             args.push(task);
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    workdir = Some(p.to_path_buf());
+                }
+            }
+        } else if is_zcode {
+            // ZCode (zcode-app-cli) headless one-shot: the prompt is a single
+            // `--prompt` argv value (never stdin), `--json` emits one structured
+            // JSON envelope (`sessionId`/`turnId`/`response`/`usage`/
+            // `projection`) whose `response` field is the final answer, and
+            // `--mode` maps our permission modes onto its own
+            // build/edit/plan/yolo ladder. There is no `--model` flag: the
+            // model (and its provider/relay) lives in `~/.zcode/cli/config.json`
+            // (`provider.zai` + `model.main`), so this branch never forwards one
+            // and the provider channel's key/base url are not needed here.
+            let mut task = String::new();
+            if inject_extra_workspace_note {
+                task.push_str(&extra_workspace_note);
+                if !task.is_empty() {
+                    task.push_str("\n\n");
+                }
+            }
+            task.push_str(&prompt);
+            if !language_directive.is_empty() {
+                task.push_str("\n\n");
+                task.push_str(&language_directive);
+            }
+            // Prefer spawning the launcher's `bin/zcode.js` directly with node
+            // (bypasses the `.cmd` shim's cmd.exe ~8191-char command-line cap;
+            // node gets the ~32767-char CreateProcess ceiling). Fall back to
+            // the historical `cmd /C` shim path when the package layout isn't
+            // the expected npm shim.
+            if let Some(entry) = cli_runtime::resolve_zcode_node_entry(&binary) {
+                zcode_node_entry = Some(entry.to_string_lossy().to_string());
+            }
+            args.push("--prompt".into());
+            args.push(task);
+            args.push("--json".into());
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    args.push("--mode".into());
+                    args.push("plan".into());
+                }
+                "ask" => {
+                    args.push("--mode".into());
+                    args.push("build".into());
+                }
+                _ => {
+                    args.push("--mode".into());
+                    args.push("yolo".into());
+                }
+            }
+            // Session continuity: continue a prior session (warm context) when
+            // the caller asks to resume one; otherwise start a fresh session
+            // (ZCode has no `--session-id` create flag, so a brand-new session
+            // is the default).
+            if let Some(sid) = session_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if resume.unwrap_or(false) {
+                    args.push("--resume".into());
+                    args.push(sid.to_string());
+                }
+            }
             if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
                 let p = std::path::Path::new(dir);
                 if p.is_dir() {
@@ -15956,6 +16167,13 @@ async fn ai_cli(
             node_args.push(entry.to_string());
             node_args.extend(args.iter().cloned());
             build_launch_command("node", &node_args, &None)
+        } else if let Some(entry) = zcode_node_entry.as_deref() {
+            // zcode direct-launcher launch: `node <pkg>/bin/zcode.js --prompt
+            // <task> --json --mode <mode>`. Same cmd.exe-length bypass as dsh.
+            let mut node_args = Vec::with_capacity(args.len() + 1);
+            node_args.push(entry.to_string());
+            node_args.extend(args.iter().cloned());
+            build_launch_command("node", &node_args, &None)
         } else {
             build_launch_command(&binary, &args, &shell)
         };
@@ -16017,12 +16235,12 @@ async fn ai_cli(
         // the very END instead (right after the user's actual question) — models
         // weight the tail of a long agentic prompt more than the head, so this
         // is the strongest lever available without a real system-role channel.
-        let prompt = if inject_extra_workspace_note && (is_codex || is_gemini) {
+        let prompt = if inject_extra_workspace_note && (is_codex || is_gemini || is_kimi) {
             format!("{extra_workspace_note}\n\n{prompt}")
         } else {
             prompt
         };
-        let prompt = if !language_directive.is_empty() && (is_codex || is_gemini) {
+        let prompt = if !language_directive.is_empty() && (is_codex || is_gemini || is_kimi) {
             format!("{prompt}\n\n{language_directive}")
         } else {
             prompt
@@ -16203,10 +16421,11 @@ async fn ai_cli(
                     let _ = write_claude_stream_message(&stdin, &prompt);
                 }
             })
-        } else if is_dsh {
+        } else if is_dsh || is_zcode {
             // dsh reads the task from argv (see the args branch above), not
-            // stdin. Close stdin immediately so it can't block on a half-open
-            // pipe; the task itself never uses this fd.
+            // stdin; zcode likewise takes its prompt as a `--prompt` argv value.
+            // Close stdin immediately so neither can block on a half-open pipe;
+            // the task itself never uses this fd.
             std::thread::spawn(move || {
                 drop(stdin_pipe);
             })
@@ -16224,7 +16443,9 @@ async fn ai_cli(
         let run2 = run_id.clone();
         let parse_codex = is_codex;
         let parse_gemini = is_gemini;
+        let parse_kimi = is_kimi;
         let parse_dsh = is_dsh;
+        let parse_zcode = is_zcode;
         let claude_stdin_reader = claude_stdin.clone();
         let progress_model_hint2 = progress_model_hint.clone();
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
@@ -16308,6 +16529,43 @@ async fn ai_cli(
                         progress.push(line);
                         progress.push("\n");
                         received_content_reader.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+                    if parse_zcode {
+                        // zcode `--json` emits a single structured envelope
+                        // (sessionId/turnId/response/usage/projection), possibly
+                        // pretty-printed across multiple lines, with its final
+                        // answer in `response`. Stream the raw text live while
+                        // accumulating; the envelope is parsed once at EOF.
+                        acc.push_str(line);
+                        acc.push('\n');
+                        progress.push(line);
+                        progress.push("\n");
+                        received_content_reader.store(true, Ordering::Relaxed);
+                        continue;
+                    }
+                    if parse_kimi {
+                        // kimi print stream-json with `--final-message-only`
+                        // emits one JSON object per line; the terminal assistant
+                        // message carries the final answer in `content`. On the
+                        // Python kimi-cli the content is a plain string; the
+                        // npm kimi-code follows the Claude wire protocol, where
+                        // it can be a block array (`[{"type":"text","text":…}]`)
+                        // — accept both shapes.
+                        let v: serde_json::Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        if v.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                            let text = extract_kimi_assistant_text(v.get("content"));
+                            if let Some(tx) = text {
+                                if !tx.trim().is_empty() {
+                                    acc.push_str(&tx);
+                                    progress.push(&tx);
+                                    received_content_reader.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        }
                         continue;
                     }
                     if parse_codex {
@@ -16850,6 +17108,30 @@ async fn ai_cli(
                 }
             }
             progress.flush();
+            if parse_zcode {
+                // zcode `--json` prints one structured envelope whose `response`
+                // field is the final answer. Parse it once at EOF (the envelope
+                // may be pretty-printed across lines) and prefer it over the
+                // raw accumulated text; also surface its usage when present.
+                if let Some(envelope) = zcode_envelope_from_output(&acc) {
+                    if let Some(response) = envelope
+                        .get("response")
+                        .and_then(|value| value.as_str())
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                    {
+                        result = response.to_string();
+                    }
+                    if let Some(usage) = envelope.get("usage") {
+                        if !usage.is_null() {
+                            if let Ok(mut current) = claude_usage_reader.lock() {
+                                *current = Some(usage.clone());
+                            }
+                            emit_usage(&app2, &run2, usage);
+                        }
+                    }
+                }
+            }
             if result.trim().is_empty() {
                 acc
             } else {
@@ -18022,6 +18304,29 @@ mod tests {
         let long = "x".repeat(300);
         let big = serde_json::json!({ "type": "tool_result", "content": long });
         assert_eq!(summarize_tool_result(&big).chars().count(), 160);
+    }
+
+    #[test]
+    fn parses_zcode_envelope_from_output() {
+        // Single-line envelope.
+        let single = r#"{"sessionId":"sess_abc","turnId":"turn_1","response":"你好，我是 GLM。","usage":{"input_tokens":10,"output_tokens":5}}"#;
+        let envelope = zcode_envelope_from_output(single).unwrap();
+        assert_eq!(envelope["response"].as_str(), Some("你好，我是 GLM。"));
+
+        // Pretty-printed envelope across multiple lines.
+        let pretty = "{\n  \"sessionId\": \"sess_abc\",\n  \"response\": \"done\"\n}\n";
+        let envelope = zcode_envelope_from_output(pretty).unwrap();
+        assert_eq!(envelope["response"].as_str(), Some("done"));
+
+        // Stray diagnostic line before the envelope must not hide it.
+        let with_log = "15:32:01 [info] session started\n{\"sessionId\":\"s\",\"response\":\"ok\"}\n";
+        let envelope = zcode_envelope_from_output(with_log).unwrap();
+        assert_eq!(envelope["response"].as_str(), Some("ok"));
+
+        // No JSON at all -> None (caller falls back to raw text).
+        assert!(zcode_envelope_from_output("just some text").is_none());
+        assert!(zcode_envelope_from_output("").is_none());
+        assert!(zcode_envelope_from_output("   ").is_none());
     }
 
     #[test]

@@ -1450,14 +1450,18 @@ const CLI_UPDATE_ADAPTER_ORDER = [
   'claude-code',
   'codex',
   'gemini',
+  'kimi',
   'deepseek-harness',
+  'zcode',
 ] as const;
 
 function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
   if (adapter === 'claude-code') return 'Claude Code';
   if (adapter === 'codex') return 'Codex';
   if (adapter === 'gemini') return 'Gemini CLI';
+  if (adapter === 'kimi') return 'Kimi Code';
   if (adapter === 'deepseek-harness') return 'DeepSeek Harness';
+  if (adapter === 'zcode') return 'ZCode / GLM';
   return fallback;
 }
 
@@ -1906,6 +1910,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
+  if (kind === 'zcode') return 'zcode';
   return 'claude-code';
 }
 
@@ -1914,6 +1919,7 @@ function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
+  if (adapter === 'zcode') return 'zcode';
   return 'anthropic';
 }
 
@@ -1926,6 +1932,7 @@ const PROVIDER_ADAPTER_SECTIONS: ReadonlyArray<{
   { adapter: 'codex', dotClassName: 'bg-fg-faint' },
   { adapter: 'gemini', dotClassName: 'bg-sky-400' },
   { adapter: 'deepseek-harness', dotClassName: 'bg-indigo-400' },
+  { adapter: 'zcode', dotClassName: 'bg-cyan-400' },
 ];
 
 type BadgeState = 'direct' | 'cli' | 'unavailable' | 'default';

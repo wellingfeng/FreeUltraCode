@@ -53,7 +53,7 @@ function isRemoteRunnerProviderId(id: string): boolean {
 const PROVIDERS_PROFILE_RELPATH = 'settings/providers.v1.json';
 const ACTIVE_BY_KIND_PROFILE_RELPATH = 'settings/activeProviderByKind.v1.json';
 
-export type ProviderKind = 'anthropic' | 'codex' | 'gemini' | 'deepseek-harness';
+export type ProviderKind = 'anthropic' | 'codex' | 'gemini' | 'deepseek-harness' | 'zcode';
 export type ProviderTransport = 'direct' | 'cli';
 
 /** One locally stored provider configuration. */
@@ -300,7 +300,13 @@ export function resetApiConfigStoreForTests(): void {
   diskReady = false;
 }
 
-const PROVIDER_KINDS: ProviderKind[] = ['anthropic', 'codex', 'gemini', 'deepseek-harness'];
+const PROVIDER_KINDS: ProviderKind[] = [
+  'anthropic',
+  'codex',
+  'gemini',
+  'deepseek-harness',
+  'zcode',
+];
 
 type ActiveByKind = Partial<Record<ProviderKind, string>>;
 
@@ -560,6 +566,7 @@ function normalizeProviderKind(value: unknown): ProviderKind {
   if (value === 'deepseek-harness' || value === 'dsh') {
     return 'deepseek-harness';
   }
+  if (value === 'zcode' || value === 'glm') return 'zcode';
   return 'anthropic';
 }
 
@@ -634,6 +641,7 @@ function providerAdapter(provider: Pick<Provider, 'kind'>): RuntimeAdapterId {
   if (provider.kind === 'codex') return 'codex';
   if (provider.kind === 'gemini') return 'gemini';
   if (provider.kind === 'deepseek-harness') return 'deepseek-harness';
+  if (provider.kind === 'zcode') return 'zcode';
   return 'claude-code';
 }
 
@@ -934,6 +942,7 @@ export function getActiveProviderIds(): Record<ProviderKind, string> {
     codex: resolveActiveForKind(list, map, 'codex'),
     gemini: resolveActiveForKind(list, map, 'gemini'),
     'deepseek-harness': resolveActiveForKind(list, map, 'deepseek-harness'),
+    zcode: resolveActiveForKind(list, map, 'zcode'),
   };
 }
 

@@ -1193,6 +1193,7 @@ function providerKindToAdapter(kind: ProviderKind): RuntimeAdapterId {
   if (kind === "codex") return "codex";
   if (kind === "gemini") return "gemini";
   if (kind === "deepseek-harness") return "deepseek-harness";
+  if (kind === "zcode") return "zcode";
   return "claude-code";
 }
 

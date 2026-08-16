@@ -44,6 +44,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
+  if (kind === 'zcode') return 'zcode';
   return 'claude-code';
 }
 
@@ -51,6 +52,7 @@ function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
+  if (adapter === 'zcode') return 'zcode';
   return 'anthropic';
 }
 

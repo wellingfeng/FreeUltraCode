@@ -41,13 +41,15 @@ export type PersonalInstructionsAdapter =
   | 'claude-code'
   | 'codex'
   | 'gemini'
-  | 'deepseek-harness';
+  | 'deepseek-harness'
+  | 'zcode';
 
 export const PERSONAL_INSTRUCTIONS_ADAPTERS: PersonalInstructionsAdapter[] = [
   'claude-code',
   'codex',
   'gemini',
   'deepseek-harness',
+  'zcode',
 ];
 
 export function normalizePersonalInstructionsAdapter(
@@ -59,6 +61,7 @@ export function normalizePersonalInstructionsAdapter(
   if (value === 'deepseek-harness' || value === 'dsh') {
     return 'deepseek-harness';
   }
+  if (value === 'zcode') return 'zcode';
   return 'claude-code';
 }
 

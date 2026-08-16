@@ -66,7 +66,9 @@ function providerToGatewayProvider(provider: Provider): GatewayProvider {
         ? 'gemini'
         : provider.kind === 'deepseek-harness'
           ? 'deepseek-harness'
-          : 'claude-code';
+          : provider.kind === 'zcode'
+            ? 'zcode'
+            : 'claude-code';
   const transport =
     provider.transport === 'cli' || provider.kind !== 'anthropic'
       ? 'cli'
