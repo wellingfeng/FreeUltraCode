@@ -860,7 +860,7 @@ function providerMatchesHistoricalModel(provider: Provider, model: string): bool
 function adapterFromHistoricalRouteName(
   routeName: string,
 ): RuntimeAdapterId | null {
-  const adapters: RuntimeAdapterId[] = ['claude-code', 'codex', 'gemini'];
+  const adapters: RuntimeAdapterId[] = ['claude-code', 'codex', 'gemini', 'kimi'];
   return (
     adapters.find((adapter) =>
       sameRouteLabel(runtimeAdapterLabel(adapter), routeName),
@@ -6038,7 +6038,20 @@ ${previousReply.slice(0, 4000)}
           personalBlock,
           memoryConfig.writeEnabled ? MEMORY_WRITE_INSTRUCTION : '',
           ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
+          // dsh 也必须知道「应用内置生成渠道已就绪」以及「素材自动生成协议」，
+          // 否则模型只会推荐 /image 让用户自己点，永远不会自动发生成块。
+          // 这两个块都很短（各数百字符），不会像 memory / game-expert /
+          // knowledge 那些大块那样撑爆 Windows argv 上限；且 genInstructionBlock
+          // 仅在用户本轮明确敲了 /image 等素材命令（或已进入素材模式）时才非空，
+          // 正好只在需要自动生成的回合占用 argv 预算。
+          simpleAssetCapabilityBlock,
+          genInstructionBlock,
         ].join('');
+        // ZCode（zcode）与 dsh 一样把整轮任务作为单个 argv 值（`--prompt`）
+        // 传给 CLI（无 stdin），命令行长度的风险同样存在（直连 node 后上限
+        // 约 32767 字符，仍会被超大 memory / game-expert / knowledge 块挤爆）。
+        // GLM 模型自带编码智能体系统提示，所以复用 dsh 的精简 UGS 前缀。
+        const zcodeChatSystem = dshChatSystem;
         // Multi-turn context: the gateway/CLI takes a single string, so fold the
         // prior conversation (text messages only, skipping system notices) into
         // the prompt as a transcript, then the current question. Keeps a bounded
@@ -6162,7 +6175,13 @@ ${previousReply.slice(0, 4000)}
                 resume: boolean,
               ) =>
                 aiEditViaCliWithSpeed(
-                  `${cli.adapter === 'deepseek-harness' ? dshChatSystem : chatSystem}\n\n${body}`,
+                  `${
+                    cli.adapter === 'deepseek-harness'
+                      ? dshChatSystem
+                      : cli.adapter === 'zcode'
+                        ? zcodeChatSystem
+                        : chatSystem
+                  }\n\n${body}`,
                   cli,
                   {
                   permission: chatPermission,

@@ -602,6 +602,11 @@ export function gatewayRouteEnv(
       // store; the model itself lives in `$DSH_HOME/settings.yaml`, so only the
       // key is injected here.
       if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
+    } else if (route.adapter === 'zcode') {
+      // ZCode reads its provider + model from `~/.zcode/cli/config.json`
+      // (provider.zai + model.main), never from env vars, so nothing is
+      // injected here — the channel's key/base url are intentionally ignored
+      // for this adapter.
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;
@@ -644,6 +649,7 @@ function adapterToProviderKind(adapter: string): ProviderKind {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
+  if (adapter === 'zcode') return 'zcode';
   return 'anthropic';
 }
 
@@ -825,7 +831,9 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
   if (
     value === 'codex' ||
     value === 'gemini' ||
-    value === 'deepseek-harness'
+    value === 'kimi' ||
+    value === 'deepseek-harness' ||
+    value === 'zcode'
   ) {
     return value;
   }

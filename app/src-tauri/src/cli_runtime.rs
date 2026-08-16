@@ -70,9 +70,19 @@ const CLI_SPECS: &[CliSpec] = &[
         commands: &["gemini"],
     },
     CliSpec {
+        adapter: "kimi",
+        label: "Kimi Code",
+        commands: &["kimi", "kimi-code"],
+    },
+    CliSpec {
         adapter: "deepseek-harness",
         label: "DeepSeek Harness",
         commands: &["dsh"],
+    },
+    CliSpec {
+        adapter: "zcode",
+        label: "ZCode / GLM",
+        commands: &["zcode"],
     },
 ];
 
@@ -81,7 +91,9 @@ pub fn adapter_binary(adapter: &str) -> &str {
         "claude-code" | "claude" => "claude",
         "codex" => "codex",
         "gemini" => "gemini",
+        "kimi" => "kimi",
         "deepseek-harness" => "dsh",
+        "zcode" => "zcode",
         other => other,
     }
 }
@@ -91,7 +103,9 @@ pub fn adapter_protocol(adapter: &str) -> &str {
         "claude-code" | "claude" => "claude",
         "codex" => "codex",
         "gemini" => "gemini",
+        "kimi" => "kimi",
         "deepseek-harness" => "deepseek-harness",
+        "zcode" => "zcode",
         other => other,
     }
 }
@@ -103,12 +117,17 @@ pub fn should_pass_model(adapter: &str, model: &str) -> bool {
     }
     let lower = m.to_ascii_lowercase();
     let protocol = adapter_protocol(adapter);
-    if matches!(protocol, "codex" | "gemini") {
+    if matches!(protocol, "codex" | "gemini" | "kimi") {
         return !matches!(lower.as_str(), "haiku" | "sonnet" | "opus")
             && !lower.starts_with("claude-");
     }
     if protocol == "deepseek-harness" {
         // dsh resolves its model from `$DSH_HOME/settings.yaml`, never a flag.
+        return false;
+    }
+    if protocol == "zcode" {
+        // ZCode resolves its model from `~/.zcode/cli/config.json`
+        // (provider.zai.models / model.main), never a `--model` flag.
         return false;
     }
     // claude-code: only forward genuine Claude model ids or the bare tier
@@ -373,6 +392,34 @@ pub fn resolve_dsh_node_entry(dsh_binary: &str) -> Option<PathBuf> {
     entry.is_file().then_some(entry)
 }
 
+/// zcode (`zcode-app-cli`) ships as an npm `.cmd`/shell shim that runs
+/// `node <pkg>/bin/zcode.js` (the launcher), which in turn spawns the bundled
+/// `vendor/zcode.cjs` runtime with the same argv. The headless turn prompt is a
+/// single `--prompt` argv value, so launching via `cmd /C zcode.cmd` caps the
+/// whole command line at cmd.exe's ~8191-char limit — exactly the same trap as
+/// dsh. Spawning the launcher's `bin/zcode.js` directly with `node` bypasses
+/// cmd.exe and raises the ceiling to the Windows CreateProcess limit
+/// (~32767 chars, ~4x), which comfortably fits a chat turn. Returns `None` if
+/// the package layout isn't the expected npm shim so the caller can fall back
+/// to the historical `cmd /C` path.
+pub fn resolve_zcode_node_entry(zcode_binary: &str) -> Option<PathBuf> {
+    // Resolve the launcher to a concrete file (bare "zcode" -> full shim path).
+    let launcher = if looks_like_path(zcode_binary) {
+        let p = Path::new(zcode_binary);
+        p.exists().then(|| p.to_path_buf())?
+    } else {
+        resolve_command_path(zcode_binary)?
+    };
+    let dir = launcher.parent()?;
+    // Standard npm global/local layout: the shim sits next to `node_modules`.
+    let entry = dir
+        .join("node_modules")
+        .join("zcode-app-cli")
+        .join("bin")
+        .join("zcode.js");
+    entry.is_file().then_some(entry)
+}
+
 #[cfg(windows)]
 fn pathext_variants(command: &str) -> Vec<String> {
     let pathext = std::env::var_os("PATHEXT")
@@ -611,10 +658,65 @@ mod tests {
     }
 
     #[test]
+    fn kimi_passes_kimi_models_but_not_claude_tiers() {
+        assert!(should_pass_model("kimi", "kimi-k2-0711-preview"));
+        assert!(should_pass_model("kimi", "kimi-k2-thinking"));
+        // Claude tiers / ids are filtered out for kimi (they must not leak into
+        // a `--model` flag of the kimi CLI).
+        assert!(!should_pass_model("kimi", "sonnet"));
+        assert!(!should_pass_model("kimi", "claude-opus-4-8"));
+        assert!(!should_pass_model("kimi", "   "));
+    }
+
+    #[test]
     fn deepseek_harness_never_passes_model() {
         // dsh reads its model from `$DSH_HOME/settings.yaml`, never `--model`.
         assert!(!should_pass_model("deepseek-harness", "deepseek-v4-pro"));
         assert!(!should_pass_model("deepseek-harness", "sonnet"));
+    }
+
+    #[test]
+    fn zcode_never_passes_model() {
+        // ZCode resolves its model from `~/.zcode/cli/config.json`, never a
+        // `--model` flag (its CLI has no such option).
+        assert!(!should_pass_model("zcode", "glm-5.2"));
+        assert!(!should_pass_model("zcode", "glm-5.3"));
+        assert!(!should_pass_model("zcode", "sonnet"));
+        assert!(!should_pass_model("zcode", "   "));
+    }
+
+    #[test]
+    fn zcode_adapter_mapping() {
+        assert_eq!(adapter_binary("zcode"), "zcode");
+        assert_eq!(adapter_protocol("zcode"), "zcode");
+    }
+
+    #[test]
+    fn zcode_node_entry_found_next_to_launcher() {
+        use std::fs;
+        // Lay out an npm-style shim dir: <root>/zcode.cmd next to
+        // <root>/node_modules/zcode-app-cli/bin/zcode.js.
+        let root = std::env::temp_dir().join(format!("ugs-zcode-entry-{}", std::process::id()));
+        let bin = root
+            .join("node_modules")
+            .join("zcode-app-cli")
+            .join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let shim = root.join("zcode.cmd");
+        fs::write(&shim, b"@echo off").unwrap();
+        let entry = bin.join("zcode.js");
+        fs::write(&entry, b"// zcode").unwrap();
+
+        // Given the launcher's full path, the sibling bin/zcode.js is located.
+        let got = resolve_zcode_node_entry(&shim.to_string_lossy());
+        assert_eq!(got.as_deref(), Some(entry.as_path()));
+
+        // Without the package present, it returns None so the caller falls back
+        // to the historical `cmd /C` shim path.
+        fs::remove_file(&entry).unwrap();
+        assert!(resolve_zcode_node_entry(&shim.to_string_lossy()).is_none());
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

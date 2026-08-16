@@ -374,7 +374,9 @@ describe('PromptPanel running lock', () => {
         '默认渠道 · Claude Code',
         '默认渠道 · Codex',
         '默认渠道 · Gemini',
+        '默认渠道 · Kimi Code',
         '默认渠道 · DeepSeek Harness',
+        '默认渠道 · ZCode / GLM',
         '免费渠道',
       ]);
       expect(view.container.textContent).toContain('SSSAiCode');

@@ -216,7 +216,9 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
   if (
     value === 'codex' ||
     value === 'gemini' ||
-    value === 'deepseek-harness'
+    value === 'kimi' ||
+    value === 'deepseek-harness' ||
+    value === 'zcode'
   ) {
     return value;
   }
@@ -503,7 +505,9 @@ function legacyKind(value: LegacyProvider): string {
     value.kind === 'gemini' ||
     value.adapter === 'gemini' ||
     value.kind === 'deepseek-harness' ||
-    value.adapter === 'deepseek-harness'
+    value.adapter === 'deepseek-harness' ||
+    value.kind === 'zcode' ||
+    value.adapter === 'zcode'
   ) {
     return normalizeAdapter(value.kind ?? value.adapter);
   }

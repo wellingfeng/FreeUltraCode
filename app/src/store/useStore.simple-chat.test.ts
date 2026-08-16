@@ -2416,6 +2416,63 @@ describe('simple-workflow chat mode', () => {
     expect(String(prompt)).not.toContain('后台长任务');
   });
 
+  it('injects the UGS_GEN auto-generation protocol into DeepSeek Harness prompts on asset turns', async () => {
+    // dsh 用精简系统前缀；此前该前缀把「素材自动生成协议」也砍掉了，导致模型
+    // 只会推荐 /image 让用户自己点，从不自动发生成块。用户本轮明确敲了素材
+    // 命令（/image）时，协议必须随精简前缀一起到达 dsh。
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    resetStore(defaultBlueprint('Current workflow'));
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      workspaces: [workspace],
+      sessions: [],
+      sessionTree: { [workspace.id]: [] },
+      locale: 'zh-CN',
+    });
+    useStore.getState().newSession();
+
+    await waitFor(
+      () => useStore.getState().workflow.meta.simple === true,
+      'plain chat mode activation',
+    );
+
+    tauriMocks.isTauri.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'deepseek-harness', modelClass: 'default' },
+      adapter: 'deepseek-harness',
+      modelClass: 'default',
+      model: 'deepseek-v4-pro',
+      providerName: 'DeepSeek Harness',
+      channelName: 'deepseek-v4-pro',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'DeepSeek Harness',
+      source: 'global',
+      cliCommand: 'dsh',
+    });
+    gatewayMocks.completeGatewayText.mockResolvedValue('标题');
+    tauriMocks.aiEditViaCli.mockResolvedValue('已完成配图。');
+
+    const task = '帮我配图，用 /image 出五张封面';
+    useStore.getState().sendPrompt(task);
+
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length >= 1,
+      'dsh CLI chat call',
+    );
+
+    const [prompt, adapter] = tauriMocks.aiEditViaCli.mock.calls[0];
+    expect(adapter).toBe('deepseek-harness');
+    // 用户敲了 /image → 本轮授权 image 渠道，协议必须出现在 dsh 系统提示里，
+    // 模型才知道可以发 UGS_GEN 块由系统自动执行生成。
+    expect(String(prompt)).toContain('素材自动生成协议');
+    expect(String(prompt)).toContain('UGS_GEN');
+  });
+
   it('keeps pasted image paths out of pending simple chat titles', async () => {
     window.localStorage.clear();
     await historyStore.ready();

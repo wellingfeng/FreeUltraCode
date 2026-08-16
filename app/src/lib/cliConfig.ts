@@ -75,7 +75,9 @@ const listeners = new Set<(next: CliRuntimeSnapshot) => void>();
 export function adapterDefaultCommand(adapter: RuntimeAdapterId): string {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'dsh';
+  if (adapter === 'zcode') return 'zcode';
   return 'claude';
 }
 
@@ -721,6 +723,7 @@ function normalizeLegacyAdapter(value: unknown): LegacyCliSource['adapter'] | un
     value === 'claude-code' ||
     value === 'codex' ||
     value === 'gemini' ||
+    value === 'kimi' ||
     value === 'deepseek-harness'
   ) {
     return value;
@@ -1008,10 +1011,24 @@ function inferLegacyKnownCliFromToken(
       ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
     };
   }
+  if (stem === 'kimi' || stem === 'kimi-code') {
+    return {
+      adapter: 'kimi',
+      command: stem === 'kimi-code' ? 'kimi-code' : 'kimi',
+      ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
+    };
+  }
   if (stem === 'dsh' || stem === 'deepseek-harness') {
     return {
       adapter: 'deepseek-harness',
       command: stem === 'dsh' ? 'dsh' : 'deepseek-harness',
+      ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
+    };
+  }
+  if (stem === 'zcode' || stem === 'glm') {
+    return {
+      adapter: 'zcode',
+      command: 'zcode',
       ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
     };
   }
@@ -1288,8 +1305,10 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
   if (
     value === 'codex' ||
     value === 'gemini' ||
+    value === 'kimi' ||
     value === 'claude-code' ||
-    value === 'deepseek-harness'
+    value === 'deepseek-harness' ||
+    value === 'zcode'
   ) {
     return value;
   }
@@ -1302,9 +1321,11 @@ function inferAdapterFromPath(path: string): RuntimeAdapterId {
   const lower = path.toLowerCase();
   if (lower.includes('codex')) return 'codex';
   if (lower.includes('gemini')) return 'gemini';
+  if (lower.includes('kimi')) return 'kimi';
   if (lower.includes('dsh') || lower.includes('deepseek')) {
     return 'deepseek-harness';
   }
+  if (lower.includes('zcode')) return 'zcode';
   return 'claude-code';
 }
 
