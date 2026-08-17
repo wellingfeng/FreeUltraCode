@@ -11233,6 +11233,26 @@ async fn preview_local_file(
     Ok(preview)
 }
 
+#[tauri::command]
+async fn file_exists(path: String, cwd: Option<String>) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = normalize_preview_separators(&path);
+        let Ok(resolved) = preview_path(&path, cwd.as_deref()) else {
+            return false;
+        };
+        if resolved.exists() {
+            return true;
+        }
+        preview_depot_path_fallback(&path, cwd.as_deref())
+            .or_else(|| preview_workspace_app_fallback(&path, cwd.as_deref()))
+            .or_else(|| preview_bare_name_fallback(&path, cwd.as_deref()))
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
 fn upload_mime_for_path(path: &Path) -> Option<String> {
     image_mime_for_path(path)
         .or_else(|| document_mime_for_path(path))
@@ -13080,7 +13100,28 @@ fn extract_semver(text: &str) -> Option<String> {
                     .split('.')
                     .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()));
             if looks_like_version {
-                return Some(candidate.to_string());
+                // Capture optional prerelease / build suffix so installed versions
+                // like `0.1.0-rc.6` or `3.7.7-13` are read exactly instead of being
+                // truncated to the release core.
+                let mut end = j;
+                if end < bytes.len() && (bytes[end] == b'-' || bytes[end] == b'+') {
+                    let sep_end = end + 1;
+                    end += 1;
+                    while end < bytes.len()
+                        && (bytes[end].is_ascii_alphanumeric()
+                            || bytes[end] == b'.'
+                            || bytes[end] == b'-')
+                    {
+                        end += 1;
+                    }
+                    if end == sep_end {
+                        end -= 1;
+                    }
+                }
+                let version = text[start..end].trim_end_matches(|c: char| {
+                    c == '.' || c == '-' || c == '+'
+                });
+                return Some(version.to_string());
             }
             i = j.max(i + 1);
         } else {
@@ -13090,26 +13131,18 @@ fn extract_semver(text: &str) -> Option<String> {
     None
 }
 
-fn version_parts(version: &str) -> Vec<u64> {
+fn normalize_version(version: &str) -> String {
     version
-        .split(|c: char| matches!(c, '.' | '-'))
-        .filter_map(|part| part.parse::<u64>().ok())
-        .collect()
+        .trim()
+        .trim_start_matches(|c: char| c == 'v' || c == 'V')
+        .to_string()
 }
 
-/// True when `current` is strictly older than `latest` (numeric, per-segment
-/// comparison; missing trailing segments count as 0).
-fn version_lt(current: &str, latest: &str) -> bool {
-    let a = version_parts(current);
-    let b = version_parts(latest);
-    for i in 0..a.len().max(b.len()) {
-        let x = a.get(i).copied().unwrap_or(0);
-        let y = b.get(i).copied().unwrap_or(0);
-        if x != y {
-            return x < y;
-        }
-    }
-    false
+/// True when `current` differs from `latest` after normalization. We treat the
+/// manifest/npm registry as the source of truth: any difference means an update
+/// is available, which avoids parsing the wide variety of vendor version formats.
+fn version_needs_update(current: &str, latest: &str) -> bool {
+    normalize_version(current) != normalize_version(latest)
 }
 
 fn cli_version_probe_command(executable_path: &str) -> Command {
@@ -13194,7 +13227,7 @@ fn check_cli_updates_blocking() -> Vec<CliVersionStatus> {
                 .and_then(read_cli_installed_version);
             let latest_version = cli_latest_version_cached(spec, &mut cache, now, &mut dirty);
             let update_available = match (&installed_version, &latest_version) {
-                (Some(cur), Some(latest)) => version_lt(cur, latest),
+                (Some(cur), Some(latest)) => version_needs_update(cur, latest),
                 _ => false,
             };
             // A missing npm-provisionable CLI (gemini/dsh) is not an error:
@@ -13345,6 +13378,10 @@ async fn run_workflow(
             Some(binary) => binary,
             None => cli_runtime::adapter_binary(&adapter).to_string(),
         };
+        // Same self-heal as `ai_cli`: resolve a bare command name against the
+        // live filesystem so a CLI installed after app start is still found
+        // despite the frozen process PATH.
+        let binary = cli_runtime::resolve_launch_binary(&binary).unwrap_or(binary);
         let script_path = write_temp_script(&script)?;
 
         // no popup terminal window on Windows; optionally wrapped in a shell.
@@ -15440,6 +15477,9 @@ fn ai_cli_steer_supported(
         Some(binary) => binary,
         None => cli_runtime::adapter_binary(&adapter).to_string(),
     };
+    // Same self-heal as `ai_cli`: resolve a bare command name against the live
+    // filesystem so capability probes see a freshly installed CLI.
+    let binary = cli_runtime::resolve_launch_binary(&binary).unwrap_or(binary);
     match cli_runtime::adapter_protocol(&adapter) {
         "codex" => {
             Ok(permission.as_deref() != Some("ask")
@@ -15743,6 +15783,14 @@ async fn ai_cli(
             Some(binary) => binary,
             None => cli_runtime::adapter_binary(&adapter).to_string(),
         };
+        // Self-heal for a CLI installed after app start: the process PATH is
+        // frozen at startup, so a bare command name is re-resolved against the
+        // LIVE filesystem (which also scans well-known dirs like
+        // `%APPDATA%\npm`) before any capability probe or spawn. This keeps a
+        // freshly installed CLI usable without restarting the app, and the
+        // resolved absolute path also makes the dsh/zcode node-entry lookups
+        // below deterministic.
+        let binary = cli_runtime::resolve_launch_binary(&binary).unwrap_or(binary);
         let protocol = cli_runtime::adapter_protocol(&adapter);
         let is_claude = protocol == "claude";
         let is_codex = protocol == "codex";
@@ -16488,6 +16536,11 @@ async fn ai_cli(
         // killed mid-turn) and must NOT be reported as a successful turn.
         let received_content = Arc::new(AtomicBool::new(false));
         let received_content_reader = Arc::clone(&received_content);
+        // Tracks whether the stream ever emitted a real tool_use. A turn whose
+        // only output is tool calls (no closing prose) is still a successful
+        // turn, so we must not treat its empty text as a silent failure.
+        let emitted_tool_use = Arc::new(AtomicBool::new(false));
+        let emitted_tool_use_reader = Arc::clone(&emitted_tool_use);
         let partial_streaming = partial_enabled();
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
@@ -16739,6 +16792,7 @@ async fn ai_cli(
                             } else if let Some(patch) =
                                 codex_tool_patch(item, format!("cx{}", tool_starts.len()))
                             {
+                                emitted_tool_use_reader.store(true, Ordering::Relaxed);
                                 tool_starts.insert(
                                     patch
                                         .get("id")
@@ -16788,6 +16842,7 @@ async fn ai_cli(
                             }
                             Some("tool_use") => {
                                 received_content_reader.store(true, Ordering::Relaxed);
+                                emitted_tool_use_reader.store(true, Ordering::Relaxed);
                                 let name = v
                                     .get("tool_name")
                                     .and_then(|value| value.as_str())
@@ -16975,6 +17030,7 @@ async fn ai_cli(
                                         }
                                         Some("tool_use") => {
                                             received_content_reader.store(true, Ordering::Relaxed);
+                                            emitted_tool_use_reader.store(true, Ordering::Relaxed);
                                             let name = block
                                                 .get("name")
                                                 .and_then(|t| t.as_str())
@@ -17402,6 +17458,22 @@ async fn ai_cli(
                             &stderr,
                         ));
                     }
+                    // Exit 0 and received_content may only have been progress
+                    // placeholders ("session started" / "requesting"). If there
+                    // were no actual tool calls either, this is a silent failure
+                    // rather than a successful empty turn.
+                    if !emitted_tool_use.load(Ordering::Relaxed) {
+                        let detail = if stderr.trim().is_empty() {
+                            "CLI 退出但未返回任何内容".to_string()
+                        } else {
+                            stderr.trim().to_string()
+                        };
+                        return Err(append_cli_error_context(
+                            format!("CLI \"{binary}\" 未产生任何回复就退出（退出码 0）：{detail}"),
+                            &output,
+                            &stderr,
+                        ));
+                    }
                 }
                 // Codex completions come through the dedicated outcomes above; a
                 // plain process exit is the claude/gemini path, so prefer the
@@ -17470,6 +17542,21 @@ async fn ai_cli(
                             &stderr,
                         ));
                     }
+                    // A terminal result event with no text and no tool calls is not
+                    // a successful turn; it usually means the upstream returned an
+                    // empty or blocked response. Surface it as a real error.
+                    if !emitted_tool_use.load(Ordering::Relaxed) {
+                        let detail = if stderr.trim().is_empty() {
+                            "CLI 退出但未返回任何内容".to_string()
+                        } else {
+                            stderr.trim().to_string()
+                        };
+                        return Err(append_cli_error_context(
+                            format!("CLI \"{binary}\" 未产生任何回复就退出（退出码 0）：{detail}"),
+                            &output,
+                            &stderr,
+                        ));
+                    }
                 }
                 // Prefer the claude usage snapshot.
                 let usage = if claude_usage.lock().ok().is_some_and(|u| u.is_some()) {
@@ -17510,16 +17597,27 @@ mod tests {
         // gemini (bare)
         assert_eq!(extract_semver("0.38.2\n"), Some("0.38.2".to_string()));
         assert_eq!(extract_semver("no version here"), None);
+        // prerelease / build suffixes must stay attached
+        assert_eq!(
+            extract_semver("0.1.0-rc.6 (Claude Code)"),
+            Some("0.1.0-rc.6".to_string())
+        );
+        assert_eq!(
+            extract_semver("3.7.7-13\n"),
+            Some("3.7.7-13".to_string())
+        );
     }
 
     #[test]
-    fn version_lt_compares_numeric_segments() {
-        assert!(version_lt("2.1.197", "2.1.202"));
-        assert!(!version_lt("0.142.5", "0.142.5"));
-        assert!(version_lt("0.38.2", "0.49.0"));
-        assert!(!version_lt("2.1.202", "2.1.197"));
-        // Missing trailing segments count as 0.
-        assert!(version_lt("1.2", "1.2.1"));
+    fn version_needs_update_detects_any_difference() {
+        assert!(version_needs_update("0.1.0", "0.1.0-rc.6"));
+        assert!(version_needs_update("3.7.7", "3.7.7-13"));
+        assert!(version_needs_update("2.1.197", "2.1.202"));
+        assert!(version_needs_update("0.38.2", "0.49.0"));
+        assert!(!version_needs_update("0.142.5", "0.142.5"));
+        assert!(!version_needs_update("v1.2.0", "1.2.0"));
+        assert!(!version_needs_update("  1.2.0  ", "1.2.0"));
+        assert!(!version_needs_update("0.1.0-rc.6", "0.1.0-rc.6"));
     }
 
     #[test]
@@ -19651,6 +19749,7 @@ pub fn run() {
             workspace_changes_cached,
             prepare_isolated_workspace,
             preview_local_file,
+            file_exists,
             read_local_file_for_upload,
             knowledge_base_scan_files,
             save_clipboard_image,

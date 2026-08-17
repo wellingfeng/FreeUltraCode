@@ -72,7 +72,7 @@ function findButtonContaining(
 
 function modelListInput(container: HTMLElement): HTMLInputElement {
   const input = container.querySelector<HTMLInputElement>(
-    'input[placeholder="输入自定义模型名…"]',
+    'input[placeholder="搜索或输入自定义模型名…"]',
   );
   expect(input).toBeInstanceOf(HTMLInputElement);
   return input!;
@@ -245,7 +245,7 @@ describe('SettingsModal programming model selection', () => {
       expect(providerCardForModelPicker(view.container).className).not.toContain(
         'overflow-hidden',
       );
-      expect(optionLabels(view.container)).toEqual(['glm-5', '添加']);
+      expect(optionLabels(view.container)).toEqual(['glm-5', '选中/添加']);
 
       await addModel(view.container, 'glm-5.2');
 
@@ -253,7 +253,7 @@ describe('SettingsModal programming model selection', () => {
       expect(optionLabels(view.container)).toEqual([
         'glm-5.2',
         'glm-5',
-        '添加',
+        '选中/添加',
       ]);
 
       await addModel(view.container, ' GLM-5.2 ');
@@ -262,16 +262,16 @@ describe('SettingsModal programming model selection', () => {
       expect(
         finalLabels.filter((label) => label.toLowerCase() === 'glm-5.2'),
       ).toHaveLength(1);
-      expect(finalLabels.at(-1)).toBe('添加');
+      expect(finalLabels.at(-1)).toBe('选中/添加');
 
       await addModel(view.container, 'glm-5.3');
 
       expect(selectedModelLabel(view.container)).toBe('glm-5.3');
       expect(optionLabels(view.container)).toEqual([
         'glm-5.3',
-        'GLM-5.2',
+        'glm-5.2',
         'glm-5',
-        '添加',
+        '选中/添加',
       ]);
 
       const storedProviders = JSON.parse(
@@ -279,7 +279,7 @@ describe('SettingsModal programming model selection', () => {
       ) as Provider[];
       expect(storedProviders[0].models).toEqual([
         'glm-5.3',
-        'GLM-5.2',
+        'glm-5.2',
         'glm-5',
       ]);
 
@@ -288,13 +288,71 @@ describe('SettingsModal programming model selection', () => {
       expect(optionLabels(view.container)).toEqual([
         'glm-5.3',
         'glm-5',
-        '添加',
+        '选中/添加',
       ]);
 
       await clickDeleteModel(view.container, 'glm-5.3');
 
       expect(selectedModelLabel(view.container)).toBe('glm-5');
-      expect(optionLabels(view.container)).toEqual(['glm-5', '添加']);
+      expect(optionLabels(view.container)).toEqual(['glm-5', '选中/添加']);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('filters the model list while typing in the model input', async () => {
+    const provider: Provider = {
+      id: 'provider-glm5',
+      kind: 'anthropic',
+      name: 'GLM5',
+      apiKey: 'sk-test',
+      baseUrl: 'https://node-hk.sssaicode.com',
+      model: 'glm-5',
+      models: ['glm-5.1', 'glm-5.2', 'glm-5.3'],
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ anthropic: provider.id }),
+    );
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      expect(optionLabels(view.container)).toEqual([
+        'glm-5',
+        'glm-5.1',
+        'glm-5.2',
+        'glm-5.3',
+        '选中/添加',
+      ]);
+
+      const input = modelListInput(view.container);
+      await setInputValue(input, '5.2');
+
+      expect(optionLabels(view.container)).toEqual(['glm-5.2', '选中/添加']);
+
+      await setInputValue(input, 'glm');
+
+      expect(optionLabels(view.container)).toEqual([
+        'glm-5',
+        'glm-5.1',
+        'glm-5.2',
+        'glm-5.3',
+        '选中/添加',
+      ]);
+
+      await setInputValue(input, '');
+
+      expect(optionLabels(view.container)).toEqual([
+        'glm-5',
+        'glm-5.1',
+        'glm-5.2',
+        'glm-5.3',
+        '选中/添加',
+      ]);
     } finally {
       await view.cleanup();
     }
@@ -526,6 +584,101 @@ describe('SettingsModal programming model selection', () => {
       expect(optionTexts.some((text) => text.includes('本地服务器测试1'))).toBe(
         false,
       );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('filters the channel list as the search box is typed and restores it when cleared', async () => {
+    const providers: Provider[] = [
+      {
+        id: 'provider-claude-a',
+        kind: 'anthropic',
+        name: 'Claude A',
+        apiKey: 'sk-a',
+        baseUrl: 'https://claude-a.example/v1',
+        model: 'claude-sonnet',
+      },
+      {
+        id: 'provider-codex-a',
+        kind: 'codex',
+        name: 'Codex A',
+        apiKey: 'token',
+        baseUrl: 'https://codex-a.example/v1',
+        model: 'gpt-5',
+      },
+    ];
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(providers));
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      const channelCard = (name: string) =>
+        view.container.querySelector<HTMLButtonElement>(
+          `button[aria-label="编辑渠道: ${name}"]`,
+        );
+      expect(channelCard('Claude A')).toBeInstanceOf(HTMLButtonElement);
+      expect(channelCard('Codex A')).toBeInstanceOf(HTMLButtonElement);
+
+      const search = view.container.querySelector<HTMLInputElement>(
+        'input[aria-label="搜索渠道名称、类型、URL、模型…"]',
+      );
+      expect(search).toBeInstanceOf(HTMLInputElement);
+
+      // Typing keeps only matching channels.
+      await setInputValue(search!, 'codex');
+      expect(channelCard('Codex A')).toBeInstanceOf(HTMLButtonElement);
+      expect(channelCard('Claude A')).toBeNull();
+
+      // Matching also works against the base URL / model.
+      await setInputValue(search!, 'claude-sonnet');
+      expect(channelCard('Claude A')).toBeInstanceOf(HTMLButtonElement);
+      expect(channelCard('Codex A')).toBeNull();
+
+      // Clearing the search restores the full list.
+      const clear = view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="清除搜索"]',
+      );
+      expect(clear).toBeInstanceOf(HTMLButtonElement);
+      await act(async () => {
+        clear?.click();
+      });
+      expect(channelCard('Claude A')).toBeInstanceOf(HTMLButtonElement);
+      expect(channelCard('Codex A')).toBeInstanceOf(HTMLButtonElement);
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('shows a no-match state when the search query matches nothing', async () => {
+    const providers: Provider[] = [
+      {
+        id: 'provider-claude-a',
+        kind: 'anthropic',
+        name: 'Claude A',
+        apiKey: 'sk-a',
+        baseUrl: 'https://claude-a.example/v1',
+        model: 'claude-sonnet',
+      },
+    ];
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(providers));
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      const search = view.container.querySelector<HTMLInputElement>(
+        'input[aria-label="搜索渠道名称、类型、URL、模型…"]',
+      );
+      await setInputValue(search!, 'zzz-no-match');
+
+      expect(view.container.textContent).toContain('没有匹配的渠道');
+      expect(
+        view.container.querySelector('button[aria-label="编辑渠道: Claude A"]'),
+      ).toBeNull();
     } finally {
       await view.cleanup();
     }

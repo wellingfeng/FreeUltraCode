@@ -149,6 +149,7 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
   let buffer = '';
   let full = '';
   let usage: ModelUsageReport | null = null;
+  let stopReason: string | null = null;
 
   // Parse the Server-Sent Events stream. Each event is a block of lines; we
   // only care about `data:` lines carrying `content_block_delta` text deltas.
@@ -166,9 +167,9 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
       try {
         const evt = JSON.parse(data) as {
           type?: string;
-          message?: { usage?: unknown };
+          message?: { usage?: unknown; stop_reason?: string };
           usage?: unknown;
-          delta?: { type?: string; text?: string };
+          delta?: { type?: string; text?: string; stop_reason?: string };
           error?: { message?: string };
         };
         if (evt.type === 'error') {
@@ -181,6 +182,13 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
           );
         } else if (evt.type === 'message_delta') {
           usage = mergeUsageReports(usage, usageReportFromAnthropic(evt.usage));
+          if (evt.delta?.stop_reason) {
+            stopReason = evt.delta.stop_reason;
+          }
+        } else if (evt.type === 'message_stop') {
+          if (evt.message?.stop_reason) {
+            stopReason = evt.message.stop_reason;
+          }
         }
         if (
           evt.type === 'content_block_delta' &&
@@ -196,6 +204,12 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
     }
   }
   if (usage) onUsage?.(usage);
+  if (!full.trim() && stopReason === 'content_filter') {
+    throw new Error('模型返回空内容：响应被内容安全过滤器拦截。');
+  }
+  if (!full.trim()) {
+    throw new Error('模型返回空内容：未收到任何文本 token（可能原因：上游鉴权失败、模型不可用或请求被拦截）。');
+  }
   return full;
 }
 

@@ -1,12 +1,13 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { openLocalPath, previewLocalFile } from '@/lib/tauri';
+import { fileExists, openLocalPath, previewLocalFile } from '@/lib/tauri';
 import { useStore } from '@/store/useStore';
 import { VisibleFileChip } from './FileChip';
 
 vi.mock('@/lib/tauri', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/tauri')>()),
+  fileExists: vi.fn(),
   openLocalPath: vi.fn(),
   previewLocalFile: vi.fn(),
 }));
@@ -17,6 +18,8 @@ describe('VisibleFileChip', () => {
 
   beforeEach(() => {
     useStore.setState({ locale: 'zh-CN' });
+    vi.mocked(fileExists).mockReset();
+    vi.mocked(fileExists).mockResolvedValue(true);
     vi.mocked(openLocalPath).mockReset();
     vi.mocked(openLocalPath).mockResolvedValue(true);
     vi.mocked(previewLocalFile).mockReset();

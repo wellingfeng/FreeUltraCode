@@ -31,6 +31,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     tauriAvailable: () => true,
+    fileExists: vi.fn(async () => true),
     listWorkspaceDirectory: tauriMocks.listWorkspaceDirectory,
     slashCatalog: async () => ({
       scannedAtMs: 1,

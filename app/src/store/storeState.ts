@@ -348,6 +348,9 @@ export interface StoreState {
       providerId?: ImageProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateMusicPrompt: (
@@ -356,6 +359,9 @@ export interface StoreState {
       providerId?: MusicProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateThreeDPrompt: (
@@ -364,6 +370,9 @@ export interface StoreState {
       providerId?: ThreeDProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateVideoPrompt: (
@@ -372,6 +381,9 @@ export interface StoreState {
       providerId?: VideoProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateAnimationPrompt: (
@@ -380,6 +392,9 @@ export interface StoreState {
       providerId?: AnimationProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateSpeechPrompt: (
@@ -389,6 +404,9 @@ export interface StoreState {
       model?: string;
       voice?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   generateSpritePrompt: (
@@ -397,6 +415,9 @@ export interface StoreState {
       providerId?: ImageProviderId;
       model?: string;
       onSettled?: OnGenerationSettled;
+      background?: boolean;
+      sessionKey?: WorkflowSessionKey;
+      baseMessages?: Message[];
     },
   ) => void;
   /**

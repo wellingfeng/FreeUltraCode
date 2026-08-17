@@ -88,30 +88,19 @@ export interface UpdateStatus {
   error?: string;
 }
 
-/** Parse a version string ("v1.2.3" -> [1,2,3]); non-numeric parts -> 0. */
-function parseVersion(v: string): number[] {
-  return v
-    .trim()
-    .replace(/^v/i, '')
-    .split('.')
-    .map((p) => {
-      const n = parseInt(p, 10);
-      return Number.isFinite(n) ? n : 0;
-    });
+/** Strip leading v/V and whitespace before comparing version strings. */
+function normalizeVersion(v: string): string {
+  return v.trim().replace(/^v/i, '');
 }
 
-/** Semver-ish compare: -1 if a<b, 0 if equal, 1 if a>b. */
-export function compareSemver(a: string, b: string): number {
-  const pa = parseVersion(a);
-  const pb = parseVersion(b);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const da = pa[i] ?? 0;
-    const db = pb[i] ?? 0;
-    if (da > db) return 1;
-    if (da < db) return -1;
-  }
-  return 0;
+/**
+ * Treat the manifest/npm registry as the source of truth: if the latest
+ * version string differs from the current one (after normalization), an
+ * update is available. This avoids parsing the wide variety of vendor
+ * version formats.
+ */
+export function isNewerVersion(current: string, latest: string): boolean {
+  return normalizeVersion(current) !== normalizeVersion(latest);
 }
 
 /** Fetch + parse the remote manifest. Throws on network/parse failure. */
@@ -148,7 +137,7 @@ export async function checkForUpdate(
   const checkedAt = Date.now();
   try {
     const manifest = await fetchVersionManifest(signal);
-    const updateAvailable = compareSemver(manifest.version, APP_VERSION) > 0;
+    const updateAvailable = isNewerVersion(APP_VERSION, manifest.version);
     return {
       current: APP_VERSION,
       latest: manifest.version,

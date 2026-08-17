@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, X } from 'lucide-react';
 import { t, type Locale } from '@/lib/i18n';
 import {
@@ -11,10 +11,16 @@ import {
  * Editable model picker shared by the programming/image/music/video/speech/3D
  * provider rows.
  *
- * - A text input + "add" button above lets the user type a custom model name.
- * - The list below shows every option (selected + fetched/added + built-in
- *   catalog, minus user-deleted), each with an × to remove it (works for
- *   built-in models too — handy for retiring an outdated model).
+ * - The text input above doubles as a live filter: typing narrows the list
+ *   below to models whose name contains the query.
+ * - Clicking a list item only marks it as pending (highlighted); it does not
+ *   filter the list away. The user must then click the "Select / Add" button
+ *   to confirm.
+ * - The "Select / Add" button picks the pending model, or an existing model
+ *   matching the input, or adds a new custom model when nothing matches.
+ * - The list shows every option (selected + fetched/added + built-in catalog,
+ *   minus user-deleted), each with an × to remove it (works for built-in models
+ *   too — handy for retiring an outdated model).
  * - The "fetch models" button merges results into the list without dropping
  *   manual additions (see modelLists.refreshEndpointModels).
  *
@@ -52,6 +58,7 @@ export function EditableModelSelect({
   onRefresh: () => void;
 }) {
   const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState('');
   // Re-render when any picker mutates the shared model-list cache.
   const [, setRevision] = useState(0);
   useEffect(() => {
@@ -62,13 +69,31 @@ export function EditableModelSelect({
 
   const options = editableModelOptions(cacheKey, builtins, value);
 
-  const commitAdd = () => {
-    const next = draft.trim();
-    if (!next) return;
-    addUserModel(cacheKey, next);
+  const query = draft.trim().toLowerCase();
+  const filteredOptions = useMemo(
+    () =>
+      query
+        ? options.filter((model) => model.toLowerCase().includes(query))
+        : options,
+    [options, query],
+  );
+
+  const existingMatch = (candidate: string) =>
+    options.find((model) => model.toLowerCase() === candidate.trim().toLowerCase());
+
+  const commit = () => {
+    const target = pending || draft.trim();
+    if (!target) return;
+    const existing = existingMatch(target);
+    if (existing) {
+      onChange(existing);
+    } else {
+      addUserModel(cacheKey, target);
+      if (onAddModel) onAddModel(target);
+      else onChange(target);
+    }
+    setPending('');
     setDraft('');
-    if (onAddModel) onAddModel(next);
-    else onChange(next);
   };
 
   const remove = (model: string) => {
@@ -85,6 +110,10 @@ export function EditableModelSelect({
     if (model.trim().toLowerCase() === value.trim().toLowerCase()) {
       onChange(nextValue);
     }
+  };
+
+  const pick = (model: string) => {
+    setPending(model);
   };
 
   return (
@@ -111,44 +140,53 @@ export function EditableModelSelect({
         </button>
       </div>
 
-      {/* Add a custom model */}
+      {/* Search / add a custom model */}
       <div className="flex gap-2">
         <input
           type="text"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setPending('');
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
-              commitAdd();
+              commit();
             }
           }}
-          placeholder={locale === 'zh-CN' ? '输入自定义模型名…' : 'Enter a custom model name…'}
+          placeholder={
+            locale === 'zh-CN'
+              ? '搜索或输入自定义模型名…'
+              : 'Search or enter a custom model name…'
+          }
           autoComplete="off"
           spellCheck={false}
           className="min-w-0 flex-1 rounded-md border border-border bg-panel px-2.5 py-1.5 font-mono text-xs text-fg outline-none transition-colors focus:border-accent"
         />
         <button
           type="button"
-          onClick={commitAdd}
-          disabled={!draft.trim()}
+          onClick={commit}
+          disabled={!pending && !draft.trim()}
           className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-panel px-2.5 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-45"
         >
           <Plus size={13} strokeWidth={2.2} />
-          {locale === 'zh-CN' ? '添加' : 'Add'}
+          {locale === 'zh-CN' ? '选中/添加' : 'Select / Add'}
         </button>
       </div>
 
       {/* Model list with per-item delete */}
-      {options.length > 0 ? (
+      {filteredOptions.length > 0 ? (
         <ul className="mt-1 max-h-44 space-y-1 overflow-y-auto rounded-md border border-border bg-bg p-1">
-          {options.map((model) => {
-            const selected = model.trim().toLowerCase() === value.trim().toLowerCase();
+          {filteredOptions.map((model) => {
+            const selected =
+              model.trim().toLowerCase() === value.trim().toLowerCase() ||
+              model === pending;
             return (
               <li key={model} className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onChange(model)}
+                  onClick={() => pick(model)}
                   className={
                     'min-w-0 flex-1 truncate rounded px-2 py-1 text-left font-mono text-xs transition-colors ' +
                     (selected
@@ -173,6 +211,12 @@ export function EditableModelSelect({
             );
           })}
         </ul>
+      ) : query ? (
+        <p className="mt-1 rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-fg-faint">
+          {locale === 'zh-CN'
+            ? '没有匹配的模型，按 Enter 或点击「选中/添加」创建新模型。'
+            : 'No matching models. Press Enter or click "Select / Add" to create a new model.'}
+        </p>
       ) : (
         <p className="mt-1 rounded-md border border-dashed border-border px-2 py-2 text-[11px] text-fg-faint">
           {locale === 'zh-CN'

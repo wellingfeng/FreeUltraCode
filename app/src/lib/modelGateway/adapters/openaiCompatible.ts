@@ -112,6 +112,7 @@ async function readOpenAICompatibleStream(
   let buffer = '';
   let full = '';
   let usage: ModelUsageReport | null = null;
+  let finishReason: string | null = null;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -130,6 +131,10 @@ async function readOpenAICompatibleStream(
           usage?: unknown;
         };
         usage = mergeUsageReports(usage, usageReportFromOpenAI(evt.usage));
+        const reason = evt.choices?.[0]?.finish_reason;
+        if (typeof reason === 'string') {
+          finishReason = reason;
+        }
         full = appendOpenAIText(full, evt.choices?.[0], request);
       } catch {
         /* ignore malformed keep-alive lines */
@@ -137,7 +142,12 @@ async function readOpenAICompatibleStream(
     }
   }
   if (usage) request.onUsage?.(usage);
-
+  if (!full.trim() && finishReason === 'content_filter') {
+    throw new Error('模型返回空内容：响应被内容安全过滤器拦截。');
+  }
+  if (!full.trim()) {
+    throw new Error('模型返回空内容：未收到任何文本 token（可能原因：上游鉴权失败、模型不可用或请求被拦截）。');
+  }
   return full;
 }
 
@@ -145,6 +155,7 @@ type OpenAIChoice = {
   delta?: { content?: unknown };
   message?: { content?: unknown };
   text?: unknown;
+  finish_reason?: string;
 };
 
 function readOpenAICompatibleJson(
@@ -158,7 +169,12 @@ function readOpenAICompatibleJson(
     };
     const usage = usageReportFromOpenAI(evt.usage);
     if (usage) request.onUsage?.(usage);
-    return appendOpenAIText('', evt.choices?.[0], request);
+    const reason = evt.choices?.[0]?.finish_reason;
+    const text = appendOpenAIText('', evt.choices?.[0], request);
+    if (!text.trim() && reason === 'content_filter') {
+      throw new Error('模型返回空内容：响应被内容安全过滤器拦截。');
+    }
+    return text;
   } catch {
     return '';
   }

@@ -360,6 +360,21 @@ pub fn resolve_command_path(command: &str) -> Option<PathBuf> {
     }
 }
 
+/// Resolve a bare command name to a concrete executable path using a LIVE
+/// filesystem search (process PATH plus well-known dirs such as
+/// `%APPDATA%\npm` on Windows). This is the self-heal seam for CLIs installed
+/// AFTER the app process started: the process PATH is frozen at startup, but
+/// the scan still covers `%APPDATA%\npm`, so a fresh lookup finds a newly
+/// installed CLI that a direct `Command::new(name)` spawn would miss.
+/// Path-like inputs are already concrete and return `None` so callers keep
+/// them untouched.
+pub fn resolve_launch_binary(command: &str) -> Option<String> {
+    if looks_like_path(command) {
+        return None;
+    }
+    resolve_command_path(command).map(|path| path.to_string_lossy().to_string())
+}
+
 /// dsh (`@deepseek-ai/dsh`) ships as an npm `.cmd`/shell shim that ultimately
 /// runs `node <pkg>/lib/bin.js`. Its headless task is a single argv positional,
 /// and launching via `cmd /C dsh.cmd "<task>"` caps the whole command line at
@@ -746,6 +761,29 @@ mod tests {
         assert!(resolve_dsh_node_entry(&shim.to_string_lossy()).is_none());
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resolve_launch_binary_keeps_concrete_paths() {
+        // Path-like inputs are already concrete: never rewrite them.
+        assert!(resolve_launch_binary(r"C:\Users\me\dsh.cmd").is_none());
+        assert!(resolve_launch_binary("/usr/local/bin/dsh").is_none());
+        assert!(resolve_launch_binary("").is_none());
+    }
+
+    #[test]
+    fn resolve_command_path_finds_existing_absolute_file() {
+        use std::fs;
+        let file = std::env::temp_dir().join(format!("ugs-resolve-{}.cmd", std::process::id()));
+        fs::write(&file, b"@echo off").unwrap();
+
+        // Absolute paths resolve against the live filesystem, regardless of a
+        // stale process PATH.
+        let got = resolve_command_path(&file.to_string_lossy());
+        assert_eq!(got.as_deref(), Some(file.as_path()));
+
+        fs::remove_file(&file).unwrap();
+        assert!(resolve_command_path(&file.to_string_lossy()).is_none());
     }
 
     #[cfg(windows)]

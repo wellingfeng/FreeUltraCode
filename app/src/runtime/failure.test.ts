@@ -29,4 +29,17 @@ describe('run failure classification', () => {
     expect(failure.code).toBe('protocol');
     expect(failureTitle(failure)).toBe('协议失败');
   });
+
+  it('classifies empty success (exit 0 with no model output) as exit failure', () => {
+    const failure = parseRunFailure(
+      'CLI "claude" 未产生任何回复就退出（退出码 0）：CLI 退出但未返回任何内容',
+    );
+    expect(failure).toMatchObject({
+      code: 'exit',
+      cli: 'claude',
+      exitCode: 0,
+    });
+    expect(failure.message).toContain('已退出但未返回模型内容');
+    expect(failureTitle(failure)).toBe('执行失败');
+  });
 });

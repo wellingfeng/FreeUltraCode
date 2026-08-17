@@ -399,6 +399,33 @@ describe('model gateway compatibility', () => {
     });
   });
 
+  it('exports deepseek-harness CLI env including the third-party base url', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'deepseek-harness',
+        transport: 'cli',
+        apiKey: 'ds-key',
+        baseUrl: 'https://ai-gateway.kurogames.com',
+        model: 'deepseek-ai/DeepSeek-V3',
+      }),
+    ).toMatchObject({
+      DEEPSEEK_API_KEY: 'ds-key',
+      DEEPSEEK_BASE_URL: 'https://ai-gateway.kurogames.com',
+    });
+  });
+
+  it('omits deepseek-harness env when neither key nor base url is set', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'deepseek-harness',
+        transport: 'cli',
+        apiKey: undefined,
+        baseUrl: undefined,
+        model: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
   it('uses system CLI defaults without provider env when systemDefault is selected', () => {
     window.localStorage.setItem(
       PROVIDERS_STORAGE,

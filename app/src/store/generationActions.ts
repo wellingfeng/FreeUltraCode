@@ -57,7 +57,7 @@ import {
   freeProxyOptionsForSelection,
 } from './useStore';
 import type { AiEditChannel } from './useStore';
-import type { StoreState } from './storeState';
+import type { StoreState, WorkflowSessionKey } from './storeState';
 
 // --- types ---
 import type { ComposerSettings, Message } from './types';
@@ -1289,6 +1289,9 @@ export function startImageGenerationTurn(
     providerId?: ImageProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripImageCommand(text);
@@ -1302,7 +1305,7 @@ export function startImageGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'image', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadImageGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -1377,7 +1380,7 @@ export function startImageGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -1392,6 +1395,7 @@ export function startImageGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -1596,6 +1600,9 @@ export function startMusicGenerationTurn(
     providerId?: MusicProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripMusicCommand(text);
@@ -1609,7 +1616,7 @@ export function startMusicGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'music', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadMusicGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -1663,7 +1670,7 @@ export function startMusicGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -1678,6 +1685,7 @@ export function startMusicGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -1822,6 +1830,9 @@ export function startThreeDGenerationTurn(
     providerId?: ThreeDProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripThreeDCommand(text);
@@ -1835,7 +1846,7 @@ export function startThreeDGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'threeD', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadThreeDGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -1900,7 +1911,7 @@ export function startThreeDGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -1915,6 +1926,7 @@ export function startThreeDGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -2078,14 +2090,14 @@ export function startThreeDGenerationTurn(
 
 export function startWorldModelGenerationTurn(
   text: string,
-  options: { providerId?: WorldModelProviderId; model?: string } = {},
+  options: { providerId?: WorldModelProviderId; model?: string; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] } = {},
 ): void {
   const prompt = stripWorldModelCommand(text);
   if (!prompt) return;
   const state = useStore.getState();
   if (isWorkflowReadOnly(state)) return;
   const generationPrompt = modeContextPrompt(state, 'world', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadWorldModelGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -2138,7 +2150,7 @@ export function startWorldModelGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -2153,6 +2165,7 @@ export function startWorldModelGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -2274,6 +2287,9 @@ export function startVideoGenerationTurn(
     providerId?: VideoProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripVideoCommand(text);
@@ -2287,7 +2303,7 @@ export function startVideoGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'video', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadVideoGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -2341,7 +2357,7 @@ export function startVideoGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -2356,6 +2372,7 @@ export function startVideoGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -2500,6 +2517,9 @@ export function startAnimationGenerationTurn(
     providerId?: AnimationProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripAnimationCommand(text);
@@ -2513,7 +2533,7 @@ export function startAnimationGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'animation', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadAnimationGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -2570,7 +2590,7 @@ export function startAnimationGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -2585,6 +2605,7 @@ export function startAnimationGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -2758,6 +2779,9 @@ export function startSpeechGenerationTurn(
     model?: string;
     voice?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripSpeechCommand(text);
@@ -2771,7 +2795,7 @@ export function startSpeechGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'speech', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadSpeechGenerationSettings(settingsProfile);
   const requestedProviderId = options.providerId;
@@ -2830,7 +2854,7 @@ export function startSpeechGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -2845,6 +2869,7 @@ export function startSpeechGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -3000,6 +3025,9 @@ export function startSpriteGenerationTurn(
     providerId?: ImageProviderId;
     model?: string;
     onSettled?: OnGenerationSettled;
+    background?: boolean;
+    sessionKey?: WorkflowSessionKey;
+    baseMessages?: Message[];
   } = {},
 ): void {
   const prompt = stripSpriteCommand(text);
@@ -3013,7 +3041,7 @@ export function startSpriteGenerationTurn(
     return;
   }
   const generationPrompt = modeContextPrompt(state, 'sprite', prompt);
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadSpriteGenerationSettings(settingsProfile);
   const imageSettings = loadImageGenerationSettings(settingsProfile);
@@ -3080,7 +3108,7 @@ export function startSpriteGenerationTurn(
   const promptUpdate = applyPromptTitle(state, prompt, now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -3095,6 +3123,7 @@ export function startSpriteGenerationTurn(
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: options.background === true,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 
@@ -3271,11 +3300,14 @@ export function startSpriteGenerationTurn(
   })();
 }
 
-export function startMeshSearchTurn(text: string): void {
+export function startMeshSearchTurn(
+  text: string,
+  options: { sessionKey?: WorkflowSessionKey; baseMessages?: Message[] } = {},
+): void {
   const query = stripMeshSearchCommand(text);
   const state = useStore.getState();
   if (isWorkflowReadOnly(state)) return;
-  const sessionKey = activeWorkflowSessionKey(state);
+  const sessionKey = options.sessionKey ?? activeWorkflowSessionKey(state);
   const settingsProfile = generationSettingsProfileForState(state);
   const settings = loadMeshLibrarySettings(settingsProfile);
 
@@ -3307,7 +3339,7 @@ export function startMeshSearchTurn(text: string): void {
   const promptUpdate = applyPromptTitle(state, query || '在线模型库搜索', now);
   const activeSession = sessionForKey(state, sessionKey);
   const simpleMode = promptUpdate.workflow.meta?.simple === true;
-  const baseMessages = state.messages;
+  const baseMessages = options.baseMessages ?? state.messages;
   const chSessionKey = runKey(sessionKey.workspaceId, sessionKey.sessionId);
   const workspaceRootPath = sessionChangesRootPathForSession(state, sessionKey);
   const ch: AiEditChannel = {
@@ -3322,6 +3354,7 @@ export function startMeshSearchTurn(text: string): void {
     abortController: new AbortController(),
     workflowSession: activeSession?.isWorkflow ?? !simpleMode,
     chat: true,
+    background: false,
     ownedMessageIds: new Set<string>([userMsg.id, assistantId]),
   };
 

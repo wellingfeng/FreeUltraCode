@@ -3129,22 +3129,26 @@ export default function AIDock({
     const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
       const hint = defaultChannelRuntimeLabel(locale, adapter);
       const group = defaultChannelRuntimeGroup(locale, adapter);
-      return [
-        {
+      const providers = defaultChannelProviders.filter(
+        (item) => item.adapter === adapter.id,
+      );
+      // 系统 CLI 条目只是空类别的后备：该渠道已配置账号时不再额外展示
+      // 「系统默认」，避免每个渠道都多出一行默认项。
+      const entries = providers.map(({ provider }) => ({
+        id: defaultProviderOptionId(provider.id),
+        label: provider.name.trim() || adapter.label,
+        hint,
+        group,
+      }));
+      if (entries.length === 0) {
+        entries.unshift({
           id: systemDefaultOptionId(adapter.id),
           label: `${adapter.label} · ${t(locale, "dock.channelSystemDefault")}`,
           hint,
           group,
-        },
-        ...defaultChannelProviders
-          .filter((item) => item.adapter === adapter.id)
-          .map(({ provider }) => ({
-            id: defaultProviderOptionId(provider.id),
-            label: provider.name.trim() || adapter.label,
-            hint,
-            group,
-          })),
-      ];
+        });
+      }
+      return entries;
     });
 
     return [
@@ -3180,11 +3184,19 @@ export default function AIDock({
           item.adapter === selectedAdapter,
       )
     : undefined;
+  // 渠道已配置账号时下拉里不再展示「系统默认」条目；若当前 selection 仍停
+  // 留在系统默认（例如刚配置好账号还没选过），显示层回退到该渠道第一个
+  // 账号，避免触发按钮显示原始 id 字符串。
+  const adapterProviderEntry = defaultChannelProviders.find(
+    (item) => item.adapter === selectedAdapter,
+  );
   const channelSelectValue = selectedFreeChannelId
     ? freeChannelOptionId(selectedFreeChannelId)
     : pinnedDefaultProvider
       ? defaultProviderOptionId(pinnedDefaultProvider.provider.id)
-      : systemDefaultOptionId(selectedAdapter);
+      : adapterProviderEntry
+        ? defaultProviderOptionId(adapterProviderEntry.provider.id)
+        : systemDefaultOptionId(selectedAdapter);
   const selectedFreeChannel = selectedFreeChannelId
     ? freeChannelById(selectedFreeChannelId)
     : undefined;

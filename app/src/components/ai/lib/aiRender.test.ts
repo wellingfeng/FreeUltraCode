@@ -5,6 +5,7 @@ import {
   looksLikePath,
   displayFileRefPath,
   displayFileRefChipPath,
+  isDocumentFileRef,
 } from './filePath';
 import { scanFileRefs } from './fileScan';
 import {
@@ -132,6 +133,16 @@ describe('parseFileRef', () => {
     expect(r?.startLine).toBe(12);
   });
 
+  it('parses a backslash windows path with a non-ascii basename', () => {
+    // Regression: the drive colon must not be treated as a `:line` delimiter,
+    // otherwise the extension is lost and a CJK-named .docx is dropped as null.
+    const p = 'C:\\Users\\FW\\Downloads\\报告_技术精编版_v3.docx';
+    const r = parseFileRef(p);
+    expect(r?.path).toBe(p);
+    expect(r?.basename).toBe('报告_技术精编版_v3.docx');
+    expect(isDocumentFileRef(r!)).toBe(true);
+  });
+
   it('rejects bare words and prose-y tokens', () => {
     expect(parseFileRef('config')).toBeNull();
     expect(parseFileRef('version')).toBeNull();
@@ -166,6 +177,10 @@ describe('parseFileRef', () => {
       'component.vue',
       'icon.avif',
       'favicon.ico',
+      'report.pdf',
+      'summary.docx',
+      'budget.xlsx',
+      'slides.pptx',
     ]) {
       expect(parseFileRef(name)?.basename).toBe(name);
     }

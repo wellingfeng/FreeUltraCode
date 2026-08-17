@@ -24,6 +24,7 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
   return {
     ...actual,
     tauriAvailable: () => true,
+    fileExists: vi.fn(async () => true),
     previewLocalFile: tauriMocks.previewLocalFile,
     saveClipboardImage: tauriMocks.saveClipboardImage,
   };

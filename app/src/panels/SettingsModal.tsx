@@ -2179,22 +2179,26 @@ function GlobalRunControls({
       const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
         const hint = defaultChannelRuntimeLabel(locale, adapter);
         const group = defaultChannelRuntimeGroup(locale, adapter);
-        return [
-          {
+        const providers = defaultChannelProviders.filter(
+          (item) => item.adapter === adapter.id,
+        );
+        // 系统 CLI 条目只是空类别的后备：该渠道已配置账号时不再额外展示
+        // 「系统默认」，避免每个渠道都多出一行默认项。
+        const entries = providers.map(({ provider }) => ({
+          id: defaultProviderOptionId(provider.id),
+          label: provider.name.trim() || adapter.label,
+          hint,
+          group,
+        }));
+        if (entries.length === 0) {
+          entries.unshift({
             id: systemDefaultOptionId(adapter.id),
             label: `${adapter.label} · ${t(locale, 'dock.channelSystemDefault')}`,
             hint,
             group,
-          },
-          ...defaultChannelProviders
-            .filter((item) => item.adapter === adapter.id)
-            .map(({ provider }) => ({
-              id: defaultProviderOptionId(provider.id),
-              label: provider.name.trim() || adapter.label,
-              hint,
-              group,
-            })),
-        ];
+          });
+        }
+        return entries;
       });
 
       return [
@@ -2240,11 +2244,19 @@ function GlobalRunControls({
   const selectedDefaultProvider = selectedFreeChannel
     ? undefined
     : pinnedDefaultProvider;
+  // 渠道已配置账号时下拉里不再展示「系统默认」条目；若当前 selection 仍停
+  // 留在系统默认（例如刚配置好账号还没选过），显示层回退到该渠道第一个
+  // 账号，避免触发按钮显示原始 id 字符串。
+  const adapterProviderEntry = defaultChannelProviders.find(
+    (item) => item.adapter === selectedAdapter,
+  );
   const channelValue = selectedFreeChannelId
     ? freeChannelOptionId(selectedFreeChannelId)
     : selectedDefaultProvider
       ? defaultProviderOptionId(selectedDefaultProvider.provider.id)
-      : systemDefaultOptionId(selectedAdapter);
+      : adapterProviderEntry
+        ? defaultProviderOptionId(adapterProviderEntry.provider.id)
+        : systemDefaultOptionId(selectedAdapter);
 
   useEffect(() => {
     if (!selectedFreeChannel) return;
@@ -2495,6 +2507,7 @@ function ModelsSettings({
   const [status, setStatus] = useState<{ tone: 'ok' | 'err'; msg: string } | null>(
     null,
   );
+  const [channelQuery, setChannelQuery] = useState('');
   const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
   const desktop = isTauri();
 
@@ -2666,6 +2679,28 @@ function ModelsSettings({
   );
   const hasAvailableRuntime =
     directCount > 0 || providerCliCount > 0 || systemCliAvailable;
+
+  // Live search over the channel list: typing in the search box keeps only the
+  // channels whose name / kind / adapter / base URL / model match the query.
+  const channelQueryTrimmed = channelQuery.trim().toLowerCase();
+  const hasChannelQuery = channelQueryTrimmed.length > 0;
+  const visibleProviderCards = useMemo(() => {
+    if (!hasChannelQuery) return providerCards;
+    return providerCards.filter(({ provider, adapter }) => {
+      const haystack = [
+        provider.name,
+        provider.kind,
+        adapter,
+        provider.baseUrl,
+        provider.model ?? '',
+        ...(provider.models ?? []),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(channelQueryTrimmed);
+    });
+  }, [providerCards, hasChannelQuery, channelQueryTrimmed]);
+  const showNoMatch = hasChannelQuery && visibleProviderCards.length === 0;
   const showNoRuntime = !hasAvailableRuntime;
   const showEmptyProviders = providerCards.length === 0 && hasAvailableRuntime;
 
@@ -2739,7 +2774,31 @@ function ModelsSettings({
         </p>
       )}
 
-      {showNoRuntime && (
+      <div className="relative">
+        <input
+          type="text"
+          value={channelQuery}
+          onChange={(event) => setChannelQuery(event.target.value)}
+          placeholder={t(locale, 'settings.models.searchPlaceholder')}
+          aria-label={t(locale, 'settings.models.searchPlaceholder')}
+          autoComplete="off"
+          spellCheck={false}
+          className="w-full rounded-md border border-border bg-panel px-2.5 py-1.5 pr-8 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+        />
+        {channelQuery && (
+          <button
+            type="button"
+            title={t(locale, 'settings.models.searchClear')}
+            aria-label={t(locale, 'settings.models.searchClear')}
+            onClick={() => setChannelQuery('')}
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-faint transition-colors hover:text-fg"
+          >
+            <X size={13} strokeWidth={2.2} />
+          </button>
+        )}
+      </div>
+
+      {showNoRuntime && !hasChannelQuery && (
         <EmptyProviderState
           title={t(locale, 'settings.models.noRuntimeTitle')}
           body={t(locale, 'settings.models.noRuntimeBody')}
@@ -2748,7 +2807,7 @@ function ModelsSettings({
         />
       )}
 
-      {showEmptyProviders && (
+      {showEmptyProviders && !hasChannelQuery && (
         <EmptyProviderState
           title={t(locale, 'settings.models.emptyTitle')}
           body={t(locale, 'settings.models.emptyBody')}
@@ -2757,10 +2816,20 @@ function ModelsSettings({
         />
       )}
 
+      {showNoMatch && (
+        <EmptyProviderState
+          title={t(locale, 'settings.models.searchEmptyTitle')}
+          body={t(locale, 'settings.models.searchEmptyBody')}
+        />
+      )}
+
       {PROVIDER_ADAPTER_SECTIONS.map(({ adapter, dotClassName }) => {
-        const sectionCards = providerCards.filter(
+        const sectionCards = visibleProviderCards.filter(
           (card) => card.adapter === adapter,
         );
+        // While searching, hide groups that have no matching channels so the
+        // result list only shows what actually matches.
+        if (hasChannelQuery && sectionCards.length === 0) return null;
         return (
           <div key={adapter} className="space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -3229,21 +3298,23 @@ function EmptyProviderState({
 }: {
   title: string;
   body: string;
-  action: string;
-  onAction: () => void;
+  action?: string;
+  onAction?: () => void;
 }) {
   return (
     <div className="rounded-lg border border-dashed border-border-soft bg-bg-alt/60 p-4">
       <div className="text-sm font-medium text-fg">{title}</div>
       <p className="mt-1 text-xs leading-relaxed text-fg-faint">{body}</p>
-      <button
-        type="button"
-        onClick={onAction}
-        className="mt-3 inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
-      >
-        <Plus size={13} strokeWidth={2.2} />
-        {action}
-      </button>
+      {action && onAction && (
+        <button
+          type="button"
+          onClick={onAction}
+          className="mt-3 inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        >
+          <Plus size={13} strokeWidth={2.2} />
+          {action}
+        </button>
+      )}
     </div>
   );
 }
