@@ -111,11 +111,44 @@ export function refreshCliRuntime(): Promise<CliRuntimeSnapshot> {
   return runtimePromise;
 }
 
+/**
+ * 冷却窗口：解析兜底重扫的最短间隔。CLI 确实没装时，避免每次调用都触发
+ * 一次强制重扫（扫描本身廉价，但没必要高频重复）；装了之后最多延迟一个
+ * 窗口就能被识别到。
+ */
+const AUTO_RESCAN_COOLDOWN_MS = 30_000;
+let lastAutoRescanAtMs = 0;
+
 export async function resolveCliInvocation(
   adapterValue: string | undefined,
 ): Promise<CliInvocation> {
   const adapter = normalizeAdapter(adapterValue);
   const runtime = await primeCliRuntime();
+  const resolved = resolveInvocationFromRuntime(runtime, adapter);
+  if (resolved.status !== 'fallback' && resolved.status !== 'invalid') {
+    return resolved;
+  }
+
+  // 兜底：当前快照里该适配器不可用（例如应用启动后才新装了 CLI / PATH
+  // 变更，导致启动时那次扫描结果过期）。强制重扫一次磁盘再解析，让
+  // 「刚装上」的 CLI 无需重启应用或手动刷新设置即可被识别。
+  const now = Date.now();
+  if (now - lastAutoRescanAtMs < AUTO_RESCAN_COOLDOWN_MS) {
+    return resolved;
+  }
+  lastAutoRescanAtMs = now;
+  const fresh = await refreshCliRuntime();
+  const retried = resolveInvocationFromRuntime(fresh, adapter);
+  if (retried.status !== 'fallback' && retried.status !== 'invalid') {
+    return retried;
+  }
+  return resolved;
+}
+
+function resolveInvocationFromRuntime(
+  runtime: CliRuntimeSnapshot,
+  adapter: RuntimeAdapterId,
+): CliInvocation {
   const selected = runtime.config.selected;
 
   if (selected.kind === 'path' && selected.adapter === adapter) {

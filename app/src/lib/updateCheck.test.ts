@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   APP_VERSION,
   checkForUpdate,
-  compareSemver,
   fetchVersionManifest,
+  isNewerVersion,
 } from '@/lib/updateCheck';
 
 // openExternal pulls in the Tauri bridge; stub it so importing the module under
@@ -28,16 +28,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('compareSemver', () => {
-  it('orders versions numerically, not lexically', () => {
-    expect(compareSemver('0.1.2', '0.1.10')).toBe(-1);
-    expect(compareSemver('1.0.0', '0.9.9')).toBe(1);
-    expect(compareSemver('0.1.2', '0.1.2')).toBe(0);
+describe('isNewerVersion', () => {
+  it('flags any difference as newer', () => {
+    expect(isNewerVersion('0.1.0', '0.1.0-rc.6')).toBe(true);
+    expect(isNewerVersion('3.7.7', '3.7.7-13')).toBe(true);
+    expect(isNewerVersion('0.1.0', '0.1.1')).toBe(true);
+    expect(isNewerVersion('0.38.2', '0.49.0')).toBe(true);
+    expect(isNewerVersion('2.1.197', '2.1.202')).toBe(true);
   });
 
-  it('tolerates a leading v and missing parts', () => {
-    expect(compareSemver('v1.2', '1.2.0')).toBe(0);
-    expect(compareSemver('2', '1.9.9')).toBe(1);
+  it('ignores leading v and whitespace', () => {
+    expect(isNewerVersion('v1.2.0', '1.2.0')).toBe(false);
+    expect(isNewerVersion('  1.2.0  ', '1.2.0')).toBe(false);
+  });
+
+  it('returns false for identical strings', () => {
+    expect(isNewerVersion('0.1.2', '0.1.2')).toBe(false);
+    expect(isNewerVersion('0.142.5', '0.142.5')).toBe(false);
   });
 });
 

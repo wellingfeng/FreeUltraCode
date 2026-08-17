@@ -127,6 +127,26 @@ const IMAGE_EXT = new Set([
   'bmp', 'dib', 'ico', 'cur', 'svg', 'avif',
 ]);
 
+/** True when the reference points at a document that can be previewed inline. */
+export function isDocumentFileRef(ref: Pick<FileRef, 'path'>): boolean {
+  const base = basenameOf(ref.path).replace(/[\\/]+$/, '');
+  const dot = base.lastIndexOf('.');
+  if (dot <= 0 || dot === base.length - 1) return false;
+  return DOCUMENT_EXT.has(base.slice(dot + 1).toLowerCase());
+}
+
+const DOCUMENT_EXT = new Set([
+  'pdf',
+  'docx',
+  'doc',
+  'rtf',
+  'odt',
+  'pptx',
+  'ppt',
+  'xlsx',
+  'xls',
+]);
+
 /** True when the reference points at an image we can show as an inline thumbnail. */
 export function isImageFileRef(ref: Pick<FileRef, 'path'>): boolean {
   // Derive the extension straight from the path's basename. We can't reuse
@@ -184,6 +204,8 @@ const KNOWN_EXT = new Set([
   'mdtext', 'rmd', 'qmd', 'tex', 'ltx', 'bib', 'org', 'wiki', 'log',
   'patch', 'diff', 'rej', 'mmd', 'mermaid', 'puml', 'plantuml', 'dot', 'gv',
   'drawio', 'dio', 'prompt', 'prompty',
+  // office / document previews
+  'pdf', 'docx', 'doc', 'rtf', 'odt', 'pptx', 'ppt', 'xlsx', 'xls',
   // templates / build files
   'ejs', 'hbs', 'handlebars', 'mustache', 'njk', 'jinja', 'jinja2', 'twig',
   'liquid', 'erb', 'haml', 'pug', 'jade', 'cshtml', 'razor', 'cmake', 'mak',
@@ -214,7 +236,12 @@ const KNOWN_BASENAME = new Set([
 ]);
 
 function basenameFromToken(token: string): string {
-  const noLine = token.split(/[:#]/, 1)[0]; // drop any :line / #L suffix
+  // Strip a leading Windows drive (`C:`) first so its colon is not mistaken for
+  // a `:line` suffix delimiter by the split below — otherwise `C:\dir\file.docx`
+  // would collapse to just `C`, losing the real extension.
+  const drive = /^[A-Za-z]:(?=[\\/])/.exec(token);
+  const body = drive ? token.slice(drive[0].length) : token;
+  const noLine = body.split(/[:#]/, 1)[0]; // drop any :line / #L suffix
   const clean = noLine.replace(/[\\/]+$/, '');
   const idx = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
   return idx === -1 ? clean : clean.slice(idx + 1);

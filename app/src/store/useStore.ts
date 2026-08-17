@@ -6339,9 +6339,41 @@ ${previousReply.slice(0, 4000)}
                 persistAiMessages();
                 const actions = useStore.getState();
                 const summaries: string[] = [];
+                // Run each block serially and mirror progress into the active
+                // chat bubble as it goes. Without per-block feedback a batch of
+                // (say) 5 images looks frozen — the bubble stays on "正在生成…"
+                // for minutes — which reads as "the session stopped".
+                const progressPreface = preface ? `${preface}\n` : '';
                 for (let gi = 0; gi < capped.length; gi += 1) {
-                  const result = await runGenRequest(actions, capped[gi]);
+                  const kindLabel = genKindLabel(capped[gi].kind);
+                  setActive(
+                    withAiTiming(
+                      routedBody(
+                        routeLine,
+                        `${progressPreface}⟳ 正在生成素材 ${gi + 1}/${capped.length}（${kindLabel}）…`,
+                      ),
+                    ),
+                    true,
+                  );
+                  const result = await runGenRequest(actions, capped[gi], {
+                    workspaceId: ch.workspaceId,
+                    sessionId: ch.sessionId,
+                  }, ch.messages);
                   summaries.push(formatGenResult(gi, capped[gi], result));
+                  const progress = result.ok ? '✓ 已完成' : '✗ 失败';
+                  const remaining =
+                    capped.length > 1
+                      ? `，继续生成剩余 ${capped.length - gi - 1} 个…`
+                      : '';
+                  setActive(
+                    withAiTiming(
+                      routedBody(
+                        routeLine,
+                        `${progressPreface}${progress} ${gi + 1}/${capped.length}（${kindLabel}）${remaining}`,
+                      ),
+                    ),
+                    true,
+                  );
                 }
                 if (genRequests.length > capped.length) {
                   summaries.push(
@@ -7374,6 +7406,10 @@ function aiEditActive(ch: AiEditChannel | null): boolean {
 
 export function aiEditViewActive(ch: AiEditChannel | null): boolean {
   if (!ch) return false;
+  // Background turns (e.g. a UGS_GEN generation driven from inside the chat
+  // loop) persist their results but never mirror into the live store — their
+  // shadow view must not flash over the driving chat bubble.
+  if (ch.background) return false;
   if (!ch.sessionId) return true;
   const s = useStore.getState();
   return s.activeSessionId === ch.sessionId && s.activeWorkspaceId === ch.workspaceId;
@@ -8052,6 +8088,13 @@ const SIMPLE_CHAT_HISTORY_TURNS = 20;
 // runaway reply can't fan out into unbounded paid generations.
 const MAX_GEN_REQUESTS_PER_TURN = 8;
 
+// Long-stop timeout for a single model-driven generation block (UGS_GEN). This
+// is deliberately generous — 3D mesh generation can poll for several minutes —
+// and exists only as a safety net so a wedged generation can never leave the
+// chat turn awaiting a never-resolving Promise.
+const GENERATION_TURN_TIMEOUT_MINUTES = 20;
+const GENERATION_TURN_TIMEOUT_MS = GENERATION_TURN_TIMEOUT_MINUTES * 60 * 1000;
+
 /**
  * The asset kinds the model is authorized to auto-generate this turn, derived
  * from the composer's sticky modes. Entering a mode (敲 /image、/video 等) IS the
@@ -8074,45 +8117,77 @@ function authorizedGenKinds(composer: ComposerSettings): GenKind[] {
 // Promise that resolves once the turn settles (success paths / failure error).
 // Reuses the exact same start*GenerationTurn actions the input box drives, so
 // the model-driven path behaves identically to a manual one.
+//
+// Robustness: the generation turns settle via `onSettled`, but a handful of
+// early-return guards (channel removed / aborted) historically skipped the
+// callback, which left the chat loop awaiting a Promise that never resolved —
+// the session then looked "stopped". This wrapper therefore (1) settles at most
+// once, (2) converts a synchronous throw into a failure result, and (3) carries
+// a long-stop timeout so a wedged generation can never park the turn forever.
 function runGenRequest(
   actions: {
-    generateImagePrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateMusicPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateVideoPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateSpritePrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateSpeechPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateThreeDPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
-    generateAnimationPrompt: (text: string, options?: { onSettled?: OnGenerationSettled }) => void;
+    generateImagePrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateMusicPrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateVideoPrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateSpritePrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateSpeechPrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateThreeDPrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
+    generateAnimationPrompt: (text: string, options?: { onSettled?: OnGenerationSettled; background?: boolean; sessionKey?: WorkflowSessionKey; baseMessages?: Message[] }) => void;
   },
   req: GenRequest,
+  sessionKey: WorkflowSessionKey,
+  baseMessages: Message[],
 ): Promise<GenerationTurnResult> {
   return new Promise<GenerationTurnResult>((resolve) => {
-    const onSettled: OnGenerationSettled = (result) => resolve(result);
-    const opts = { onSettled };
-    switch (req.kind) {
-      case 'image':
-        actions.generateImagePrompt(req.prompt, opts);
-        break;
-      case 'music':
-        actions.generateMusicPrompt(req.prompt, opts);
-        break;
-      case 'video':
-        actions.generateVideoPrompt(req.prompt, opts);
-        break;
-      case 'sprite':
-        actions.generateSpritePrompt(req.prompt, opts);
-        break;
-      case 'speech':
-        actions.generateSpeechPrompt(req.prompt, opts);
-        break;
-      case 'threeD':
-        actions.generateThreeDPrompt(req.prompt, opts);
-        break;
-      case 'animation':
-        actions.generateAnimationPrompt(req.prompt, opts);
-        break;
-      default:
-        resolve({ ok: false, error: `未知的素材类型：${String(req.kind)}` });
+    let settled = false;
+    const finish = (result: GenerationTurnResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      resolve(result);
+    };
+    // Long-stop watchdog: some channels (3D mesh polling) legitimately take many
+    // minutes, so this is only a safety net against a permanently wedged turn.
+    const watchdog = setTimeout(() => {
+      finish({
+        ok: false,
+        error: `生成超时（超过 ${GENERATION_TURN_TIMEOUT_MINUTES} 分钟未完成），已放弃等待。`,
+      });
+    }, GENERATION_TURN_TIMEOUT_MS);
+    const opts: { onSettled: OnGenerationSettled; background: true; sessionKey: WorkflowSessionKey; baseMessages: Message[] } = {
+      onSettled: finish,
+      background: true,
+      sessionKey,
+      baseMessages,
+    };
+    try {
+      switch (req.kind) {
+        case 'image':
+          actions.generateImagePrompt(req.prompt, opts);
+          break;
+        case 'music':
+          actions.generateMusicPrompt(req.prompt, opts);
+          break;
+        case 'video':
+          actions.generateVideoPrompt(req.prompt, opts);
+          break;
+        case 'sprite':
+          actions.generateSpritePrompt(req.prompt, opts);
+          break;
+        case 'speech':
+          actions.generateSpeechPrompt(req.prompt, opts);
+          break;
+        case 'threeD':
+          actions.generateThreeDPrompt(req.prompt, opts);
+          break;
+        case 'animation':
+          actions.generateAnimationPrompt(req.prompt, opts);
+          break;
+        default:
+          finish({ ok: false, error: `未知的素材类型：${String(req.kind)}` });
+      }
+    } catch (err) {
+      finish({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
   });
 }

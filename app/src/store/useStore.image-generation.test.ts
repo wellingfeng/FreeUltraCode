@@ -6,6 +6,7 @@ import {
   type ImageGenerationSettings,
 } from '@/lib/imageGeneration';
 import { useStore } from './useStore';
+import { historyStore } from './history/store';
 
 const IMAGE_SETTINGS_KEY = 'ultragamestudio.imageGeneration.v1';
 
@@ -248,23 +249,108 @@ describe('image generation chat flow', () => {
     );
   });
 
-  it('reports failure to onSettled when the provider errors', async () => {
+  it('binds background generation to an explicit sessionKey and baseMessages', async () => {
     writeImageSettings({
       enabled: true,
       preferredProviderId: 'minimax',
       providerKeys: { minimax: 'test-key' },
     });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('boom', { status: 500, statusText: 'Server Error' }),
+      new Response(
+        JSON.stringify({
+          data: { image_urls: ['https://example.com/remote-bound.png'] },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      ),
     );
 
-    const settled: Array<{ ok: boolean; error?: string }> = [];
-    useStore.getState().generateImagePrompt('/image anything', {
-      onSettled: (result) => settled.push(result),
+    const updateSpy = vi
+      .spyOn(historyStore, 'updateSession')
+      .mockResolvedValue({
+        id: 'session-target',
+        workspaceId: 'ws-target',
+        title: 'Target',
+        isWorkflow: false,
+        createdAt: 1,
+        updatedAt: Date.now(),
+        messages: [],
+      } as never);
+
+    useStore.setState({
+      activeWorkspaceId: 'ws-active',
+      activeSessionId: 'session-active',
+      workspaces: [
+        {
+          id: 'ws-target',
+          path: '/target',
+          name: 'Target workspace',
+          updatedAt: 1,
+          sessionCount: 1,
+        },
+      ],
+      sessions: [
+        {
+          id: 'session-target',
+          workspaceId: 'ws-target',
+          title: 'Target session',
+          isWorkflow: false,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      sessionTree: {
+        'ws-target': [
+          {
+            id: 'session-target',
+            workspaceId: 'ws-target',
+            title: 'Target session',
+            isWorkflow: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      },
+      messages: [
+        {
+          id: 'm-active',
+          role: 'assistant',
+          text: 'current active session message',
+          createdAt: 1,
+        },
+      ],
+      historyReady: true,
     });
 
-    await waitFor(() => settled.length > 0, 'onSettled failure to fire');
-    expect(settled[0].ok).toBe(false);
-    expect(settled[0].error ?? '').toBeTruthy();
+    let settled = false;
+    useStore.getState().generateImagePrompt('/image a cat', {
+      background: true,
+      sessionKey: { workspaceId: 'ws-target', sessionId: 'session-target' },
+      baseMessages: [
+        {
+          id: 'm-target-user',
+          role: 'user',
+          text: 'target request',
+          createdAt: 1,
+        },
+      ],
+      onSettled: () => {
+        settled = true;
+      },
+    });
+
+    await waitFor(() => settled, 'background generation to settle');
+
+    // The active view must stay untouched — the background turn belongs to
+    // session-target, not the currently active session-active.
+    const messages = useStore.getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe('m-active');
+
+    // Persistence must target the specified session, never the active one.
+    const targetCalls = updateSpy.mock.calls.filter(
+      ([workspaceId, sessionId]) =>
+        workspaceId === 'ws-target' && sessionId === 'session-target',
+    );
+    expect(targetCalls.length).toBeGreaterThan(0);
   });
 });

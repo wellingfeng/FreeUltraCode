@@ -72,6 +72,15 @@ export interface AiEditChannel {
    * read-only. See sendPrompt's simpleMode branch.
    */
   chat?: boolean;
+  /**
+   * True when this turn is driven programmatically (e.g. the UGS_GEN protocol
+   * runs a generation action from inside the chat loop) rather than by the user
+   * clicking a generation button in the composer. A background turn still
+   * persists its results, but `aiEditViewActive` returns false for it so its
+   * two-message shadow view never flashes over the live chat bubble that is
+   * driving it.
+   */
+  background?: boolean;
   /** Message ids created by this chat turn; used to merge concurrent replies. */
   ownedMessageIds?: Set<string>;
   /**

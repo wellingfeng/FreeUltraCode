@@ -1615,6 +1615,24 @@ export async function previewLocalFile(
   });
 }
 
+/** Check whether a local file exists. Desktop-only; mirrors preview_local_file
+ *  path resolution (including cwd fallbacks) but is lightweight because it
+ *  only stats the file. Uses the Rust backend so it is not restricted by the
+ *  Tauri frontend fs plugin scope. */
+export async function fileExists(
+  path: string,
+  opts?: { cwd?: string },
+): Promise<boolean> {
+  if (!tauriAvailable()) {
+    return false;
+  }
+  const invoke = await getInvoke();
+  return invoke<boolean>('file_exists', {
+    path,
+    cwd: opts?.cwd ?? null,
+  });
+}
+
 /** Persist a pasted clipboard image and return the local path inserted in composer. */
 export async function saveClipboardImage(
   request: ClipboardImageSaveRequest,

@@ -5,11 +5,12 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
-import { FileCode, FolderOpen, ImageOff, Loader2, Copy, Check, AlertTriangle } from 'lucide-react';
+import { FileCode, FileText, FolderOpen, ImageOff, Loader2, Copy, Check, AlertTriangle } from 'lucide-react';
 import {
   displayFileRefPath,
   fileRefLineSuffix,
   isImageFileRef,
+  isDocumentFileRef,
   type FileRef,
 } from './lib/filePath';
 import {
@@ -21,7 +22,7 @@ import {
 } from './lib/fileChipBudget';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
-import { previewLocalFile } from '@/lib/tauri';
+import { fileExists, previewLocalFile } from '@/lib/tauri';
 import { createObjectUrlFromBase64, revokeObjectUrl } from '@/lib/objectUrl';
 
 export interface OpenFileIntent {
@@ -126,9 +127,13 @@ type ThumbState =
   | { status: 'error' };
 
 /**
- * Lightweight existence check via the Tauri fs plugin.  Returns 'checking'
- * initially, then 'exists' or 'missing'.  Skipped for remote workspaces and
+ * Lightweight existence check via the Rust backend. Returns 'checking'
+ * initially, then 'exists' or 'missing'. Skipped for remote workspaces and
  * non-desktop contexts.
+ *
+ * We use a custom Tauri command instead of @tauri-apps/plugin-fs so that paths
+ * outside fs:scope-home-recursive (e.g. other Windows drives like E:\) are
+ * still resolved and checked correctly.
  */
 function useFileExists(path: string | null, cwd: string | undefined): 'checking' | 'exists' | 'missing' {
   const [state, setState] = useState<'checking' | 'exists' | 'missing'>('checking');
@@ -144,14 +149,7 @@ function useFileExists(path: string | null, cwd: string | undefined): 'checking'
 
     void (async () => {
       try {
-        const { exists } = await import('@tauri-apps/plugin-fs');
-        const { join } = await import('@tauri-apps/api/path');
-        let resolved = path;
-        const isAbsolute = /^(?:[A-Za-z]:[/\\]|[/\\]|\\\\|~[/\\]|\$\w+[/\\])/.test(path);
-        if (!isAbsolute && cwd) {
-          resolved = await join(cwd, path);
-        }
-        const ok = await exists(resolved);
+        const ok = await fileExists(path, { cwd });
         if (!disposed) setState(ok ? 'exists' : 'missing');
       } catch {
         if (!disposed) setState('exists'); // optimistic fallback
@@ -284,10 +282,15 @@ export function VisibleFileChip({
     originalPath === resolvedPath ? resolvedPath : `${originalPath}\n${resolvedPath}`;
   const interactive = typeof onOpenFile === 'function';
   const isImage = isImageFileRef(refData);
+  const isDocument = isDocumentFileRef(refData);
   const thumb = useImageThumbnail(isImage ? resolvedPath : null, cwd);
   const existsState = useFileExists(interactive ? resolvedPath : null, cwd);
   const [copied, copyToClipboard] = useCopyToClipboard();
-  const fileMissing = existsState === 'missing';
+  // Thumbnails load through the backend command previewLocalFile, which uses
+  // std::fs and is not restricted by the Tauri fs plugin scope. If a thumbnail
+  // successfully loaded, the file definitely exists, even when fs:exists reports
+  // missing for paths outside fs:scope-home-recursive (e.g. E:\ on Windows).
+  const fileMissing = existsState === 'missing' && thumb.status !== 'ready';
 
   useEffect(() => {
     if (!menu) return;
@@ -449,6 +452,8 @@ export function VisibleFileChip({
           <AlertTriangle size={11} className="shrink-0 opacity-70" />
         ) : isImage ? (
           <ImageOff size={11} className="shrink-0 opacity-70" />
+        ) : isDocument ? (
+          <FileText size={11} className="shrink-0 opacity-70" />
         ) : (
           <FileCode size={11} className="shrink-0 opacity-70" />
         )}

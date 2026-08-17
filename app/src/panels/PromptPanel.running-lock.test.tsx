@@ -360,7 +360,10 @@ describe('PromptPanel running lock', () => {
     try {
       const selector = channelButton(view.container);
 
-      expect(selector.textContent).toContain('Claude Code · 系统默认');
+      // 渠道已配置账号时不展示「系统默认」：触发按钮显示该渠道第一个账号
+      // （seed 中 claude-code 账号按名称排序第一个是 DeepSeek）。
+      expect(selector.textContent).toContain('DeepSeek');
+      expect(selector.textContent).not.toContain('系统默认');
       expect(selector.textContent).not.toContain('Claude Code · 默认渠道');
 
       await act(async () => {
@@ -389,6 +392,13 @@ describe('PromptPanel running lock', () => {
       expect(view.container.textContent).toContain('Codex Relay');
       expect(view.container.textContent).toContain('Gemini Relay');
       expect(view.container.textContent).toContain('LLM7');
+      // 已配置账号的渠道不再出现「系统默认」条目；仅无账号的渠道保留后备。
+      expect(view.container.textContent).not.toContain('Claude Code · 系统默认');
+      expect(view.container.textContent).not.toContain('Codex · 系统默认');
+      expect(view.container.textContent).not.toContain('Gemini · 系统默认');
+      expect(view.container.textContent).toContain('Kimi Code · 系统默认');
+      expect(view.container.textContent).toContain('DeepSeek Harness · 系统默认');
+      expect(view.container.textContent).toContain('ZCode / GLM · 系统默认');
     } finally {
       await view.cleanup();
     }

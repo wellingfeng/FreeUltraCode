@@ -77,7 +77,7 @@ function imageProviderCard(container: HTMLElement, label: string): HTMLElement {
         item.classList.contains('rounded-lg') &&
         item.classList.contains('bg-bg-alt') &&
         title?.textContent?.trim() === label &&
-        item.querySelector<HTMLInputElement>('input[placeholder="输入自定义模型名…"]')
+        item.querySelector<HTMLInputElement>('input[placeholder="搜索或输入自定义模型名…"]')
       );
     },
   );
@@ -99,7 +99,7 @@ function generationProviderCard(
         item.classList.contains('rounded-lg') &&
         item.classList.contains('bg-bg-alt') &&
         title?.textContent?.trim() === label &&
-        item.querySelector<HTMLInputElement>('input[placeholder="输入自定义模型名…"]')
+        item.querySelector<HTMLInputElement>('input[placeholder="搜索或输入自定义模型名…"]')
       );
     },
   );
@@ -115,14 +115,14 @@ async function addCustomModelThenSelectBuiltin(
 ): Promise<void> {
   let card = generationProviderCard(container, providerLabel);
   const modelInput = card.querySelector<HTMLInputElement>(
-    'input[placeholder="输入自定义模型名…"]',
+    'input[placeholder="搜索或输入自定义模型名…"]',
   );
   await act(async () => {
     setInputValue(modelInput!, customModel);
   });
   const addButton = Array.from(
     card.querySelectorAll<HTMLButtonElement>('button'),
-  ).find((button) => button.textContent?.trim() === '添加');
+  ).find((button) => button.textContent?.trim() === '选中/添加');
   await act(async () => {
     addButton?.click();
   });
@@ -246,14 +246,14 @@ describe('image channel survives modal remount', () => {
     await openImageTab(container);
     let card = imageProviderCard(container, 'OpenAI Images');
     const modelInput = card.querySelector<HTMLInputElement>(
-      'input[placeholder="输入自定义模型名…"]',
+      'input[placeholder="搜索或输入自定义模型名…"]',
     );
     await act(async () => {
       setInputValue(modelInput!, 'gpt-image-3');
     });
     const addButton = Array.from(
       card.querySelectorAll<HTMLButtonElement>('button'),
-    ).find((button) => button.textContent?.trim() === '添加');
+    ).find((button) => button.textContent?.trim() === '选中/添加');
     await act(async () => {
       addButton?.click();
     });

@@ -598,10 +598,13 @@ export function gatewayRouteEnv(
       if (route.apiKey) env.OPENAI_API_KEY = route.apiKey;
       if (route.baseUrl) env.OPENAI_BASE_URL = route.baseUrl;
     } else if (route.adapter === 'deepseek-harness') {
-      // dsh reads its DeepSeek key from the inherited environment / credential
-      // store; the model itself lives in `$DSH_HOME/settings.yaml`, so only the
-      // key is injected here.
+      // dsh reads its DeepSeek key + endpoint from the inherited environment /
+      // credential store (DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL); the model itself
+      // lives in `$DSH_HOME/settings.yaml`, so only key + base url are injected.
+      // Injecting the base url lets a third-party DeepSeek-compatible relay
+      // (SiliconFlow / OpenRouter / ...) be used through the same dsh CLI.
       if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
+      if (route.baseUrl) env.DEEPSEEK_BASE_URL = route.baseUrl;
     } else if (route.adapter === 'zcode') {
       // ZCode reads its provider + model from `~/.zcode/cli/config.json`
       // (provider.zai + model.main), never from env vars, so nothing is

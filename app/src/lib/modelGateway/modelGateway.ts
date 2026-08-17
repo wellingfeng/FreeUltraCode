@@ -71,6 +71,9 @@ async function completeDirectWithUsage(
       request.onUsage?.(report);
     },
   });
+  if (!text.trim()) {
+    throw new Error('模型返回了空内容（可能原因：上游鉴权失败、模型不可用、响应被过滤或请求被拦截）。');
+  }
   recordModelUsageForRoute(
     request.route,
     usage ?? estimateGatewayUsage(request.system, request.userContent, text),

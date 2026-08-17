@@ -108,6 +108,21 @@ export function parseRunFailure(err: unknown): RunFailure {
     };
   }
 
+  const emptyCliSuccess =
+    /CLI "([^"]+)" 未产生任何回复就退出[（(]退出码 0[）)]：([\s\S]*)/u.exec(raw);
+  if (emptyCliSuccess) {
+    const detail = emptyCliSuccess[2].trim();
+    return {
+      code: 'exit',
+      raw,
+      cli: emptyCliSuccess[1],
+      exitCode: 0,
+      message: `CLI "${emptyCliSuccess[1]}" 已退出但未返回模型内容${
+        detail ? `: ${detail}` : '（上游可能返回空响应、鉴权失败或过载）'
+      }。`,
+    };
+  }
+
   const exit = /CLI "([^"]+)" 退出码 (-?\d+):\s*([\s\S]*)/u.exec(raw);
   if (exit) {
     const detail = exit[3]?.trim();

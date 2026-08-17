@@ -92,6 +92,7 @@ import { useStore } from './useStore';
 import {
   addAiEditChannel,
   aiEditCommitMessages,
+  aiEditViewActive,
   gatewayRouteHeader,
   gatewayRouteLine,
   isActiveAiEditingSession,
@@ -222,6 +223,32 @@ afterEach(async () => {
 });
 
 describe('simple-workflow chat mode', () => {
+  it('does not treat a background AI-edit channel as the active view', () => {
+    // A UGS_GEN generation driven from inside the chat loop is marked
+    // `background: true`; its two-message shadow view must never flash over the
+    // driving chat bubble, so aiEditViewActive reports false for it.
+    resetStore(simpleBlueprint('Simple chat'));
+    useStore.setState({ activeWorkspaceId: 'ws1', activeSessionId: 's1' });
+    const base: AiEditChannel = {
+      key: 'bg',
+      sessionKey: 'ws1:s1',
+      workspaceId: 'ws1',
+      sessionId: 's1',
+      workflow: simpleBlueprint('Simple chat'),
+      messages: [{ id: 'm1', role: 'user', text: 'hi', createdAt: 1 }],
+      cliRunIds: new Set(),
+      abortController: new AbortController(),
+      workflowSession: false,
+      chat: true,
+      background: true,
+      ownedMessageIds: new Set(['m1']),
+    };
+    expect(aiEditViewActive(base)).toBe(false);
+
+    const foreground = { ...base, key: 'fg', background: false };
+    expect(aiEditViewActive(foreground)).toBe(true);
+  });
+
   it('stamps assistant completion time when persisting an AI edit message', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(5_000);
