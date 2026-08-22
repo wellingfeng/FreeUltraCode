@@ -233,17 +233,50 @@ export function stripInteraction(text: string): string {
   return text.trim();
 }
 
+/** Tool sentinel delimiters — mirror `TOOL_OPEN`/`TOOL_CLOSE` in
+ * `components/ai/lib/toolEvent.ts` without importing UI-layer code here (this
+ * module is also shared by the headless CLI host). */
+const TOOL_SENTINEL_OPEN = '<<UGS_TOOL>>';
+const TOOL_SENTINEL_CLOSE = '<<UGS_TOOL_END>>';
+
+/**
+ * Index of the first ``` code fence that lies *outside* any tool sentinel
+ * payload (`<<UGS_TOOL>>…<<UGS_TOOL_END>>`). Tool results routinely contain
+ * literal backticks (markdown files, diffs, compile logs); treating those as
+ * the hidden IRGraph fence would cut the live bubble at the first tool result
+ * and make the stream look frozen. Returns -1 when no such fence exists.
+ */
+function firstProseFenceIndex(text: string): number {
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf(TOOL_SENTINEL_OPEN, i);
+    if (open === -1) return text.indexOf('```', i);
+    const hit = text.indexOf('```', i);
+    if (hit !== -1 && hit < open) return hit;
+    // Skip the whole sentinel; if the close is missing (streaming tail),
+    // treat the rest of the text as payload and stop scanning.
+    const close = text.indexOf(TOOL_SENTINEL_CLOSE, open + TOOL_SENTINEL_OPEN.length);
+    i = close === -1 ? text.length : close + TOOL_SENTINEL_CLOSE.length;
+  }
+  return -1;
+}
+
 /**
  * The prefix of a streaming reply that is safe to show live: everything before
  * either a ``` code fence (the hidden IRGraph payload in the AI-edit flow) or an
  * interaction block. Keeps both the JSON graph and the raw protocol out of the
  * visible message while tokens are still arriving.
+ *
+ * The fence scan skips tool-sentinel payloads (`<<UGS_TOOL>>…<<UGS_TOOL_END>>`),
+ * whose results may legitimately contain backticks. Pass `cutAtFence = false`
+ * for plain chat streams, where the model's own code blocks are real content
+ * and must stream visibly instead of being hidden.
  */
-export function liveProse(text: string): string {
+export function liveProse(text: string, cutAtFence = true): string {
   const cuts: number[] = [];
   const ask = askOpenIndex(text);
   if (ask !== -1) cuts.push(ask);
-  const fence = text.indexOf('```');
+  const fence = cutAtFence ? firstProseFenceIndex(text) : -1;
   if (fence !== -1) cuts.push(fence);
   const mem = text.indexOf(MEMORY_OPEN);
   if (mem !== -1) cuts.push(mem);

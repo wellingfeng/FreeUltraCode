@@ -407,6 +407,45 @@ describe('SettingsModal programming model selection', () => {
     }
   });
 
+  it('persists an in-place API key edit when the modal unmounts without blurring the field', async () => {
+    const provider: Provider = {
+      id: 'provider-k1',
+      kind: 'anthropic',
+      name: 'Claude A',
+      apiKey: 'sk-old',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'claude-sonnet-4-5',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ anthropic: provider.id }),
+    );
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+
+      // 卡片上的 API Key 输入框（密码框）。输入后刻意不失焦，直接卸载设置
+      // —— 等价于按 Esc 关闭 / 切换 tab / 托盘退出前组件被销毁的场景。
+      const keyInput = view.container.querySelector<HTMLInputElement>(
+        'input[type="password"]',
+      );
+      expect(keyInput).toBeInstanceOf(HTMLInputElement);
+      await setInputValue(keyInput!, 'sk-new-value');
+    } finally {
+      await view.cleanup();
+    }
+
+    const storedProviders = JSON.parse(
+      window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+    ) as Provider[];
+    expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
+      'sk-new-value',
+    );
+  });
+
   it('switches the Settings default channel while a workflow is running without rebinding the active session', async () => {
     const providers: Provider[] = [
       {

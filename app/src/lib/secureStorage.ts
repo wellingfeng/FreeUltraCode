@@ -3,14 +3,14 @@ import {
   secureSecretDelete,
   secureSecretGetMany,
   secureSecretSet,
-} from '@/lib/tauri';
+} from "@/lib/tauri";
 
-export const PROVIDER_API_KEYS_SECRET = 'providers.apiKeys.v1';
-export const GATEWAY_CHANNEL_API_KEYS_SECRET = 'gateway.channelApiKeys.v1';
-export const FREE_CHANNEL_API_KEYS_SECRET = 'freeChannels.apiKeys.v1';
-export const FREE_PROXY_TOKEN_SECRET = 'freeProxy.token.v1';
-export const REMOTE_WORKSPACE_SECRET = 'remoteWorkspaces.secrets.v1';
-export const REMOTE_RUNNER_CONNECTION_SECRET = 'remoteRunner.connection.v1';
+export const PROVIDER_API_KEYS_SECRET = "providers.apiKeys.v1";
+export const GATEWAY_CHANNEL_API_KEYS_SECRET = "gateway.channelApiKeys.v1";
+export const FREE_CHANNEL_API_KEYS_SECRET = "freeChannels.apiKeys.v1";
+export const FREE_PROXY_TOKEN_SECRET = "freeProxy.token.v1";
+export const REMOTE_WORKSPACE_SECRET = "remoteWorkspaces.secrets.v1";
+export const REMOTE_RUNNER_CONNECTION_SECRET = "remoteRunner.connection.v1";
 
 const SECRET_NAMES = [
   PROVIDER_API_KEYS_SECRET,
@@ -21,17 +21,17 @@ const SECRET_NAMES = [
   REMOTE_RUNNER_CONNECTION_SECRET,
 ];
 
-const PROVIDERS_STORAGE = 'ugs_providers';
-const ACTIVE_PROVIDER_STORAGE = 'ugs_active_provider_id';
-const API_KEY_STORAGE = 'ugs_anthropic_key';
-const BASE_URL_STORAGE = 'ugs_anthropic_base_url';
-const GATEWAY_CONFIG_STORAGE = 'ugs_model_gateway_v1';
-const FREE_CHANNEL_KEYS_STORAGE = 'ugs_free_channel_keys_v1';
-const FREE_PROXY_TOKEN_STORAGE = 'ugs_free_proxy_token_v1';
+const PROVIDERS_STORAGE = "ugs_providers";
+const ACTIVE_PROVIDER_STORAGE = "ugs_active_provider_id";
+const API_KEY_STORAGE = "ugs_anthropic_key";
+const BASE_URL_STORAGE = "ugs_anthropic_base_url";
+const GATEWAY_CONFIG_STORAGE = "ugs_model_gateway_v1";
+const FREE_CHANNEL_KEYS_STORAGE = "ugs_free_channel_keys_v1";
+const FREE_PROXY_TOKEN_STORAGE = "ugs_free_proxy_token_v1";
 const LEGACY_FREE_CHANNEL_KEYS_STORAGE = [
-  'owf_free_channel_keys_v1',
-  'ultragamestudio.free_channel_keys_v1',
-  'ultragamestudio.freeChannels.keys',
+  "owf_free_channel_keys_v1",
+  "ultragamestudio.free_channel_keys_v1",
+  "ultragamestudio.freeChannels.keys",
 ];
 
 const memorySecrets = new Map<string, string>();
@@ -43,7 +43,7 @@ export function secureStorageAvailable(): boolean {
 }
 
 function hasWindow(): boolean {
-  return typeof window !== 'undefined';
+  return typeof window !== "undefined";
 }
 
 function rawGet(key: string): string | null {
@@ -77,7 +77,11 @@ function parseJsonObject(value: string | null): Record<string, unknown> | null {
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed)
+    ) {
       return parsed as Record<string, unknown>;
     }
   } catch {
@@ -87,12 +91,12 @@ function parseJsonObject(value: string | null): Record<string, unknown> | null {
 }
 
 function parseStringRecord(value: unknown): Record<string, string> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return {};
   }
   const out: Record<string, string> = {};
   for (const [key, raw] of Object.entries(value)) {
-    if (typeof raw !== 'string') continue;
+    if (typeof raw !== "string") continue;
     const trimmed = raw.trim();
     if (trimmed) out[key] = trimmed;
   }
@@ -104,7 +108,9 @@ function parseStoredRecord(key: string): Record<string, string> {
 }
 
 function parseSecretRecord(secretName: string): Record<string, string> {
-  return parseStringRecord(parseJsonObject(memorySecrets.get(secretName) ?? null));
+  return parseStringRecord(
+    parseJsonObject(memorySecrets.get(secretName) ?? null),
+  );
 }
 
 function serializeRecord(record: Record<string, string>): string {
@@ -113,7 +119,7 @@ function serializeRecord(record: Record<string, string>): string {
     const value = raw.trim();
     if (value) clean[key] = value;
   }
-  return Object.keys(clean).length > 0 ? JSON.stringify(clean) : '';
+  return Object.keys(clean).length > 0 ? JSON.stringify(clean) : "";
 }
 
 function cacheSecret(secretName: string, value: string): void {
@@ -121,7 +127,12 @@ function cacheSecret(secretName: string, value: string): void {
   else memorySecrets.delete(secretName);
 }
 
-async function persistSecretNow(secretName: string, value: string): Promise<void> {
+const pendingSecretWrites = new Set<Promise<void>>();
+
+async function persistSecretNow(
+  secretName: string,
+  value: string,
+): Promise<void> {
   cacheSecret(secretName, value);
   if (!secureStorageAvailable()) return;
   if (value) await secureSecretSet(secretName, value);
@@ -131,12 +142,40 @@ async function persistSecretNow(secretName: string, value: string): Promise<void
 function persistSecretSoon(secretName: string, value: string): void {
   cacheSecret(secretName, value);
   if (!secureStorageAvailable()) return;
-  const task = value
-    ? secureSecretSet(secretName, value)
-    : secureSecretDelete(secretName);
-  void task.catch((err) => {
-    console.warn('[secureStorage] failed to persist secret', secretName, err);
+  const task = (
+    value ? secureSecretSet(secretName, value) : secureSecretDelete(secretName)
+  ).catch((err) => {
+    console.warn("[secureStorage] failed to persist secret", secretName, err);
   });
+  pendingSecretWrites.add(task);
+  void task.finally(() => pendingSecretWrites.delete(task));
+}
+
+/**
+ * Await all in-flight OS keychain writes so callers can confirm secrets actually
+ * reached durable storage before claiming success (or before the app exits).
+ * Returns immediately when secure storage is unavailable.
+ */
+export async function flushSecureStorage(): Promise<void> {
+  if (!secureStorageAvailable()) return;
+  const inFlight = [...pendingSecretWrites];
+  if (inFlight.length === 0) return;
+  await Promise.all(inFlight);
+}
+
+/**
+ * Synchronous-write variant of {@link writeSecureRecord}: waits for the OS keychain
+ * call to complete before returning. Use this when the caller must guarantee the
+ * secret is durable before continuing (e.g., before closing a settings dialog).
+ */
+export async function writeSecureRecordAwaited(
+  secretName: string,
+  record: Record<string, string>,
+): Promise<void> {
+  const next = serializeRecord(record);
+  const prev = memorySecrets.get(secretName) ?? "";
+  if (next === prev) return;
+  await persistSecretNow(secretName, next);
 }
 
 export function readSecureRecord(secretName: string): Record<string, string> {
@@ -144,7 +183,7 @@ export function readSecureRecord(secretName: string): Record<string, string> {
 }
 
 export function readSecureRecordValue(secretName: string, key: string): string {
-  return readSecureRecord(secretName)[key] ?? '';
+  return readSecureRecord(secretName)[key] ?? "";
 }
 
 export function writeSecureRecord(
@@ -152,7 +191,7 @@ export function writeSecureRecord(
   record: Record<string, string>,
 ): boolean {
   const next = serializeRecord(record);
-  const prev = memorySecrets.get(secretName) ?? '';
+  const prev = memorySecrets.get(secretName) ?? "";
   if (next === prev) return false;
   persistSecretSoon(secretName, next);
   return true;
@@ -171,12 +210,12 @@ export function setSecureRecordValue(
 }
 
 export function readSecureSecret(secretName: string): string {
-  return memorySecrets.get(secretName) ?? '';
+  return memorySecrets.get(secretName) ?? "";
 }
 
 export function writeSecureSecret(secretName: string, value: string): boolean {
   const next = value.trim();
-  const prev = memorySecrets.get(secretName) ?? '';
+  const prev = memorySecrets.get(secretName) ?? "";
   if (next === prev) return false;
   persistSecretSoon(secretName, next);
   return true;
@@ -192,27 +231,28 @@ export function gatewayChannelSecretKey(
 function genProviderId(): string {
   try {
     const crypto = globalThis.crypto;
-    if (typeof crypto?.randomUUID === 'function') return crypto.randomUUID();
+    if (typeof crypto?.randomUUID === "function") return crypto.randomUUID();
   } catch {
     /* ignore */
   }
   return `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function stripProviderSecrets(
-  providerKeys: Record<string, string>,
-): { value: string | null; changed: boolean } {
+function stripProviderSecrets(providerKeys: Record<string, string>): {
+  value: string | null;
+  changed: boolean;
+} {
   const raw = rawGet(PROVIDERS_STORAGE);
   if (raw === null) {
-    const legacyKey = (rawGet(API_KEY_STORAGE) ?? '').trim();
+    const legacyKey = (rawGet(API_KEY_STORAGE) ?? "").trim();
     if (!legacyKey) return { value: null, changed: false };
     const id = genProviderId();
     providerKeys[id] = legacyKey;
     const provider = {
       id,
-      kind: 'anthropic',
-      name: 'Claude',
-      baseUrl: (rawGet(BASE_URL_STORAGE) ?? '').trim(),
+      kind: "anthropic",
+      name: "Claude",
+      baseUrl: (rawGet(BASE_URL_STORAGE) ?? "").trim(),
     };
     rawSet(ACTIVE_PROVIDER_STORAGE, id);
     return { value: JSON.stringify([provider]), changed: true };
@@ -223,14 +263,15 @@ function stripProviderSecrets(
     if (!Array.isArray(parsed)) return { value: null, changed: false };
     let changed = false;
     const sanitized = parsed.map((item) => {
-      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      if (typeof item !== "object" || item === null || Array.isArray(item)) {
         return item;
       }
       const record = item as Record<string, unknown>;
-      const id = typeof record.id === 'string' ? record.id : '';
-      const apiKey = typeof record.apiKey === 'string' ? record.apiKey.trim() : '';
+      const id = typeof record.id === "string" ? record.id : "";
+      const apiKey =
+        typeof record.apiKey === "string" ? record.apiKey.trim() : "";
       if (id && apiKey) providerKeys[id] = apiKey;
-      if ('apiKey' in record) {
+      if ("apiKey" in record) {
         changed = true;
         const rest = { ...record };
         delete rest.apiKey;
@@ -244,34 +285,47 @@ function stripProviderSecrets(
   }
 }
 
-function stripGatewaySecrets(
-  gatewayKeys: Record<string, string>,
-): { value: string | null; changed: boolean } {
+function stripGatewaySecrets(gatewayKeys: Record<string, string>): {
+  value: string | null;
+  changed: boolean;
+} {
   const raw = parseJsonObject(rawGet(GATEWAY_CONFIG_STORAGE));
-  if (!raw || !Array.isArray(raw.providers)) return { value: null, changed: false };
+  if (!raw || !Array.isArray(raw.providers))
+    return { value: null, changed: false };
   let changed = false;
   const providers = raw.providers.map((provider) => {
-    if (typeof provider !== 'object' || provider === null || Array.isArray(provider)) {
+    if (
+      typeof provider !== "object" ||
+      provider === null ||
+      Array.isArray(provider)
+    ) {
       return provider;
     }
     const providerRecord = provider as Record<string, unknown>;
-    const providerId = typeof providerRecord.id === 'string' ? providerRecord.id : '';
+    const providerId =
+      typeof providerRecord.id === "string" ? providerRecord.id : "";
     if (!Array.isArray(providerRecord.channels)) return provider;
     const channels = providerRecord.channels.map((channel) => {
-      if (typeof channel !== 'object' || channel === null || Array.isArray(channel)) {
+      if (
+        typeof channel !== "object" ||
+        channel === null ||
+        Array.isArray(channel)
+      ) {
         return channel;
       }
       const channelRecord = channel as Record<string, unknown>;
       const channelId =
-        typeof channelRecord.id === 'string' && channelRecord.id
+        typeof channelRecord.id === "string" && channelRecord.id
           ? channelRecord.id
-          : 'default';
+          : "default";
       const apiKey =
-        typeof channelRecord.apiKey === 'string' ? channelRecord.apiKey.trim() : '';
+        typeof channelRecord.apiKey === "string"
+          ? channelRecord.apiKey.trim()
+          : "";
       if (providerId && apiKey) {
         gatewayKeys[gatewayChannelSecretKey(providerId, channelId)] = apiKey;
       }
-      if ('apiKey' in channelRecord) {
+      if ("apiKey" in channelRecord) {
         changed = true;
         const rest = { ...channelRecord };
         delete rest.apiKey;
@@ -313,9 +367,12 @@ async function migrateLocalStorageSecrets(): Promise<void> {
   for (const [id, value] of Object.entries(freeKeys.record)) {
     if (value) freeChannelKeys[id] = value;
   }
-  const proxyToken = (rawGet(FREE_PROXY_TOKEN_STORAGE) ?? '').trim();
+  const proxyToken = (rawGet(FREE_PROXY_TOKEN_STORAGE) ?? "").trim();
 
-  await persistSecretNow(PROVIDER_API_KEYS_SECRET, serializeRecord(providerKeys));
+  await persistSecretNow(
+    PROVIDER_API_KEYS_SECRET,
+    serializeRecord(providerKeys),
+  );
   await persistSecretNow(
     GATEWAY_CHANNEL_API_KEYS_SECRET,
     serializeRecord(gatewayKeys),
@@ -326,7 +383,8 @@ async function migrateLocalStorageSecrets(): Promise<void> {
   );
   if (proxyToken) await persistSecretNow(FREE_PROXY_TOKEN_SECRET, proxyToken);
 
-  if (providerStorage.value !== null) rawSet(PROVIDERS_STORAGE, providerStorage.value);
+  if (providerStorage.value !== null)
+    rawSet(PROVIDERS_STORAGE, providerStorage.value);
   if (gatewayStorage.value !== null) {
     rawSet(GATEWAY_CONFIG_STORAGE, gatewayStorage.value);
   }
@@ -346,12 +404,112 @@ export async function initializeSecureStorage(): Promise<void> {
     await migrateLocalStorageSecrets();
   } catch (err) {
     secureReady = false;
-    console.warn('[secureStorage] initialization failed; keeping localStorage fallback', err);
+    console.warn(
+      "[secureStorage] initialization failed; keeping localStorage fallback",
+      err,
+    );
+  }
+}
+
+/**
+ * 同步把内存中的密钥记录回写进 localStorage 对应位置，作为「进程即将被终止
+ * （如系统托盘右键菜单退出）时 OS keychain 异步写可能尚未落盘」的兜底。
+ *
+ * 这是纯同步操作（localStorage.setItem），可在 beforeunload / 退出握手事件里
+ * 安全调用。下次启动时 initializeSecureStorage 的迁移逻辑（migrateLocalStorageSecrets）
+ * 会把 localStorage 里的明文 key 合并回 keychain 并剥离，因此平时不保留明文副本。
+ */
+export function flushSecretsToLocalStorageFallback(): void {
+  if (!hasWindow()) return;
+
+  const providerKeys = readSecureRecord(PROVIDER_API_KEYS_SECRET);
+  if (Object.keys(providerKeys).length > 0) {
+    const raw = rawGet(PROVIDERS_STORAGE);
+    if (raw !== null) {
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (Array.isArray(parsed)) {
+          const next = parsed.map((item) => {
+            if (
+              typeof item !== "object" ||
+              item === null ||
+              Array.isArray(item)
+            ) {
+              return item;
+            }
+            const record = item as Record<string, unknown>;
+            const id = typeof record.id === "string" ? record.id : "";
+            const key = id ? providerKeys[id] : "";
+            if (!key) return item;
+            return { ...record, apiKey: key };
+          });
+          rawSet(PROVIDERS_STORAGE, JSON.stringify(next));
+        }
+      } catch {
+        /* corrupt — keep the stored value as-is */
+      }
+    }
+  }
+
+  const gatewayKeys = readSecureRecord(GATEWAY_CHANNEL_API_KEYS_SECRET);
+  if (Object.keys(gatewayKeys).length > 0) {
+    const raw = parseJsonObject(rawGet(GATEWAY_CONFIG_STORAGE));
+    if (raw && Array.isArray(raw.providers)) {
+      try {
+        const providers = raw.providers.map((provider) => {
+          if (
+            typeof provider !== "object" ||
+            provider === null ||
+            Array.isArray(provider)
+          ) {
+            return provider;
+          }
+          const providerRecord = provider as Record<string, unknown>;
+          const providerId =
+            typeof providerRecord.id === "string" ? providerRecord.id : "";
+          if (!Array.isArray(providerRecord.channels)) return provider;
+          const channels = providerRecord.channels.map((channel) => {
+            if (
+              typeof channel !== "object" ||
+              channel === null ||
+              Array.isArray(channel)
+            ) {
+              return channel;
+            }
+            const channelRecord = channel as Record<string, unknown>;
+            const channelId =
+              typeof channelRecord.id === "string" && channelRecord.id
+                ? channelRecord.id
+                : "default";
+            const key = providerId
+              ? gatewayKeys[gatewayChannelSecretKey(providerId, channelId)]
+              : "";
+            if (!key) return channel;
+            return { ...channelRecord, apiKey: key };
+          });
+          return { ...providerRecord, channels };
+        });
+        rawSet(GATEWAY_CONFIG_STORAGE, JSON.stringify({ ...raw, providers }));
+      } catch {
+        /* corrupt — keep the stored value as-is */
+      }
+    }
+  }
+
+  const freeChannelKeys = readSecureRecord(FREE_CHANNEL_API_KEYS_SECRET);
+  if (Object.keys(freeChannelKeys).length > 0) {
+    rawSet(FREE_CHANNEL_KEYS_STORAGE, serializeRecord(freeChannelKeys));
+  }
+
+  const proxyToken = readSecureSecret(FREE_PROXY_TOKEN_SECRET);
+  if (proxyToken) {
+    rawSet(FREE_PROXY_TOKEN_STORAGE, proxyToken);
   }
 }
 
 export function resetSecureStorageForTests(): void {
   memorySecrets.clear();
+  pendingSecretWrites.clear();
   initialized = false;
   secureReady = false;
 }

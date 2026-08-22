@@ -426,6 +426,34 @@ describe('model gateway compatibility', () => {
     ).toBeUndefined();
   });
 
+  it('exports zcode CLI env so the host can sync them into ~/.zcode/cli/config.json', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'zcode',
+        transport: 'cli',
+        apiKey: 'zcode-key',
+        baseUrl: 'https://api.z.ai/api/anthropic',
+        model: 'glm-5.3',
+      }),
+    ).toMatchObject({
+      ZCODE_API_KEY: 'zcode-key',
+      ZCODE_BASE_URL: 'https://api.z.ai/api/anthropic',
+      ZCODE_MODEL: 'glm-5.3',
+    });
+  });
+
+  it('omits zcode env when the channel carries no key/base url/model', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'zcode',
+        transport: 'cli',
+        apiKey: undefined,
+        baseUrl: undefined,
+        model: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
   it('uses system CLI defaults without provider env when systemDefault is selected', () => {
     window.localStorage.setItem(
       PROVIDERS_STORAGE,

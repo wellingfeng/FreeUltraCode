@@ -504,6 +504,8 @@ function legacyKind(value: LegacyProvider): string {
     value.adapter === 'codex' ||
     value.kind === 'gemini' ||
     value.adapter === 'gemini' ||
+    value.kind === 'kimi' ||
+    value.adapter === 'kimi' ||
     value.kind === 'deepseek-harness' ||
     value.adapter === 'deepseek-harness' ||
     value.kind === 'zcode' ||

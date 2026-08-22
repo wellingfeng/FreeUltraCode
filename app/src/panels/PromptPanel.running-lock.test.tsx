@@ -361,8 +361,8 @@ describe('PromptPanel running lock', () => {
       const selector = channelButton(view.container);
 
       // 渠道已配置账号时不展示「系统默认」：触发按钮显示该渠道第一个账号
-      // （seed 中 claude-code 账号按名称排序第一个是 DeepSeek）。
-      expect(selector.textContent).toContain('DeepSeek');
+      // （seed 中 claude-code 账号按添加顺序第一个是 SSSAiCode）。
+      expect(selector.textContent).toContain('SSSAiCode');
       expect(selector.textContent).not.toContain('系统默认');
       expect(selector.textContent).not.toContain('Claude Code · 默认渠道');
 

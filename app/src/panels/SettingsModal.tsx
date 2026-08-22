@@ -98,6 +98,7 @@ import {
   type Provider,
   type ProviderRuntimeStatus,
 } from '@/lib/apiConfig';
+import { flushSecureStorage } from '@/lib/secureStorage';
 import { importCcSwitchProviders } from '@/lib/ccSwitchAutoImport';
 import {
   isTauri,
@@ -1909,6 +1910,7 @@ function stripCliErrorPrefix(raw: string): string {
 function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
+  if (kind === 'kimi') return 'kimi';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
   if (kind === 'zcode') return 'zcode';
   return 'claude-code';
@@ -1918,6 +1920,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
 function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
   return 'anthropic';
@@ -1931,6 +1934,7 @@ const PROVIDER_ADAPTER_SECTIONS: ReadonlyArray<{
   { adapter: 'claude-code', dotClassName: 'bg-amber-400' },
   { adapter: 'codex', dotClassName: 'bg-fg-faint' },
   { adapter: 'gemini', dotClassName: 'bg-sky-400' },
+  { adapter: 'kimi', dotClassName: 'bg-fuchsia-400' },
   { adapter: 'deepseek-harness', dotClassName: 'bg-indigo-400' },
   { adapter: 'zcode', dotClassName: 'bg-cyan-400' },
 ];
@@ -2140,7 +2144,9 @@ function GlobalRunControls({
   const defaultChannelProviders = useMemo(() => {
     void revision;
     const desktop = isTauri();
-    const sorted = listProviders()
+    // 保持配置（添加）顺序，不做状态/名称重排：新添加的渠道在所属适配器
+    // 分组里按添加顺序排在后面，用户不会因列表跳动而找不到它。
+    const providers = listProviders()
       .filter((provider) => !isRemoteRunnerProvider(provider))
       .map((provider) => {
         const adapter = providerKindToAdapter(provider.kind);
@@ -2149,19 +2155,9 @@ function GlobalRunControls({
             desktop && isCliAdapterAvailable(adapter, cliRuntime),
         });
         return { provider, adapter, status: runtime.status };
-      })
-      .sort((a, b) => {
-        const adapterRank =
-          RUNTIME_ADAPTERS.findIndex((item) => item.id === a.adapter) -
-          RUNTIME_ADAPTERS.findIndex((item) => item.id === b.adapter);
-        if (adapterRank !== 0) return adapterRank;
-        const rankA = providerSortRank(a.status);
-        const rankB = providerSortRank(b.status);
-        if (rankA !== rankB) return rankA - rankB;
-        return a.provider.name.localeCompare(b.provider.name);
       });
     const seen = new Set<string>();
-    return sorted.filter(({ provider, adapter }) => {
+    return providers.filter(({ provider, adapter }) => {
       const key = [
         adapter,
         provider.name.trim().toLowerCase(),
@@ -2629,6 +2625,7 @@ function ModelsSettings({
     setStatus(null);
     try {
       const result = importDefaultChannelsConfig(await readJsonFile(file));
+      await flushSecureStorage();
       refresh();
       setStatus({
         tone: 'ok',
@@ -2646,6 +2643,8 @@ function ModelsSettings({
     }
   };
 
+  // 渠道列表保持配置（添加）顺序，不做状态/名称重排：刚添加的渠道就停在
+  // 列表末尾，用户一眼能找到；否则每次添加后列表跳动，找不到新渠道。
   const providerCards = useMemo(
     () =>
       providers
@@ -2659,12 +2658,6 @@ function ModelsSettings({
             adapter,
             runtime: getProviderRuntimeInfo(provider, { canUseCliFallback }),
           };
-        })
-        .sort((a, b) => {
-          const rankA = providerSortRank(a.runtime.status);
-          const rankB = providerSortRank(b.runtime.status);
-          if (rankA !== rankB) return rankA - rankB;
-          return a.provider.name.localeCompare(b.provider.name);
         }),
     [providers, desktop, cliRuntime],
   );
@@ -2936,6 +2929,13 @@ function DefaultChannelRow({
     error: string | null;
   }>({ loading: false, error: null });
 
+  // 就地编辑的「输入即保存」支持：字段改动先合并进 pendingPatchRef，由防抖
+  // 定时器统一提交（默认 600ms）。blur/回车会立即冲刷；组件卸载（Esc 关闭
+  // 设置、切换 tab、关闭窗口）时把未提交的修改兜底写盘，避免「界面上改了、
+  // 磁盘上没存」的丢失。
+  const pendingPatchRef = useRef<Partial<ProviderDraft>>({});
+  const commitTimerRef = useRef<number | null>(null);
+
   useEffect(() => {
     setBaseUrlValue(provider.baseUrl);
     setKeyValue(provider.apiKey);
@@ -2953,6 +2953,44 @@ function DefaultChannelRow({
     provider.model,
   ]);
 
+  // 组件卸载兜底：把尚未提交的就地编辑直接持久化（不走 setState）。
+  // 只监听真正卸载（依赖固定为空），避免其它渠道的 refresh 触发依赖变化时
+  // 把输入到一半的 key 提前提交；latestRef 保证卸载时读到最新 props。
+  const latestRef = useRef({ provider, providers });
+  latestRef.current = { provider, providers };
+  useEffect(() => {
+    return () => {
+      if (commitTimerRef.current !== null) {
+        window.clearTimeout(commitTimerRef.current);
+        commitTimerRef.current = null;
+      }
+      const patch = pendingPatchRef.current;
+      if (Object.keys(patch).length === 0) return;
+      pendingPatchRef.current = {};
+      const { provider: latestProvider, providers: latestProviders } =
+        latestRef.current;
+      const next = trimProviderDraft({ ...latestProvider, ...patch });
+      if (!next.name || !isProviderBaseUrlValid(next.baseUrl)) return;
+      const duplicate = latestProviders.some(
+        (candidate) =>
+          candidate.id !== latestProvider.id &&
+          providerMetadataSignature(candidate) === providerMetadataSignature(next),
+      );
+      if (duplicate) return;
+      if (!providerDraftChanged(next, providerDraft(latestProvider))) return;
+      updateProvider(latestProvider.id, {
+        name: next.name,
+        apiKey: next.apiKey,
+        baseUrl: next.baseUrl,
+        model: next.model,
+        models: next.models,
+        transport: next.transport,
+      });
+      void flushSecureStorage();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const draftProvider: Provider = {
     ...provider,
     name: nameValue,
@@ -2967,11 +3005,8 @@ function DefaultChannelRow({
   const modelCacheKey = providerModelCacheKey(draftProvider);
   const KeyIcon = showKey ? EyeOff : Eye;
 
-  const commitProvider = (patch: Partial<ProviderDraft>): boolean => {
-    const nextProvider: Provider = {
-      ...draftProvider,
-      ...patch,
-    };
+  /** 校验并把补丁写入存储；成功后返回 true。不含 state 同步（供防抖/卸载路径复用）。 */
+  const persistProviderPatch = (nextProvider: Provider): boolean => {
     const next = trimProviderDraft(nextProvider);
     if (!next.name) {
       setNameError(t(locale, 'settings.models.validationNameRequired'));
@@ -2991,15 +3026,6 @@ function DefaultChannelRow({
       setDuplicateError(t(locale, 'settings.models.validationDuplicate'));
       return false;
     }
-
-    setBaseUrlError(null);
-    setNameError(null);
-    setDuplicateError(null);
-    setNameValue(next.name);
-    setBaseUrlValue(next.baseUrl);
-    setKeyValue(next.apiKey);
-    setModelValue(next.model ?? '');
-
     if (!providerDraftChanged(next, providerDraft(provider))) return false;
     updateProvider(provider.id, {
       name: next.name,
@@ -3009,8 +3035,57 @@ function DefaultChannelRow({
       models: next.models,
       transport: next.transport,
     });
+    // Make sure any API key change reaches the OS keychain before the dialog
+    // closes or the app is exited; the write is fire-and-forget by default.
+    void flushSecureStorage();
+    return true;
+  };
+
+  const commitProvider = (patch: Partial<ProviderDraft>): boolean => {
+    const nextProvider: Provider = {
+      ...draftProvider,
+      ...patch,
+    };
+    const ok = persistProviderPatch(nextProvider);
+    if (!ok) return false;
+    const next = trimProviderDraft(nextProvider);
+    setBaseUrlError(null);
+    setNameError(null);
+    setDuplicateError(null);
+    setNameValue(next.name);
+    setBaseUrlValue(next.baseUrl);
+    setKeyValue(next.apiKey);
+    setModelValue(next.model ?? '');
+    pendingPatchRef.current = {};
     onChange();
     return true;
+  };
+
+  /** 就地编辑的防抖保存：改动先合并进 pendingPatchRef，600ms 无新输入后统一提交。 */
+  const scheduleSave = (patch: Partial<ProviderDraft>): void => {
+    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+    }
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null;
+      const pending = pendingPatchRef.current;
+      if (Object.keys(pending).length === 0) return;
+      pendingPatchRef.current = {};
+      commitProvider(pending);
+    }, 600);
+  };
+
+  /** 立即冲刷未提交的就地编辑（输入框失焦 / 回车时调用）。 */
+  const flushPendingSave = (): void => {
+    if (commitTimerRef.current !== null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    const pending = pendingPatchRef.current;
+    if (Object.keys(pending).length === 0) return;
+    pendingPatchRef.current = {};
+    commitProvider(pending);
   };
 
   const commitName = () => {
@@ -3164,8 +3239,9 @@ function DefaultChannelRow({
               setBaseUrlValue(event.target.value);
               setBaseUrlError(null);
               setDuplicateError(null);
+              scheduleSave({ baseUrl: event.target.value });
             }}
-            onBlur={() => commitProvider({ baseUrl: baseUrlValue })}
+            onBlur={flushPendingSave}
             onKeyDown={(event) => {
               if (event.key === 'Enter') event.currentTarget.blur();
             }}
@@ -3192,8 +3268,11 @@ function DefaultChannelRow({
             <input
               type={showKey ? 'text' : 'password'}
               value={keyValue}
-              onChange={(event) => setKeyValue(event.target.value)}
-              onBlur={() => commitProvider({ apiKey: keyValue })}
+              onChange={(event) => {
+                setKeyValue(event.target.value);
+                scheduleSave({ apiKey: event.target.value });
+              }}
+              onBlur={flushPendingSave}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') event.currentTarget.blur();
               }}
@@ -3219,7 +3298,7 @@ function DefaultChannelRow({
                   type="button"
                   onClick={() => {
                     setKeyValue('');
-                    commitProvider({ apiKey: '' });
+                    scheduleSave({ apiKey: '' });
                   }}
                   title={t(locale, 'settings.models.clear')}
                   className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
@@ -3461,7 +3540,7 @@ function ProviderEditor({
     });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const next = trimProviderDraft(editor.draft);
     const nextErrors: typeof errors = {};
     if (!next.name) {
@@ -3490,6 +3569,7 @@ function ProviderEditor({
       } else {
         addProvider(next);
       }
+      await flushSecureStorage();
       onSaved();
     } catch {
       setSaveError(t(locale, 'settings.models.saveError'));
@@ -3792,12 +3872,6 @@ function providerDraftChanged(a: ProviderDraft, b: ProviderDraft): boolean {
     leftModels.length !== rightModels.length ||
     leftModels.some((model, index) => model !== rightModels[index])
   );
-}
-
-function providerSortRank(status: ProviderRuntimeStatus): number {
-  if (status === 'direct') return 1;
-  if (status === 'cli') return 2;
-  return 3;
 }
 
 function providerStatusLabel(
@@ -10125,10 +10199,35 @@ function FreeChannelRow({
     loading: boolean;
     error: string | null;
   }>({ loading: false, error: null });
+  // 「输入即保存」：key 改动先防抖，blur / 组件卸载时立即冲刷，避免输入后
+  // 未失焦直接关闭设置、切换 tab 或托盘退出导致就地编辑的 key 丢失。
+  const pendingKeyRef = useRef<string | null>(null);
+  const keyTimerRef = useRef<number | null>(null);
   useEffect(() => {
     setKeyValue(getFreeChannelKey(channel.id));
     setModelValue(getFreeChannelModelOverride(channel.id));
   }, [channel.id, revision]);
+
+  // 组件卸载兜底：把尚未提交的 key 写入存储（不走 setState）。依赖固定为空，
+  // 只在真正卸载时执行；latestChannelRef 保证读到最新 channel。
+  const latestChannelRef = useRef(channel);
+  latestChannelRef.current = channel;
+  useEffect(() => {
+    return () => {
+      if (keyTimerRef.current !== null) {
+        window.clearTimeout(keyTimerRef.current);
+        keyTimerRef.current = null;
+      }
+      const pending = pendingKeyRef.current;
+      if (pending === null) return;
+      pendingKeyRef.current = null;
+      const trimmed = pending.trim();
+      const current = getFreeChannelKey(latestChannelRef.current.id);
+      if (trimmed === current) return;
+      setFreeChannelKey(latestChannelRef.current.id, trimmed);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!channel.local) return;
@@ -10198,6 +10297,31 @@ function FreeChannelRow({
     const changed = setFreeChannelModel(channel.id, trimmed);
     if (changed) onChange();
     return changed;
+  };
+  /** 就地编辑的防抖保存：600ms 无新输入后统一提交 key。 */
+  const scheduleKeySave = (value: string): void => {
+    pendingKeyRef.current = value;
+    if (keyTimerRef.current !== null) {
+      window.clearTimeout(keyTimerRef.current);
+    }
+    keyTimerRef.current = window.setTimeout(() => {
+      keyTimerRef.current = null;
+      const pending = pendingKeyRef.current;
+      if (pending === null) return;
+      pendingKeyRef.current = null;
+      if (commitKey(pending)) reproxy();
+    }, 600);
+  };
+  /** 立即冲刷未提交的 key（输入框失焦 / 回车时调用）。 */
+  const flushPendingKey = (): void => {
+    if (keyTimerRef.current !== null) {
+      window.clearTimeout(keyTimerRef.current);
+      keyTimerRef.current = null;
+    }
+    const pending = pendingKeyRef.current;
+    if (pending === null) return;
+    pendingKeyRef.current = null;
+    if (commitKey(pending)) reproxy();
   };
   const refreshModels = async () => {
     setModelRefresh({ loading: true, error: null });
@@ -10307,10 +10431,11 @@ function FreeChannelRow({
               <input
                 type={showKey ? 'text' : 'password'}
                 value={keyValue}
-                onChange={(event) => setKeyValue(event.target.value)}
-                onBlur={() => {
-                  if (commitKey(keyValue)) reproxy();
+                onChange={(event) => {
+                  setKeyValue(event.target.value);
+                  scheduleKeySave(event.target.value);
                 }}
+                onBlur={flushPendingKey}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') event.currentTarget.blur();
                 }}
@@ -10337,7 +10462,8 @@ function FreeChannelRow({
                   <button
                     type="button"
                     onClick={() => {
-                      if (commitKey('')) reproxy();
+                      setKeyValue('');
+                      scheduleKeySave('');
                     }}
                     title={t(locale, 'settings.freeChannels.clear')}
                     className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"

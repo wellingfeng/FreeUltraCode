@@ -5,6 +5,7 @@ import {
   setActiveProviderId,
   type Provider,
 } from '@/lib/apiConfig';
+import { flushSecureStorage } from '@/lib/secureStorage';
 import {
   loadGatewayConfig,
   modelClassFromModelId,
@@ -64,11 +65,13 @@ function providerToGatewayProvider(provider: Provider): GatewayProvider {
       ? 'codex'
       : provider.kind === 'gemini'
         ? 'gemini'
-        : provider.kind === 'deepseek-harness'
-          ? 'deepseek-harness'
-          : provider.kind === 'zcode'
-            ? 'zcode'
-            : 'claude-code';
+        : provider.kind === 'kimi'
+          ? 'kimi'
+          : provider.kind === 'deepseek-harness'
+            ? 'deepseek-harness'
+            : provider.kind === 'zcode'
+              ? 'zcode'
+              : 'claude-code';
   const transport =
     provider.transport === 'cli' || provider.kind !== 'anthropic'
       ? 'cli'
@@ -98,10 +101,10 @@ function providerToGatewayProvider(provider: Provider): GatewayProvider {
   };
 }
 
-function syncGatewayProviders(
+async function syncGatewayProviders(
   imported: ProviderDraft[],
   activeDraft?: ProviderDraft,
-): void {
+): Promise<void> {
   const importedProviders = listProviders();
   const lookup = new Map(
     importedProviders.map((provider) => [providerMetadataSignature(provider), provider]),
@@ -131,7 +134,7 @@ function syncGatewayProviders(
     }
   }
 
-  saveGatewayConfig({
+  await saveGatewayConfig({
     version: 1,
     providers: nextProviders,
   });
@@ -148,6 +151,8 @@ function syncGatewayProviders(
       channelId: 'default',
     });
   }
+
+  await flushSecureStorage();
 }
 
 function normalizeErrorReason(error: unknown): string {
@@ -250,7 +255,7 @@ export async function importCcSwitchProviders(
       // `direct` entry for the same relay instead of importing a duplicate.
       collapseTransport: true,
     });
-    syncGatewayProviders(
+    await syncGatewayProviders(
       drafts,
       activeAnthropic
         ? providers

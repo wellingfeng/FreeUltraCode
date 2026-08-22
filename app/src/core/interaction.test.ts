@@ -36,3 +36,42 @@ describe('tolerant UGS_ASK sentinel matching', () => {
     expect(parseInteraction(text)).toBeNull();
   });
 });
+
+// Root-cause regression: `liveProse` used to scan the whole stream for the first
+// ``` and cut there. Tool-result sentinels (`<<UGS_TOOL>>…<<UGS_TOOL_END>>`)
+// routinely contain literal backticks (markdown files, diffs, compile logs), so
+// the live bubble got truncated at the first tool result and only refreshed at
+// round end ("stream frozen, then a sudden full refresh").
+describe('liveProse tool-sentinel fence handling', () => {
+  const toolBlock =
+    `<<UGS_TOOL>>${JSON.stringify({
+      id: 't1',
+      name: 'Read',
+      subject: 'README.md',
+      status: 'done',
+      result: '\n```\n# 标题\n```\n',
+    })}<<UGS_TOOL_END>>`;
+
+  it('does not cut inside a tool sentinel payload that contains ```', () => {
+    const text = `好的，我先读取这个文件。\n${toolBlock}\n文件读完了，接下来开始编译。`;
+    const out = liveProse(text);
+    expect(out).toBe(text);
+    expect(out).toContain('文件读完了，接下来开始编译。');
+  });
+
+  it('does not cut inside an unterminated tool payload that contains ```', () => {
+    const text = '开头。\n<<UGS_TOOL>>{"id":"t1","result":"\n```\n半截载荷';
+    const out = liveProse(text);
+    expect(out).toBe(text.trimEnd());
+  });
+
+  it('still cuts at a real fence in prose (blueprint flow regression guard)', () => {
+    const text = '先看说明。\n```json\n{"a":1}\n```\n后面还有正文';
+    expect(liveProse(text)).toBe('先看说明。');
+  });
+
+  it('cutAtFence=false keeps real code fences visible (plain chat)', () => {
+    const text = '先看说明。\n```ts\nconst x = 1;\n```\n后面还有正文';
+    expect(liveProse(text, false)).toBe(text.trimEnd());
+  });
+});

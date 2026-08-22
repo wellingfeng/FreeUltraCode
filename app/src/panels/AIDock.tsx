@@ -55,7 +55,6 @@ import {
   listProviders,
   type Provider,
   type ProviderKind,
-  type ProviderRuntimeStatus,
 } from "@/lib/apiConfig";
 import { getCliRuntimeSnapshot, isCliAdapterAvailable } from "@/lib/cliConfig";
 import { cn } from "@/lib/cn";
@@ -1192,6 +1191,7 @@ function defaultChannelRuntimeGroup(
 function providerKindToAdapter(kind: ProviderKind): RuntimeAdapterId {
   if (kind === "codex") return "codex";
   if (kind === "gemini") return "gemini";
+  if (kind === "kimi") return "kimi";
   if (kind === "deepseek-harness") return "deepseek-harness";
   if (kind === "zcode") return "zcode";
   return "claude-code";
@@ -1242,12 +1242,6 @@ function modelStrategyLabelKey(strategy: string | undefined) {
     default:
       return "dock.modelStrategy.inherit";
   }
-}
-
-function providerSortRank(status: ProviderRuntimeStatus): number {
-  if (status === "direct") return 1;
-  if (status === "cli") return 2;
-  return 3;
 }
 
 function interactionOptionCountLabel(locale: Locale, count: number): string {
@@ -2597,7 +2591,9 @@ export default function AIDock({
     void freeChannelRevision;
     const cliRuntime = getCliRuntimeSnapshot();
     const desktop = tauriAvailable();
-    const sorted = listProviders()
+    // 保持配置（添加）顺序，不做状态/名称重排：用户在设置里刚添加的渠道
+    // 就停在该适配器分组的末尾，不会因列表跳动而找不到。
+    const providers = listProviders()
       .filter((provider) => {
         // 远程工作区下，listProviders() 已经在远程 profile 下返回该项目
         // /user-settings 里的普通渠道（含 cc-switch 导入并同步过去的渠道），
@@ -2617,24 +2613,13 @@ export default function AIDock({
             desktop && isCliAdapterAvailable(adapter, cliRuntime),
         });
         return { provider, adapter, status: runtime.status };
-      })
-      .sort((a, b) => {
-        const adapterRank =
-          RUNTIME_ADAPTERS.findIndex((item) => item.id === a.adapter) -
-          RUNTIME_ADAPTERS.findIndex((item) => item.id === b.adapter);
-        if (adapterRank !== 0) return adapterRank;
-        const rankA = providerSortRank(a.status);
-        const rankB = providerSortRank(b.status);
-        if (rankA !== rankB) return rankA - rankB;
-        return a.provider.name.localeCompare(b.provider.name);
       });
     // Collapse providers that render identically in the channel picker. Two
     // entries with the same adapter + name + baseUrl + model (e.g. a stale
     // `direct` copy left beside a cc-switch `cli` import) would otherwise show
-    // up as duplicate "default" rows. Keep the first — the list is already
-    // sorted best-status-first, so we drop the weaker duplicate.
+    // up as duplicate "default" rows. Keep the first one added.
     const seen = new Set<string>();
-    return sorted.filter(({ provider, adapter }) => {
+    return providers.filter(({ provider, adapter }) => {
       const key = [
         adapter,
         provider.name.trim().toLowerCase(),
@@ -5679,11 +5664,27 @@ export default function AIDock({
       return;
     if (restoreStreamScrollSnapshotForKey(activeStreamScrollKey)) {
       pendingStreamScrollRestoreKeyRef.current = null;
+      // 首帧之后惰性富渲染 / 消息窗口增长仍可能继续改变容器高度。恢复不能
+      // 依赖 ResizeObserver 的异步修正（它可能错过或滞后于内容高度变化），
+      // 所以下一帧再对齐一次，保证底部钉住的会话始终停在真正的最底部。
+      const key = activeStreamScrollKey;
+      const frame = window.requestAnimationFrame(() => {
+        if (activeStreamScrollKeyRef.current !== key) return;
+        const stream = streamRef.current;
+        if (!stream) return;
+        const snapshot = streamScrollSnapshotsRef.current.get(key);
+        if (snapshot?.atBottom) {
+          scrollStreamToBottom(stream);
+          rememberStreamScrollSnapshot(key);
+        }
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [
     activeStreamScrollKey,
     hiddenMessageCount,
     messages.length,
+    rememberStreamScrollSnapshot,
     restoreStreamScrollSnapshotForKey,
   ]);
 
