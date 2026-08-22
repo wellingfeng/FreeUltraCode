@@ -69,3 +69,6 @@ app/tmp/
 
 # Local deploy helper binaries (plink/pscp), not for VCS
 .deploy-tools/
+
+# Local downloaded analysis scratch, not for VCS
+.downloads/

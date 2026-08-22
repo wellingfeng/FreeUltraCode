@@ -13,7 +13,7 @@
 // write back to disk asynchronously (write-behind). localStorage is always kept as
 // a synchronous mirror so the cache can be rebuilt and the browser path just works.
 
-import { tauriAvailable } from '@/lib/tauri';
+import { tauriAvailable } from "@/lib/tauri";
 
 export interface SettingsProfileOptions {
   /**
@@ -24,64 +24,78 @@ export interface SettingsProfileOptions {
   profileId?: string | null;
 }
 
-export const LOCAL_SETTINGS_PROFILE_ID = 'local';
-export const REMOTE_SETTINGS_PROFILE_PREFIX = 'remote:';
+export const LOCAL_SETTINGS_PROFILE_ID = "local";
+export const REMOTE_SETTINGS_PROFILE_PREFIX = "remote:";
 
-const REMOTE_WORKSPACE_PATH_PREFIX = 'remote://';
-const SETTINGS_PROFILE_REGISTRY_REL_PATH = 'settings/profiles.v1.json';
-const SETTINGS_PROFILE_REGISTRY_KEY = 'ultragamestudio.settingsProfiles.v1';
+const REMOTE_WORKSPACE_PATH_PREFIX = "remote://";
+const SETTINGS_PROFILE_REGISTRY_REL_PATH = "settings/profiles.v1.json";
+const SETTINGS_PROFILE_REGISTRY_KEY = "ultragamestudio.settingsProfiles.v1";
 
 /** Every settings file managed by this store, as `(relPath, legacyLocalStorageKey)`. */
-const MANAGED_SETTINGS: ReadonlyArray<readonly [relPath: string, legacyKey: string]> = [
-  ['settings/appearance.v1.json', 'ultragamestudio.appearance.v1'],
-  ['settings/imageGeneration.v1.json', 'ultragamestudio.imageGeneration.v1'],
-  ['settings/visionModel.v1.json', 'ultragamestudio.visionModel.v1'],
-  ['settings/videoGeneration.v1.json', 'ultragamestudio.videoGeneration.v1'],
-  ['settings/animationGeneration.v1.json', 'ultragamestudio.animationGeneration.v1'],
-  ['settings/musicGeneration.v1.json', 'ultragamestudio.musicGeneration.v1'],
-  ['settings/threeDGeneration.v1.json', 'ultragamestudio.threeDGeneration.v1'],
-  ['settings/speechGeneration.v1.json', 'ultragamestudio.speechGeneration.v1'],
-  ['settings/uiDesignChannels.v1.json', 'ultragamestudio.uiDesignChannels.v1'],
-  ['settings/spriteGeneration.v1.json', 'ultragamestudio.spriteGeneration.v1'],
-  ['settings/comfyui.v1.json', 'ultragamestudio.comfyui.v1'],
-  ['settings/meshLibrary.v1.json', 'ultragamestudio.meshLibrary.v1'],
-  ['settings/freeChannelModels.v1.json', 'ugs_free_channel_models_v1'],
-  ['settings/freeProxyPort.v1.json', 'ugs_free_proxy_port_v1'],
-  ['settings/modelListCache.v1.json', 'ugs_model_list_cache_v1'],
-  ['settings/modelListHidden.v1.json', 'ugs_model_list_hidden_v1'],
-  ['settings/memoryConfig.v1.json', 'ultragamestudio.memoryConfig.v1'],
-  ['settings/memoryReviewState.v1.json', 'ultragamestudio.memoryReviewState.v1'],
-  ['settings/cacheCleanup.v1.json', 'ultragamestudio.cacheCleanup.v1'],
-  ['settings/knowledgeBase.v1.json', 'ultragamestudio.knowledgeBase.v1'],
+const MANAGED_SETTINGS: ReadonlyArray<
+  readonly [relPath: string, legacyKey: string]
+> = [
+  ["settings/appearance.v1.json", "ultragamestudio.appearance.v1"],
+  ["settings/imageGeneration.v1.json", "ultragamestudio.imageGeneration.v1"],
+  ["settings/visionModel.v1.json", "ultragamestudio.visionModel.v1"],
+  ["settings/videoGeneration.v1.json", "ultragamestudio.videoGeneration.v1"],
+  [
+    "settings/animationGeneration.v1.json",
+    "ultragamestudio.animationGeneration.v1",
+  ],
+  ["settings/musicGeneration.v1.json", "ultragamestudio.musicGeneration.v1"],
+  ["settings/threeDGeneration.v1.json", "ultragamestudio.threeDGeneration.v1"],
+  ["settings/speechGeneration.v1.json", "ultragamestudio.speechGeneration.v1"],
+  ["settings/uiDesignChannels.v1.json", "ultragamestudio.uiDesignChannels.v1"],
+  ["settings/spriteGeneration.v1.json", "ultragamestudio.spriteGeneration.v1"],
+  ["settings/comfyui.v1.json", "ultragamestudio.comfyui.v1"],
+  ["settings/meshLibrary.v1.json", "ultragamestudio.meshLibrary.v1"],
+  ["settings/freeChannelModels.v1.json", "ugs_free_channel_models_v1"],
+  ["settings/freeProxyPort.v1.json", "ugs_free_proxy_port_v1"],
+  ["settings/modelListCache.v1.json", "ugs_model_list_cache_v1"],
+  ["settings/modelListHidden.v1.json", "ugs_model_list_hidden_v1"],
+  ["settings/memoryConfig.v1.json", "ultragamestudio.memoryConfig.v1"],
+  [
+    "settings/memoryReviewState.v1.json",
+    "ultragamestudio.memoryReviewState.v1",
+  ],
+  ["settings/cacheCleanup.v1.json", "ultragamestudio.cacheCleanup.v1"],
+  ["settings/knowledgeBase.v1.json", "ultragamestudio.knowledgeBase.v1"],
 ];
 
 // relPath -> serialized JSON. Authoritative in-memory view once `diskReady`.
 const cache = new Map<string, string>();
 const profileRegistry = new Set<string>();
 let diskReady = false;
+const pendingDiskWrites = new Set<Promise<void>>();
 
-function normalizeProfileId(profileId: string | null | undefined): string | null {
+function normalizeProfileId(
+  profileId: string | null | undefined,
+): string | null {
   const trimmed = profileId?.trim();
   if (!trimmed || trimmed === LOCAL_SETTINGS_PROFILE_ID) return null;
   return trimmed;
 }
 
 function encodeProfilePart(profileId: string): string {
-  return encodeURIComponent(profileId).replace(/[!'()*]/g, (char) =>
-    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  return encodeURIComponent(profileId).replace(
+    /[!'()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 }
 
-function remoteWorkspaceIdForProfileId(profileId: string | null | undefined): string {
+function remoteWorkspaceIdForProfileId(
+  profileId: string | null | undefined,
+): string {
   const normalized = normalizeProfileId(profileId);
-  if (!normalized?.startsWith(REMOTE_SETTINGS_PROFILE_PREFIX)) return '';
+  if (!normalized?.startsWith(REMOTE_SETTINGS_PROFILE_PREFIX)) return "";
   return normalized.slice(REMOTE_SETTINGS_PROFILE_PREFIX.length);
 }
 
 function scopedRelPath(relPath: string, profileId: string | null): string {
   if (!profileId) return relPath;
   if (isRemoteSettingsProfile(profileId)) return relPath;
-  const suffix = relPath.replace(/^settings[\\/]/, '');
+  const suffix = relPath.replace(/^settings[\\/]/, "");
   return `settings/profiles/${encodeProfilePart(profileId)}/${suffix}`;
 }
 
@@ -123,7 +137,7 @@ function parseProfileRegistry(raw: string | null): string[] {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     return parsed
-      .filter((item): item is string => typeof item === 'string')
+      .filter((item): item is string => typeof item === "string")
       .map((item) => normalizeProfileId(item))
       .filter((item): item is string => !!item);
   } catch {
@@ -148,7 +162,9 @@ function registerProfile(profileId: string | null): void {
   persistProfileRegistry();
 }
 
-export function settingsProfileIdForRemoteWorkspace(workspaceId: string): string | null {
+export function settingsProfileIdForRemoteWorkspace(
+  workspaceId: string,
+): string | null {
   const trimmed = workspaceId.trim();
   return trimmed ? `${REMOTE_SETTINGS_PROFILE_PREFIX}${trimmed}` : null;
 }
@@ -163,19 +179,24 @@ export function settingsProfileIdForWorkspacePath(
   );
 }
 
-export function isRemoteSettingsProfile(profileId: string | null | undefined): boolean {
-  return normalizeProfileId(profileId)?.startsWith(REMOTE_SETTINGS_PROFILE_PREFIX) ?? false;
+export function isRemoteSettingsProfile(
+  profileId: string | null | undefined,
+): boolean {
+  return (
+    normalizeProfileId(profileId)?.startsWith(REMOTE_SETTINGS_PROFILE_PREFIX) ??
+    false
+  );
 }
 
 async function getInvoke() {
-  const { invoke } = await import('@tauri-apps/api/core');
+  const { invoke } = await import("@tauri-apps/api/core");
   return invoke;
 }
 
 async function remoteRunnerClientForProfile(profileId: string | null) {
   const workspaceId = remoteWorkspaceIdForProfileId(profileId);
   if (!workspaceId) return null;
-  const remote = await import('@/lib/remoteWorkspace');
+  const remote = await import("@/lib/remoteWorkspace");
   const config = remote.getRemoteWorkspace(workspaceId);
   if (!config) return null;
   const connection = await remote.resolveRemoteRunnerConnectionAsync(config);
@@ -185,7 +206,7 @@ async function remoteRunnerClientForProfile(profileId: string | null) {
 
 function hasLocalStorage(): boolean {
   try {
-    return typeof window !== 'undefined' && !!window.localStorage;
+    return typeof window !== "undefined" && !!window.localStorage;
   } catch {
     return false;
   }
@@ -220,16 +241,16 @@ async function diskRead(
       const client = await remoteRunnerClientForProfile(profileId);
       return client ? await client.readUserSetting(relPath) : null;
     } catch (err) {
-      console.warn('[generationSettings] remote read failed', relPath, err);
+      console.warn("[generationSettings] remote read failed", relPath, err);
       return null;
     }
   }
   if (!tauriAvailable()) return null;
   try {
     const invoke = await getInvoke();
-    return await invoke<string | null>('history_read_json', { relPath });
+    return await invoke<string | null>("history_read_json", { relPath });
   } catch (err) {
-    console.warn('[generationSettings] disk read failed', relPath, err);
+    console.warn("[generationSettings] disk read failed", relPath, err);
     return null;
   }
 }
@@ -239,26 +260,26 @@ function diskWriteSoon(
   json: string,
   profileId: string | null = null,
 ): void {
-  if (isRemoteSettingsProfile(profileId)) {
-    void (async () => {
+  const task = (async (): Promise<void> => {
+    if (isRemoteSettingsProfile(profileId)) {
       try {
         const client = await remoteRunnerClientForProfile(profileId);
         await client?.writeUserSetting(relPath, json);
       } catch (err) {
-        console.error('[generationSettings] remote write failed', relPath, err);
+        console.error("[generationSettings] remote write failed", relPath, err);
       }
-    })();
-    return;
-  }
-  if (!tauriAvailable()) return;
-  void (async () => {
+      return;
+    }
+    if (!tauriAvailable()) return;
     try {
       const invoke = await getInvoke();
-      await invoke<void>('history_write_json', { relPath, json });
+      await invoke<void>("history_write_json", { relPath, json });
     } catch (err) {
-      console.error('[generationSettings] disk write failed', relPath, err);
+      console.error("[generationSettings] disk write failed", relPath, err);
     }
   })();
+  pendingDiskWrites.add(task);
+  void task.finally(() => pendingDiskWrites.delete(task));
 }
 
 /**
@@ -320,7 +341,9 @@ export async function preloadSettingsProfile(
   if (!tauriAvailable() && !isRemoteSettingsProfile(normalized)) return;
   await Promise.all(
     MANAGED_SETTINGS.map(async ([relPath, legacyKey]) => {
-      const scoped = scopedStorage(relPath, legacyKey, { profileId: normalized });
+      const scoped = scopedStorage(relPath, legacyKey, {
+        profileId: normalized,
+      });
       const fromDisk = await diskRead(scoped.relPath, scoped.profileId);
       if (fromDisk != null) {
         cache.set(scoped.cacheKey, fromDisk);
@@ -379,14 +402,30 @@ export function writeSettingsRaw(
     window.localStorage.setItem(scoped.legacyKey, json);
     return true;
   } catch (err) {
-    console.error('[generationSettings] localStorage write failed', scoped.legacyKey, err);
+    console.error(
+      "[generationSettings] localStorage write failed",
+      scoped.legacyKey,
+      err,
+    );
     return false;
   }
+}
+
+/**
+ * Await all in-flight disk/remote writes so callers can confirm generation
+ * settings actually reached durable storage before continuing (e.g., before
+ * the app exits).
+ */
+export async function flushGenerationSettings(): Promise<void> {
+  const inFlight = [...pendingDiskWrites];
+  if (inFlight.length === 0) return;
+  await Promise.all(inFlight);
 }
 
 /** Test-only: reset the in-memory state between cases. */
 export function resetGenerationSettingsStoreForTests(): void {
   cache.clear();
   profileRegistry.clear();
+  pendingDiskWrites.clear();
   diskReady = false;
 }

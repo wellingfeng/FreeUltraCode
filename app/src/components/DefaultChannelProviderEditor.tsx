@@ -12,6 +12,7 @@ import {
   type Provider,
   type ProviderRuntimeStatus,
 } from '@/lib/apiConfig';
+import { flushSecureStorage } from '@/lib/secureStorage';
 import {
   isCliAdapterAvailable,
   type CliRuntimeSnapshot,
@@ -43,6 +44,7 @@ export interface ProviderEditorState {
 function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
+  if (kind === 'kimi') return 'kimi';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
   if (kind === 'zcode') return 'zcode';
   return 'claude-code';
@@ -51,6 +53,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
 function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
   return 'anthropic';
@@ -214,7 +217,7 @@ export function DefaultChannelProviderEditor({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const next = trimProviderDraft(editor.draft);
     const nextErrors: typeof errors = {};
     if (!next.name) {
@@ -245,6 +248,7 @@ export function DefaultChannelProviderEditor({
       } else {
         savedProvider = addProvider(next);
       }
+      await flushSecureStorage();
       onSaved(savedProvider);
     } catch {
       setSaveError(t(locale, 'settings.models.saveError'));

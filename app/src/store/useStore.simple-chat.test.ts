@@ -3389,6 +3389,88 @@ describe('simple-workflow chat mode', () => {
     expect(calls[3].prompt).toContain('再切回原模型呢？');
   });
 
+  it('does not use native Claude session continuity for a Kimi base URL', async () => {
+    // Kimi 等非 Anthropic 原生上游不认识 Claude 的 `document` block：claude CLI
+    // `--resume` 重放历史（含 PDF/Office 附件产生的 document 块）会直接 400。
+    // 因此指向非 api.anthropic.com 的 claude-code CLI 渠道必须降级为每轮纯
+    // 文本全量模式（不传 sessionId/resume），而不是启动 native session。
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockImplementation(async (selection) => ({
+      selection,
+      adapter: 'claude-code',
+      modelClass: selection.modelClass,
+      model: 'kimi-for-coding',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code · Kimi',
+      source: 'global',
+      cliCommand: 'claude',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+        ANTHROPIC_MODEL: 'kimi-for-coding',
+      },
+    }));
+    const calls: Array<{
+      prompt: string;
+      opts: { sessionId?: string; resume?: boolean };
+    }> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(async (prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      return calls.length === 1 ? 'Kimi 回答一。' : 'Kimi 回答二。';
+    });
+
+    useStore.getState().sendPrompt('第一问');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 1,
+      'first Kimi CLI chat call',
+    );
+
+    useStore.getState().sendPrompt('第二问');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 2,
+      'second Kimi CLI chat call',
+    );
+
+    expect(calls[0].opts.sessionId).toBeUndefined();
+    expect(calls[0].opts.resume).toBeUndefined();
+    expect(calls[1].opts.sessionId).toBeUndefined();
+    expect(calls[1].opts.resume).toBeUndefined();
+    // 第二轮携带完整文本历史（全量模式）而非增量。
+    expect(calls[1].prompt).toContain('之前的对话');
+    expect(calls[1].prompt).toContain('第一问');
+    expect(calls[1].prompt).toContain('Kimi 回答一。');
+  });
+
   it('starts a fresh native Claude CLI session when the resume target is missing', async () => {
     window.localStorage.clear();
     await historyStore.ready();
@@ -3473,6 +3555,176 @@ describe('simple-workflow chat mode', () => {
         .getState()
         .messages.some(
           (m) => m.role === 'assistant' && m.text.includes('恢复后的回答。'),
+        ),
+    ).toBe(true);
+  });
+
+  it('mints a fresh native session when claude exits 0 without any reply', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockImplementation(async (selection) => ({
+      selection,
+      adapter: 'claude-code',
+      modelClass: selection.modelClass,
+      model: selection.modelClass,
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code',
+      source: 'global',
+      cliCommand: 'claude',
+    }));
+    const calls: Array<{
+      prompt: string;
+      opts: { sessionId?: string; resume?: boolean };
+    }> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(async (prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      if (calls.length === 1) return '第一轮回答。';
+      if (calls.length === 2) {
+        throw new Error(
+          'CLI "claude" 未产生任何回复就退出（退出码 0）：CLI 退出但未返回任何内容',
+        );
+      }
+      return '恢复后的回答。';
+    });
+
+    useStore.getState().sendPrompt('第一轮问题');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 1,
+      'first successful CLI chat call',
+    );
+
+    useStore.getState().sendPrompt('第二轮问题');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 3,
+      'empty-exit fallback CLI chat call',
+    );
+
+    expect(calls[1].opts.sessionId).toBe(calls[0].opts.sessionId);
+    expect(calls[1].opts.resume).toBe(true);
+    expect(calls[2].opts.sessionId).toEqual(expect.any(String));
+    expect(calls[2].opts.sessionId).not.toBe(calls[0].opts.sessionId);
+    expect(calls[2].opts.resume).toBe(false);
+    expect(calls[2].prompt).toContain('之前的对话');
+    expect(calls[2].prompt).toContain('第一轮问题');
+    expect(calls[2].prompt).toContain('第一轮回答。');
+    expect(calls[2].prompt).toContain('第二轮问题');
+    expect(
+      useStore
+        .getState()
+        .messages.some(
+          (m) => m.role === 'assistant' && m.text.includes('恢复后的回答。'),
+        ),
+    ).toBe(true);
+  });
+
+  it('retries once when a stateless CLI call exits 0 without any reply', async () => {
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockImplementation(async (selection) => ({
+      selection,
+      adapter: 'claude-code',
+      modelClass: selection.modelClass,
+      model: 'kimi-for-coding',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code · Kimi',
+      source: 'global',
+      cliCommand: 'claude',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+        ANTHROPIC_MODEL: 'kimi-for-coding',
+      },
+    }));
+    const calls: Array<{
+      prompt: string;
+      opts: { sessionId?: string; resume?: boolean };
+    }> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(async (prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      if (calls.length === 1) {
+        throw new Error(
+          'CLI "claude" 未产生任何回复就退出（退出码 0）：CLI 退出但未返回任何内容',
+        );
+      }
+      return '重试后的回答。';
+    });
+
+    useStore.getState().sendPrompt('第一问');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 2,
+      'stateless empty-exit CLI retry call',
+    );
+
+    // 非 Anthropic 原生上游不会走 native session：两轮都是无会话全量调用。
+    expect(calls[0].opts.sessionId).toBeUndefined();
+    expect(calls[0].opts.resume).toBeUndefined();
+    expect(calls[1].opts.sessionId).toBeUndefined();
+    expect(calls[1].opts.resume).toBeUndefined();
+    expect(calls[1].prompt).toBe(calls[0].prompt);
+    expect(
+      useStore
+        .getState()
+        .messages.some(
+          (m) => m.role === 'assistant' && m.text.includes('重试后的回答。'),
         ),
     ).toBe(true);
   });

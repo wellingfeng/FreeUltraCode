@@ -3,6 +3,7 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 title UltraGameStudio (Build EXE)
 
+set "ROOT=%~dp0"
 cd /d "%~dp0app"
 
 echo ============================================================
@@ -58,7 +59,7 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\needs-rebuild.ps1" "%~dp0app\src-tauri\target\release\UltraGameStudio.exe" "%~dp0" -WriteStamp
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\needs-rebuild.ps1" "%ROOT%app\src-tauri\target\release\UltraGameStudio.exe" "%ROOT%." -WriteStamp
 if errorlevel 1 (
     echo.
     echo [X] failed to save build fingerprint.

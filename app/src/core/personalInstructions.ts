@@ -41,6 +41,7 @@ export type PersonalInstructionsAdapter =
   | 'claude-code'
   | 'codex'
   | 'gemini'
+  | 'kimi'
   | 'deepseek-harness'
   | 'zcode';
 
@@ -48,6 +49,7 @@ export const PERSONAL_INSTRUCTIONS_ADAPTERS: PersonalInstructionsAdapter[] = [
   'claude-code',
   'codex',
   'gemini',
+  'kimi',
   'deepseek-harness',
   'zcode',
 ];
@@ -58,6 +60,7 @@ export function normalizePersonalInstructionsAdapter(
   const value = normalized(adapter);
   if (value === 'codex') return 'codex';
   if (value === 'gemini') return 'gemini';
+  if (value === 'kimi' || value === 'kimi-code') return 'kimi';
   if (value === 'deepseek-harness' || value === 'dsh') {
     return 'deepseek-harness';
   }

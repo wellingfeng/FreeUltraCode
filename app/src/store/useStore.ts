@@ -804,6 +804,9 @@ function runtimeAdapterFromRemoteAdapter(adapter: unknown): GatewaySelection['ad
 function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapter'] {
   if (kind === 'codex') return 'codex';
   if (kind === 'gemini') return 'gemini';
+  if (kind === 'kimi') return 'kimi';
+  if (kind === 'deepseek-harness') return 'deepseek-harness';
+  if (kind === 'zcode') return 'zcode';
   return 'claude-code';
 }
 
@@ -6201,7 +6204,9 @@ ${previousReply.slice(0, 4000)}
                       withAiTiming(
                         routedBody(
                           routeLine,
-                          liveProse(displayLive) || '⟳ 生成中…',
+                          // Plain chat: the model's own code blocks are real
+                          // content, so skip the fence cut entirely.
+                          liveProse(displayLive, false) || '⟳ 生成中…',
                         ),
                       ),
                     );
@@ -6210,7 +6215,7 @@ ${previousReply.slice(0, 4000)}
               try {
                 answer = await callNativeCli(promptBody, nativeSession, nativeResume);
               } catch (err) {
-                // Two recoverable native-session failures share one cure: drop the
+                // Recoverable native-session failures share one cure: drop the
                 // bad id, mint a fresh one, and re-send the transcript as cold
                 // context.
                 //   - "No conversation found …" — the resume target vanished
@@ -6219,10 +6224,16 @@ ${previousReply.slice(0, 4000)}
                 //     locked from a prior turn that never exited cleanly; this can
                 //     hit the FIRST turn too (a create collision), so it is not
                 //     gated on nativeResume.
+                //   - "未产生任何回复就退出（退出码 0）" — the CLI exited cleanly
+                //     but produced no content at all (dropped relay, unloadable
+                //     resume target after a long conversation, killed mid-turn).
+                //     A cold replay gives the turn a real second chance instead
+                //     of surfacing a hard failure right after the user answered.
                 if (
                   nativeSession &&
                   ((nativeResume && isMissingClaudeConversationError(err)) ||
-                    isSessionAlreadyInUseError(err))
+                    isSessionAlreadyInUseError(err) ||
+                    isCliEmptyExitError(err))
                 ) {
                   forgetChatNativeSession(nativeSession);
                   nativeSession = chatNativeSessionFor(ch, cli);
@@ -6232,6 +6243,15 @@ ${previousReply.slice(0, 4000)}
                   live = '';
                   setActive(withAiTiming(routedBody(routeLine, '⟳ 生成中…')));
                   answer = await callNativeCli(fallbackPromptBody, nativeSession, false);
+                } else if (!nativeSession && isCliEmptyExitError(err)) {
+                  // Stateless call (no native session — e.g. a relay channel or a
+                  // favorite replay): there is no session id to drop, so just give
+                  // the turn one clean retry. A clean exit 0 with no content is
+                  // typically a transient relay/connection drop, and the same
+                  // full-context call usually succeeds on the second attempt.
+                  live = '';
+                  setActive(withAiTiming(routedBody(routeLine, '⟳ 生成中…')));
+                  answer = await callNativeCli(promptBody, null, false);
                 } else {
                   throw err;
                 }
@@ -6270,7 +6290,7 @@ ${previousReply.slice(0, 4000)}
                 userContent,
                 onDelta: (chunk) => {
                   full += chunk;
-                  setActive(withAiTiming(routedBody(routeLine, liveProse(full) || '⟳ 生成中…')));
+                  setActive(withAiTiming(routedBody(routeLine, liveProse(full, false) || '⟳ 生成中…')));
                 },
               });
               answer = full || returned;
@@ -7290,6 +7310,13 @@ function chatNativeSessionFor(
 ): ChatNativeSession | null {
   if (!ch.sessionId) return null;
   if (route.transport !== 'cli' || route.adapter !== 'claude-code') return null;
+  // 非 Anthropic 原生上游（Kimi 等）不认识 Claude 的 `document` content
+  // block（PDF/Office 附件）。claude CLI `--resume` 会从本地 session 存储
+  // 重放完整历史（可能含 document 块），这些上游直接 400（"Input tag
+  // 'document' ... does not match any of the expected tags"）。因此只有目标
+  // 端点明确是 Anthropic 原生 API 时才启用 native session 续接；否则降级为
+  // 每轮纯文本全量模式（chatPrompt）。
+  if (!routeTargetsAnthropicNativeApi(route)) return null;
   const key = chatNativeSessionKey(ch, route);
   const existing = chatNativeSessions.get(key);
   if (existing) return existing;
@@ -7300,6 +7327,28 @@ function chatNativeSessionFor(
   };
   chatNativeSessions.set(key, created);
   return created;
+}
+
+/**
+ * Claude's native session continuity (`--session-id` / `--resume`) is only safe
+ * when the CLI targets the real Anthropic API. A resumed turn replays the full
+ * message history from the CLI's on-disk session store, which can contain
+ * `document` content blocks (PDF/Office attachments from a `@file` mention or a
+ * tool call) that third-party Anthropic-compatible upstreams (Kimi, OpenRouter,
+ * GLM, ...) reject with HTTP 400. When a custom base URL is injected, require
+ * the Anthropic host; no injected base URL means the CLI uses its own default
+ * endpoint, which is out of the app's control and kept as-is.
+ */
+function routeTargetsAnthropicNativeApi(
+  route: Awaited<ReturnType<typeof resolveCliGatewayRoute>>,
+): boolean {
+  const baseUrl = (route.env?.ANTHROPIC_BASE_URL ?? route.baseUrl ?? '').trim();
+  if (!baseUrl) return true;
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === 'api.anthropic.com';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -7334,6 +7383,19 @@ function isMissingClaudeConversationError(err: unknown): boolean {
 function isSessionAlreadyInUseError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? '');
   return /session ID .* is already in use/i.test(message);
+}
+
+/**
+ * Claude exited with code 0 but produced no model content at all — a silent
+ * failure (dropped relay connection, a resume target that cannot be loaded
+ * after a long conversation, or the process being killed mid-turn while still
+ * reporting a clean exit). Same cure as the missing/in-use session cases: drop
+ * the bad id, mint a fresh one, and re-send the transcript as cold context, so
+ * a flaky continuation after a long run doesn't just surface a hard error.
+ */
+function isCliEmptyExitError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  return /CLI "[^"]+" 未产生任何回复就退出[（(]退出码 0[）)]/.test(message);
 }
 
 function runningProgressFromChannel(ch: RunChannel): RunProgressSummary {
@@ -8089,10 +8151,11 @@ const SIMPLE_CHAT_HISTORY_TURNS = 20;
 const MAX_GEN_REQUESTS_PER_TURN = 8;
 
 // Long-stop timeout for a single model-driven generation block (UGS_GEN). This
-// is deliberately generous — 3D mesh generation can poll for several minutes —
-// and exists only as a safety net so a wedged generation can never leave the
-// chat turn awaiting a never-resolving Promise.
-const GENERATION_TURN_TIMEOUT_MINUTES = 20;
+// is deliberately generous — 3D mesh generation can poll for several minutes,
+// and video/speech generation can legitimately run for an hour — and exists
+// only as a safety net so a wedged generation can never leave the chat turn
+// awaiting a never-resolving Promise.
+const GENERATION_TURN_TIMEOUT_MINUTES = 60;
 const GENERATION_TURN_TIMEOUT_MS = GENERATION_TURN_TIMEOUT_MINUTES * 60 * 1000;
 
 /**

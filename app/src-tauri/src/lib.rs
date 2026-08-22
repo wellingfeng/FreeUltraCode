@@ -15,6 +15,7 @@ use tauri::{
 mod cache_cleanup;
 mod cc_switch_import;
 mod cli_runtime;
+mod dsh_log;
 mod free_proxy;
 mod history;
 mod proxy_http;
@@ -31,6 +32,12 @@ const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_MENU_SHOW_ID: &str = "tray-show-main";
 const TRAY_MENU_GITHUB_ID: &str = "tray-open-github";
 const TRAY_MENU_QUIT_ID: &str = "tray-quit";
+/// 退出前冲刷事件：宿主（托盘右键菜单「退出」）先通知前端把内存中的密钥
+/// 兜底落盘，等前端确认（ugs_quit_flush_done）或超时后再真正退出，避免
+/// 就地编辑的 API Key 因 keychain 异步写未完成而丢失。
+const BEFORE_QUIT_EVENT: &str = "ugs:before-quit";
+/// 前端是否已确认完成退出前冲刷（见 `ugs_quit_flush_done`）。
+static QUIT_FLUSH_DONE: AtomicBool = AtomicBool::new(false);
 const GITHUB_REPOSITORY_URL: &str = "https://github.com/wellingfeng/UltraGameStudio";
 const SINGLE_INSTANCE_WARNING_EVENT: &str = "single-instance-warning";
 const SINGLE_INSTANCE_WARNING_MESSAGE: &str = "只能同时运行一个进程";
@@ -100,6 +107,13 @@ fn waiting_input_notification_tag(workspace_id: Option<&str>, session_id: Option
 #[tauri::command]
 fn focus_main_window(app: AppHandle) {
     show_main_window(&app);
+}
+
+/// 前端完成退出前冲刷（密钥兜底落盘 + keychain flush）后调用，放行退出。
+#[tauri::command]
+fn ugs_quit_flush_done(app: AppHandle) {
+    QUIT_FLUSH_DONE.store(true, Ordering::SeqCst);
+    app.exit(0);
 }
 
 #[tauri::command]
@@ -13322,7 +13336,7 @@ fn cli_update_command(spec: &CliUpdateSpec, exe: Option<&str>) -> Result<Command
             c.arg("update");
             Ok(c)
         }
-        "gemini" | "deepseek-harness" | "zcode" => {
+        "gemini" | "kimi" | "deepseek-harness" | "zcode" => {
             // `npm install -g <pkg>@latest` installs when missing and updates
             // when present, so one command covers both. Prefer the owning
             // package manager of the detected shim (bun for ~/.bun/bin), else
@@ -13936,15 +13950,17 @@ const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 0;
 /// Default "no observable progress" timeout for a single CLI invocation.
 /// This is not a total runtime limit: healthy long-running tools may continue
 /// indefinitely while they emit output. Set the env override to 0 to disable.
-const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 1800;
+/// 2h: video processing, speech transcription/translation and similar
+/// long-running tool calls routinely stay silent far past 30 minutes.
+const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 7200;
 const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
 /// Idle gap (no stdout activity) after which a "still running" heartbeat line is
 /// emitted to the run log, so a long node never looks completely frozen even
 /// during a long tool execution or a slow first token.
 const AI_CLI_HEARTBEAT_SECS: u64 = 12;
-const DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS: u64 = 1800;
-const DEFAULT_CODEX_TURN_START_TIMEOUT_SECS: u64 = 1800;
-const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS: u64 = 1800;
+const DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS: u64 = 7200;
+const DEFAULT_CODEX_TURN_START_TIMEOUT_SECS: u64 = 7200;
+const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS: u64 = 7200;
 
 fn configured_stage_timeout_secs(name: &str, default_secs: u64) -> u64 {
     std::env::var(name)
@@ -14700,7 +14716,7 @@ fn ai_cli_idle_timeout_secs(override_secs: Option<u64>) -> u64 {
     }
 }
 
-fn touch_activity(last_activity: &Arc<Mutex<std::time::Instant>>) {
+pub(crate) fn touch_activity(last_activity: &Arc<Mutex<std::time::Instant>>) {
     if let Ok(mut current) = last_activity.lock() {
         *current = std::time::Instant::now();
     }
@@ -14745,17 +14761,17 @@ fn append_cli_error_context(err: String, output: &str, stderr: &str) -> String {
 }
 
 /// Emit a live progress chunk for a given run to the frontend.
-fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
+pub(crate) fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
     let _ = app.emit(
         "ai-cli-progress",
         serde_json::json!({ "runId": run_id, "text": text }),
     );
 }
 
-const AI_CLI_PROGRESS_BATCH_INTERVAL_MS: u64 = 75;
-const AI_CLI_PROGRESS_BATCH_MAX_BYTES: usize = 16 * 1024;
+pub(crate) const AI_CLI_PROGRESS_BATCH_INTERVAL_MS: u64 = 75;
+pub(crate) const AI_CLI_PROGRESS_BATCH_MAX_BYTES: usize = 16 * 1024;
 
-struct AiCliProgressBatcher<'a> {
+pub(crate) struct AiCliProgressBatcher<'a> {
     app: &'a tauri::AppHandle,
     run_id: &'a str,
     pending: String,
@@ -14877,6 +14893,155 @@ fn extract_kimi_assistant_text(content: Option<&serde_json::Value>) -> Option<St
         }
     }
     (!out.is_empty()).then_some(out)
+}
+
+/// ZCode (zcode-app-cli) reads its provider + model + API key EXCLUSIVELY from
+/// `~/.zcode/cli/config.json` — never from env vars — so a headless turn
+/// (`zcode --prompt … --json`) fails with the opaque `Turn execution failed
+/// (traceId: …)` when that file is missing or carries no key. Before spawning,
+/// ensure the config is usable:
+///   - If it already has a non-empty apiKey (any provider), leave it alone.
+///   - Otherwise merge the channel's `ZCODE_API_KEY` / `ZCODE_BASE_URL` /
+///     `ZCODE_MODEL` env values into `provider.zai` + `model.main` (preserving
+///     existing fields), creating file/dirs as needed.
+///   - If neither source has a key, return an actionable Chinese error instead
+///     of the opaque CLI failure.
+fn ensure_zcode_user_config(
+    env_vars: Option<&HashMap<String, String>>,
+) -> Result<(), String> {
+    let Some(home) = user_home_dir() else {
+        return Err(
+            "无法定位用户主目录（USERPROFILE/HOME），不能检查 ZCode 配置。".to_string(),
+        );
+    };
+    let config_path = home.join(".zcode").join("cli").join("config.json");
+    ensure_zcode_config_at(&config_path, env_vars)
+}
+
+fn ensure_zcode_config_at(
+    config_path: &Path,
+    env_vars: Option<&HashMap<String, String>>,
+) -> Result<(), String> {
+    // Treat a missing/unparseable file as an empty config; the CLI will surface
+    // its own error for a genuinely corrupt file we cannot repair.
+    let existing = std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    let has_key = existing
+        .get("provider")
+        .and_then(|providers| providers.as_object())
+        .map(|providers| {
+            providers.values().any(|provider| {
+                provider
+                    .get("options")
+                    .and_then(|options| options.get("apiKey"))
+                    .and_then(|key| key.as_str())
+                    .is_some_and(|key| !key.trim().is_empty())
+            })
+        })
+        .unwrap_or(false);
+    if has_key {
+        return Ok(());
+    }
+
+    let empty_env: HashMap<String, String> = HashMap::new();
+    let env = env_vars.unwrap_or(&empty_env);
+    let Some(api_key) = env_value(env, "ZCODE_API_KEY") else {
+        return Err(
+            "ZCode CLI 尚未配置模型访问：未找到 ~/.zcode/cli/config.json 中的 API Key，且当前 ZCode 通道也未提供 Key。请在「设置 → 模型」的 ZCode/GLM 通道中填写 API Key（将自动写入 ~/.zcode/cli/config.json），或先手动运行 `zcode` 完成登录/配置。".to_string(),
+        );
+    };
+
+    let mut config = existing;
+    // `provider.zai` is ZCode's canonical provider slot; reuse it if present,
+    // else create it with the upstream defaults.
+    let zai = config
+        .get_mut("provider")
+        .and_then(|providers| providers.get_mut("zai"))
+        .filter(|provider| provider.is_object())
+        .cloned()
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "kind": "anthropic",
+                "name": "Z.AI Coding Plan",
+                "options": {
+                    "apiKeyRequired": true,
+                    "baseURL": "https://api.z.ai/api/anthropic"
+                },
+                "headers": {},
+                "models": {}
+            })
+        });
+    let mut zai = zai;
+    let options = zai
+        .get_mut("options")
+        .and_then(|options| options.as_object_mut())
+        .ok_or_else(|| "ZCode 配置中的 provider.zai.options 不是有效对象。".to_string())?;
+    options.insert("apiKey".to_string(), serde_json::Value::String(api_key.to_string()));
+    if let Some(base_url) = env_value(env, "ZCODE_BASE_URL") {
+        options.insert("baseURL".to_string(), serde_json::Value::String(base_url.to_string()));
+    }
+
+    // Ensure the selected model is registered under provider.zai.models and
+    // `model.main` points at it, so zcode can resolve the turn's model.
+    let model = env_value(env, "ZCODE_MODEL");
+    if let Some(model) = model {
+        let models = zai
+            .get_mut("models")
+            .and_then(|models| models.as_object_mut())
+            .ok_or_else(|| "ZCode 配置中的 provider.zai.models 不是有效对象。".to_string())?;
+        if !models.contains_key(model) {
+            models.insert(
+                model.to_string(),
+                serde_json::json!({ "name": model }),
+            );
+        }
+        let main_model = if model.contains('/') {
+            model.to_string()
+        } else {
+            format!("zai/{model}")
+        };
+        let model_root = config
+            .as_object_mut()
+            .expect("config is an object")
+            .entry("model".to_string())
+            .or_insert_with(|| serde_json::json!({}));
+        model_root
+            .as_object_mut()
+            .expect("model entry is an object")
+            .insert("main".to_string(), serde_json::Value::String(main_model));
+    }
+
+    let providers = config
+        .as_object_mut()
+        .expect("config is an object")
+        .entry("provider".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    providers
+        .as_object_mut()
+        .expect("provider entry is an object")
+        .insert("zai".to_string(), zai);
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "无法创建 ZCode 配置目录 {}：{error}",
+                parent.to_string_lossy()
+            )
+        })?;
+    }
+    let serialized = serde_json::to_string_pretty(&config)
+        .map_err(|error| format!("无法序列化 ZCode 配置：{error}"))?;
+    std::fs::write(config_path, format!("{serialized}\n")).map_err(|error| {
+        format!(
+            "无法写入 ZCode 配置 {}：{error}",
+            config_path.to_string_lossy()
+        )
+    })?;
+    Ok(())
 }
 
 /// Parse the structured envelope `zcode --json` prints for a headless turn
@@ -15023,7 +15188,7 @@ fn tool_subject(input: &serde_json::Value) -> String {
 /// restores them) so a tool result that itself contains the literal sentinel
 /// markers can't emit a stray `<<UGS_TOOL_END>>` that prematurely closes the
 /// block and leaks the rest of the payload as prose.
-fn encode_tool_patch(patch: &serde_json::Value) -> String {
+pub(crate) fn encode_tool_patch(patch: &serde_json::Value) -> String {
     let payload = patch
         .to_string()
         .replace('<', "\\u003c")
@@ -15043,7 +15208,7 @@ fn encode_running_status_patch(run_id: &str, elapsed_secs: u64, stage: &str) -> 
 }
 
 /// Cap a tool result body so a huge file read doesn't bloat the message text.
-const TOOL_RESULT_CLAMP: usize = 4000;
+pub(crate) const TOOL_RESULT_CLAMP: usize = 4000;
 
 /// Summarize a `tool_result` block (the `user`-role event that carries a tool's
 /// output) into one short, single-line breadcrumb, e.g. `app/src/core/ir.ts …`.
@@ -15833,6 +15998,11 @@ async fn ai_cli(
         // When set, dsh is launched as `node <bin.js> <args>` (bypassing the
         // `.cmd` shim's cmd.exe command-line length cap). See the is_dsh branch.
         let mut dsh_node_entry: Option<String> = None;
+        // When set, the is_dsh branch redirected dsh's session log to this
+        // UGS-owned root (plain JSONL, see dsh_log::ugs_patch_yaml); it is
+        // injected as UGS_DSH_SESSIONS before spawn and tailed for live
+        // progress by dsh_log::run_tracer.
+        let mut dsh_sessions_root: Option<std::path::PathBuf> = None;
         // Same trick for zcode: its npm shim runs `node <pkg>/bin/zcode.js`,
         // whose headless prompt is a `--prompt` argv value, so cmd.exe's
         // ~8191-char cap would truncate a long chat turn. Launching the launcher
@@ -16014,6 +16184,23 @@ async fn ai_cli(
             if let Some(entry) = cli_runtime::resolve_dsh_node_entry(&binary) {
                 dsh_node_entry = Some(entry.to_string_lossy().to_string());
             }
+            // Live progress: dsh headless stdout stays silent until the final
+            // answer, so the run would look frozen for minutes. dsh does stream
+            // every step into its persistent session log in real time (that's
+            // what `dsh web` renders); a `--patch` overlay redirects that log
+            // to a UGS-owned plain-JSONL root (see dsh_log::ugs_patch_yaml),
+            // which dsh_log::run_tracer tails into `ai-cli-progress` events.
+            // The patched root is injected via UGS_DSH_SESSIONS so the web/tui
+            // profiles sharing `$DSH_HOME/sessions` are never touched.
+            let dsh_root = dsh_log::ugs_dsh_sessions_root();
+            let _ = std::fs::create_dir_all(&dsh_root);
+            let dsh_patch_path =
+                temp_output_path_for_cwd(cwd.as_deref(), "ultragamestudio-dsh", "yml");
+            let _ = std::fs::write(&dsh_patch_path, dsh_log::ugs_patch_yaml());
+            temp_files.push(TempFileGuard::new(dsh_patch_path.clone()));
+            args.push("--patch".into());
+            args.push(dsh_patch_path.to_string_lossy().to_string());
+            dsh_sessions_root = Some(dsh_root);
             args.push("--profile".into());
             args.push("headless".into());
             args.push(task);
@@ -16031,8 +16218,12 @@ async fn ai_cli(
             // `--mode` maps our permission modes onto its own
             // build/edit/plan/yolo ladder. There is no `--model` flag: the
             // model (and its provider/relay) lives in `~/.zcode/cli/config.json`
-            // (`provider.zai` + `model.main`), so this branch never forwards one
-            // and the provider channel's key/base url are not needed here.
+            // (`provider.zai` + `model.main`), so this branch never forwards one.
+            // ZCode reads credentials ONLY from that config file (never env), so
+            // when the channel carried a key/base url/model (via ZCODE_* env)
+            // merge them in BEFORE spawning — otherwise a keyless config fails
+            // the whole turn with the opaque `Turn execution failed`.
+            ensure_zcode_user_config(env_vars.as_ref())?;
             let mut task = String::new();
             if inject_extra_workspace_note {
                 task.push_str(&extra_workspace_note);
@@ -16259,6 +16450,20 @@ async fn ai_cli(
             cmd.env("UGS_WORKSPACE_CWD", dir);
             cmd.current_dir(dir);
         }
+        if let Some(root) = dsh_sessions_root.as_deref() {
+            cmd.env("UGS_DSH_SESSIONS", root);
+        }
+
+        // Snapshot the dsh session root BEFORE spawn so the live-progress
+        // tracer can tell this run's brand-new session directory apart from
+        // everything that existed before (see dsh_log::run_tracer).
+        let dsh_tracer_plan = if let Some(root) = dsh_sessions_root.as_deref() {
+            let known = dsh_log::snapshot_session_dirs(root);
+            let spawned_at = std::time::SystemTime::now();
+            Some((root.to_path_buf(), known, spawned_at))
+        } else {
+            None
+        };
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -16541,10 +16746,51 @@ async fn ai_cli(
         // turn, so we must not treat its empty text as a silent failure.
         let emitted_tool_use = Arc::new(AtomicBool::new(false));
         let emitted_tool_use_reader = Arc::clone(&emitted_tool_use);
+        // dsh live-progress tracer: tails the redirected session log (plain
+        // JSONL, see dsh_log) into `ai-cli-progress` events while the process
+        // runs. `active` flips once the tracer has forwarded any content — the
+        // stdout reader then stops re-forwarding the final answer (the log
+        // already streamed it) to avoid duplicating text in the live bubble;
+        // if the tracer never engages, stdout falls back to the old behavior.
+        let dsh_tracer_cancel = Arc::new(AtomicBool::new(false));
+        let dsh_tracer_active = Arc::new(AtomicBool::new(false));
+        let dsh_tracer_active_reader = Arc::clone(&dsh_tracer_active);
+        let dsh_tracer_handle = if let Some((root, known, spawned_at)) = dsh_tracer_plan {
+            let app_tracer = app.clone();
+            let run_tracer_id = run_id.clone();
+            let activity_tracer = Arc::clone(&last_activity);
+            let received_tracer = Arc::clone(&received_content);
+            let active_tracer = Arc::clone(&dsh_tracer_active);
+            let cancel_tracer = Arc::clone(&dsh_tracer_cancel);
+            Some(std::thread::spawn(move || {
+                dsh_log::run_tracer(dsh_log::DshTracerConfig {
+                    app: app_tracer,
+                    run_id: run_tracer_id,
+                    sessions_root: root,
+                    known,
+                    spawned_at,
+                    activity: activity_tracer,
+                    received: received_tracer,
+                    active: active_tracer,
+                    cancel: cancel_tracer,
+                });
+            }))
+        } else {
+            None
+        };
         let partial_streaming = partial_enabled();
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
             let mut acc = String::new();
+            // Token-level partial deltas (`stream_event` content_block_delta) are
+            // shown live only and deliberately NOT pushed into `acc` — the
+            // authoritative text comes from complete `assistant` / terminal
+            // `result` events. But when the CLI exits 0 without ever emitting
+            // those terminal events (dropped connection, relay abort, process
+            // killed mid-turn), the streamed text is the only content the user
+            // actually saw. Accumulate it here so it can be returned as a
+            // fallback instead of reporting a misleading "no reply" failure.
+            let mut partial_text = String::new();
             // `prev_kind` tracks the last delta kind ("text" / "thinking") so we
             // can insert a separator when the model switches between them.
             let mut prev_kind: &str = "";
@@ -16574,13 +16820,19 @@ async fn ai_cli(
                     }
                     if parse_dsh {
                         // dsh headless prints plain text (the final answer), not
-                        // JSONL. Accumulate it verbatim and stream it live so the
-                        // chat still fills in as the agent works; the process
-                        // exit code decides success (0=completed, else 1).
+                        // JSONL. Accumulate it verbatim; the process exit code
+                        // decides success (0=completed, else 1). While the
+                        // session-log tracer is live it already streamed the
+                        // text incrementally, so skip re-forwarding the final
+                        // answer to avoid duplicating the bubble; when the
+                        // tracer never engaged (log missing/unreadable), keep
+                        // streaming stdout so the run still fills in at the end.
                         acc.push_str(line);
                         acc.push('\n');
-                        progress.push(line);
-                        progress.push("\n");
+                        if !dsh_tracer_active_reader.load(Ordering::Relaxed) {
+                            progress.push(line);
+                            progress.push("\n");
+                        }
                         received_content_reader.store(true, Ordering::Relaxed);
                         continue;
                     }
@@ -16970,6 +17222,7 @@ async fn ai_cli(
                                                     }
                                                     prev_kind = "text";
                                                     progress.push(tx);
+                                                    partial_text.push_str(tx);
                                                     received_content_reader
                                                         .store(true, Ordering::Relaxed);
                                                 }
@@ -17189,7 +17442,15 @@ async fn ai_cli(
                 }
             }
             if result.trim().is_empty() {
-                acc
+                if acc.trim().is_empty() {
+                    // The terminal `result` / complete `assistant` events never
+                    // arrived, but token-level deltas were streamed: fall back to
+                    // the text the user already saw rendered, so a clean exit 0
+                    // after a dropped terminal event isn't reported as failure.
+                    partial_text
+                } else {
+                    acc
+                }
             } else {
                 result
             }
@@ -17416,6 +17677,12 @@ async fn ai_cli(
             }
         }
         let streamed_output = out_handle.join().unwrap_or_default();
+        // Stop the dsh session-log tracer and drain its last batch so the final
+        // progress (closing tool cards, trailing answer text) reaches the UI.
+        if let Some(tracer) = dsh_tracer_handle {
+            dsh_tracer_cancel.store(true, Ordering::Relaxed);
+            let _ = tracer.join();
+        }
         let output = if let Some(path) = codex_last_message_path.as_ref() {
             let final_message = codex_sidecar_output(path).unwrap_or_default();
             remove_codex_sidecar(&codex_last_message_path);
@@ -17458,10 +17725,15 @@ async fn ai_cli(
                             &stderr,
                         ));
                     }
-                    // Exit 0 and received_content may only have been progress
-                    // placeholders ("session started" / "requesting"). If there
-                    // were no actual tool calls either, this is a silent failure
-                    // rather than a successful empty turn.
+                    // Placeholders ("session started" / "requesting") never set
+                    // received_content — only real model events (text/thinking
+                    // deltas, assistant messages, tool_use, the terminal result)
+                    // do. Streamed text is already captured by the partial_text
+                    // fallback above, so reaching here with received_content=true
+                    // and empty output means the terminal `result` arrived with no
+                    // text and nothing else real streamed (no deltas, no tool
+                    // calls) — a genuine silent failure, not a successful empty
+                    // turn.
                     if !emitted_tool_use.load(Ordering::Relaxed) {
                         let detail = if stderr.trim().is_empty() {
                             "CLI 退出但未返回任何内容".to_string()
@@ -17681,6 +17953,22 @@ mod tests {
             "install".to_string(),
             "-g".to_string(),
             "@deepseek-ai/dsh@latest".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn cli_update_command_installs_kimi_when_missing() {
+        // kimi is npm-provisionable too; it must route to `npm install -g
+        // @moonshot-ai/kimi-code@latest` rather than the "unknown CLI" fallback.
+        let kimi = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "kimi")
+            .unwrap();
+        let kimi_cmd = cli_update_command(kimi, None).unwrap();
+        assert!(command_arg_strings(&kimi_cmd).ends_with(&[
+            "install".to_string(),
+            "-g".to_string(),
+            "@moonshot-ai/kimi-code@latest".to_string(),
         ]));
     }
 
@@ -18428,6 +18716,124 @@ mod tests {
     }
 
     #[test]
+    fn zcode_config_created_from_env_when_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "ugs-zcode-config-created-{}",
+            std::process::id()
+        ));
+        let config_path = dir.join(".zcode").join("cli").join("config.json");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let env = HashMap::from([
+            ("ZCODE_API_KEY".to_string(), "sk-test-123".to_string()),
+            ("ZCODE_MODEL".to_string(), "glm-5.3".to_string()),
+        ]);
+        ensure_zcode_config_at(&config_path, Some(&env)).unwrap();
+
+        let raw = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["provider"]["zai"]["options"]["apiKey"], "sk-test-123");
+        assert_eq!(config["model"]["main"], "zai/glm-5.3");
+        // The chosen model is registered so zcode can resolve it.
+        assert!(config["provider"]["zai"]["models"]["glm-5.3"].is_object());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zcode_config_keeps_existing_api_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "ugs-zcode-config-keeps-{}",
+            std::process::id()
+        ));
+        let config_path = dir.join(".zcode").join("cli").join("config.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"{
+              "provider": {
+                "zai": {
+                  "kind": "anthropic",
+                  "options": { "apiKey": "existing-key", "baseURL": "https://custom.example" },
+                  "models": { "glm-5.1": { "name": "GLM-5.1" } }
+                }
+              },
+              "model": { "main": "zai/glm-5.1" }
+            }"#,
+        )
+        .unwrap();
+
+        // No env at all: a config that already carries a key must pass through.
+        ensure_zcode_config_at(&config_path, None).unwrap();
+        let raw = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["provider"]["zai"]["options"]["apiKey"], "existing-key");
+        assert_eq!(config["provider"]["zai"]["options"]["baseURL"], "https://custom.example");
+        assert_eq!(config["model"]["main"], "zai/glm-5.1");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zcode_config_merges_env_into_existing_provider() {
+        let dir = std::env::temp_dir().join(format!(
+            "ugs-zcode-config-merges-{}",
+            std::process::id()
+        ));
+        let config_path = dir.join(".zcode").join("cli").join("config.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        // Existing config WITHOUT an apiKey (fresh `zcode` first-run default).
+        std::fs::write(
+            &config_path,
+            r#"{
+              "provider": {
+                "zai": {
+                  "kind": "anthropic",
+                  "name": "Z.AI Coding Plan",
+                  "options": { "apiKeyRequired": true, "baseURL": "https://api.z.ai/api/anthropic" },
+                  "models": { "glm-5.2": { "name": "GLM-5.2" } }
+                }
+              },
+              "model": { "main": "zai/glm-5.2", "lite": "zai/glm-5-turbo" }
+            }"#,
+        )
+        .unwrap();
+
+        let env = HashMap::from([
+            ("ZCODE_API_KEY".to_string(), "sk-merged".to_string()),
+            ("ZCODE_MODEL".to_string(), "glm-5.3".to_string()),
+        ]);
+        ensure_zcode_config_at(&config_path, Some(&env)).unwrap();
+        let raw = std::fs::read_to_string(&config_path).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["provider"]["zai"]["options"]["apiKey"], "sk-merged");
+        // Existing baseURL is preserved (no ZCODE_BASE_URL in env).
+        assert_eq!(
+            config["provider"]["zai"]["options"]["baseURL"],
+            "https://api.z.ai/api/anthropic"
+        );
+        assert_eq!(config["model"]["main"], "zai/glm-5.3");
+        assert!(config["provider"]["zai"]["models"]["glm-5.3"].is_object());
+        // Pre-existing model registry is kept.
+        assert!(config["provider"]["zai"]["models"]["glm-5.2"].is_object());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn zcode_config_rejects_without_any_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "ugs-zcode-config-no-key-{}",
+            std::process::id()
+        ));
+        let config_path = dir.join(".zcode").join("cli").join("config.json");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let err = ensure_zcode_config_at(&config_path, None).unwrap_err();
+        assert!(err.contains("尚未配置模型访问"), "unexpected error: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn parses_codex_type_events() {
         let item: CodexLiteEvent = serde_json::from_str(
             r#"{
@@ -18631,10 +19037,10 @@ mod tests {
     #[test]
     fn codex_startup_deadlines_are_stage_specific() {
         assert_eq!(DEFAULT_AI_CLI_TIMEOUT_SECS, 0);
-        assert_eq!(DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS, 1800);
-        assert_eq!(DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS, 1800);
-        assert_eq!(DEFAULT_CODEX_TURN_START_TIMEOUT_SECS, 1800);
-        assert_eq!(DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS, 1800);
+        assert_eq!(DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS, 7200);
+        assert_eq!(DEFAULT_CODEX_THREAD_START_TIMEOUT_SECS, 7200);
+        assert_eq!(DEFAULT_CODEX_TURN_START_TIMEOUT_SECS, 7200);
+        assert_eq!(DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_SECS, 7200);
     }
 
     #[test]
@@ -19673,7 +20079,22 @@ pub fn run() {
                     TRAY_MENU_GITHUB_ID => {
                         let _ = open_external(GITHUB_REPOSITORY_URL.to_string());
                     }
-                    TRAY_MENU_QUIT_ID => app.exit(0),
+                    TRAY_MENU_QUIT_ID => {
+                        // 先给前端一次同步落盘兜底的机会（见 BEFORE_QUIT_EVENT），
+                        // 等前端 invoke `ugs_quit_flush_done` 或 1.5s 超时后再退出，
+                        // 防止就地编辑的 API Key 因 keychain 异步写未完成而丢失。
+                        QUIT_FLUSH_DONE.store(false, Ordering::SeqCst);
+                        if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                            let _ = window.emit(BEFORE_QUIT_EVENT, ());
+                        }
+                        let handle = (*app).clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_millis(1500));
+                            if !QUIT_FLUSH_DONE.load(Ordering::SeqCst) {
+                                let _ = handle.exit(0);
+                            }
+                        });
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -19691,6 +20112,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             focus_main_window,
+            ugs_quit_flush_done,
             notify_session_complete,
             dismiss_session_waiting_input_notification,
             migrate_legacy_brand_storage,

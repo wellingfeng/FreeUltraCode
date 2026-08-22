@@ -607,9 +607,21 @@ export function gatewayRouteEnv(
       if (route.baseUrl) env.DEEPSEEK_BASE_URL = route.baseUrl;
     } else if (route.adapter === 'zcode') {
       // ZCode reads its provider + model from `~/.zcode/cli/config.json`
-      // (provider.zai + model.main), never from env vars, so nothing is
-      // injected here — the channel's key/base url are intentionally ignored
-      // for this adapter.
+      // (provider.zai + model.main), never from env vars directly. The Rust
+      // host merges the channel's key/base url/model into that config file
+      // before spawning (see `ensure_zcode_user_config` in lib.rs), so carry
+      // them through dedicated env vars here — a channel configured with a key
+      // must not silently run without it.
+      if (route.apiKey) env.ZCODE_API_KEY = route.apiKey;
+      if (route.baseUrl) env.ZCODE_BASE_URL = route.baseUrl;
+      if (route.model) env.ZCODE_MODEL = route.model;
+    } else if (route.adapter === 'kimi') {
+      // Kimi Code CLI accepts KIMI_API_KEY from the environment. Inject the
+      // channel key when present so a relay/self-provisioned key works
+      // through the same CLI; without a key the CLI falls back to its own
+      // login state (~/.kimi). The base url is never injected — Kimi's CLI
+      // does not read one from env.
+      if (route.apiKey) env.KIMI_API_KEY = route.apiKey;
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;
@@ -651,6 +663,7 @@ function normalizeKnownProviderModel(
 function adapterToProviderKind(adapter: string): ProviderKind {
   if (adapter === 'codex') return 'codex';
   if (adapter === 'gemini') return 'gemini';
+  if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
   return 'anthropic';

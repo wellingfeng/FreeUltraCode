@@ -230,9 +230,13 @@ export function timeoutPolicyForSelection(
     // Total runtime is intentionally unbounded. Active builds/tests must not be
     // killed merely because the complete agent turn exceeds a fixed duration.
     timeoutSeconds: 0,
-    // Only terminate after 30 minutes with no observable model/tool progress.
+    // Only terminate after 2h with no observable model/tool progress. Long
+    // tool calls (video processing, speech transcription/translation) can stay
+    // silent for well over 30 minutes, so the idle window must be generous.
     // Users can still override or disable this through the backend env setting.
-    idleTimeoutSeconds: 1800,
+    idleTimeoutSeconds: 7200,
+    // Note: keep in sync with DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS in
+    // app/src-tauri/src/lib.rs and the assertion in modelSpeed.test.ts.
   };
 }
 

@@ -1,38 +1,40 @@
 // Must run before any module that reads localStorage (e.g. the store seed):
 // migrates pre-rebrand `owf_*` keys to `ugs_*` so dev data survives the rename.
-import './lib/legacyStorageMigration';
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import '@xyflow/react/dist/style.css';
-import './styles/global.css';
-import { initializeSecureStorage } from '@/lib/secureStorage';
-import { initializeGenerationSettingsStore } from '@/lib/generationSettingsStore';
-import { initializeGatewayConfigStore } from '@/lib/gatewayConfig';
-import { initializeApiConfigStore } from '@/lib/apiConfig';
+import "./lib/legacyStorageMigration";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import "@xyflow/react/dist/style.css";
+import "./styles/global.css";
+import { initializeSecureStorage } from "@/lib/secureStorage";
+import { installQuitFlushHandler } from "@/lib/quitFlush";
+import { initializeGenerationSettingsStore } from "@/lib/generationSettingsStore";
+import { initializeGatewayConfigStore } from "@/lib/gatewayConfig";
+import { initializeApiConfigStore } from "@/lib/apiConfig";
 
-const rootEl = document.getElementById('root');
+const rootEl = document.getElementById("root");
 if (!rootEl) {
-  throw new Error('Root element #root not found');
+  throw new Error("Root element #root not found");
 }
 
 async function bootstrap(): Promise<void> {
-  // Both hydrate disk-backed state into in-memory caches before the first render
-  // so the synchronous load*() readers (secrets, generation settings, gateway
-  // config/selection) see real data. They are independent, so run concurrently.
+  // Secure storage must be ready before gateway/api config hydration, because
+  // those readers decide whether API keys live in the OS keychain. Hydrate it
+  // first, then run the remaining independent initializers concurrently.
+  await initializeSecureStorage();
   await Promise.all([
-    initializeSecureStorage(),
     initializeGenerationSettingsStore(),
     initializeGatewayConfigStore(),
   ]);
-  // Provider metadata disk store migrates from localStorage, which secure
-  // storage strips API keys out of above — so hydrate it afterwards to avoid
-  // persisting stale secrets into the disk-backed metadata file.
   await initializeApiConfigStore();
-  const [{ default: App }, { applyAppearance }, { useStore }] = await Promise.all([
-    import('./App'),
-    import('@/lib/appearance'),
-    import('@/store/useStore'),
-  ]);
+  // 退出兜底（托盘右键菜单「退出」/ 浏览器关闭）：把内存密钥同步落盘
+  // localStorage，避免 keychain 异步写未完成时丢失就地编辑的 API Key。
+  void installQuitFlushHandler();
+  const [{ default: App }, { applyAppearance }, { useStore }] =
+    await Promise.all([
+      import("./App"),
+      import("@/lib/appearance"),
+      import("@/store/useStore"),
+    ]);
 
   applyAppearance(useStore.getState().appearance);
 
