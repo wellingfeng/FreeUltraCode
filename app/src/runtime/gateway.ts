@@ -23,6 +23,7 @@ import {
   personalInstructionsForSelection,
 } from '../core/personalInstructions';
 import { appendExecutionContract } from './contract';
+import { appendWorkspaceLayout } from './workspaceLayout';
 import { parseRunFailure } from './failure';
 import { formatFailureLine } from './failure';
 import type { RunCallbacks, RunContext } from './types';
@@ -235,7 +236,7 @@ export async function runAgentWithInteraction(opts: {
       personalInstructions,
       opts.selection.adapter,
     );
-    const prompt = `${appendExecutionContract(promptBase)}\n\n${INTERACTION_PROTOCOL}${appendix}${schemaSuffix}`;
+    const prompt = `${appendExecutionContract(appendWorkspaceLayout(promptBase))}\n\n${INTERACTION_PROTOCOL}${appendix}${schemaSuffix}`;
     const timeoutPolicy = context.gateway.timeoutPolicy(opts.selection, prompt);
 
     let raw: string;

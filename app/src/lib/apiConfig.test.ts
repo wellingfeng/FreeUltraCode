@@ -278,9 +278,9 @@ describe('apiConfig provider compatibility', () => {
       {
         id: 'p_codex',
         kind: 'codex',
-        name: 'KuroAI',
+        name: 'RelayAI',
         apiKey: 'sk-test',
-        baseUrl: 'https://ai-gateway.kurogames.com',
+        baseUrl: 'https://relay.example',
         transport: 'cli',
         model: 'gpt-5.6-sol',
       },
@@ -292,6 +292,34 @@ describe('apiConfig provider compatibility', () => {
       adapter: 'codex',
       modelClass: 'gpt-5.6-sol',
       providerId: 'p_codex',
+      channelId: 'default',
+    });
+  });
+
+  it('stores the real model id for Claude default channel selections', () => {
+    seedProviders([
+      {
+        id: 'p_kimi',
+        kind: 'anthropic',
+        name: 'KuroKimi',
+        apiKey: 'sk-test',
+        baseUrl: 'https://api.kimi.com/coding/',
+        transport: 'cli',
+        model: 'kimi-k3',
+      },
+    ]);
+
+    setActiveProviderId('p_kimi');
+
+    // The stored modelClass must be the channel's real model (shown verbatim
+    // by the new-session dropdown / run logs), never a Claude tier
+    // placeholder like "sonnet" — the runtime resolves the actual model from
+    // the channel config and the Rust launcher filters non-Claude ids out of
+    // the `--model` CLI flag, so a real id is safe to persist.
+    expect(getExplicitActiveGatewaySelection()).toMatchObject({
+      adapter: 'claude-code',
+      modelClass: 'kimi-k3',
+      providerId: 'p_kimi',
       channelId: 'default',
     });
   });

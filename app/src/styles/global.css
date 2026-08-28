@@ -92,6 +92,16 @@
     var(--fg-faint)
   );
 
+  /* ── Settings: channel card background tint ─────────────────────────────── */
+  /* Every channel card (编程/生图/音频/视频/动画/世界模型/语音/3D/rigging/UI
+     设计/网格库) shares one faint tint so cards stand out from the panel
+     background. A fixed blue is mixed into the theme's --bg-alt, so the tint
+     stays subtle in both dark and light presets. */
+  --channel-card-tint: color-mix(in oklab, var(--bg-alt) 90%, #4da3ff 10%);
+  /* 免费渠道卡片背景色与收费渠道保持一致（同为蓝色调），不再用绿色区分。
+     编程渠道「免费渠道」tab 的 FreeChannelRow 吃这个变量。 */
+  --channel-card-tint-free: color-mix(in oklab, var(--bg-alt) 90%, #4da3ff 10%);
+
   /* ── Canvas redesign: glass surface ─────────────────────────────────────── */
   --node-glass: color-mix(in oklab, var(--panel) 96%, transparent);
   --node-glass-solid: var(--panel);
@@ -1006,6 +1016,11 @@ pre,
   background: var(--ugs-status-color, transparent);
 }
 
+.ugs-status-unread {
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--status-success) 26%, transparent);
+}
+
 .ugs-status-spinner {
   background: transparent;
   border: var(--ugs-status-spinner-ring) solid var(--status-running-track);
@@ -1136,7 +1151,7 @@ pre,
   --diff-del-bg: color-mix(in oklab, #f85149 16%, transparent);
   /* Code-block chrome surfaces, derived from theme tokens. */
   --code-bg: color-mix(in oklab, var(--bg) 86%, #000 14%);
-  --code-header-bg: color-mix(in oklab, var(--panel-2) 70%, var(--bg));
+  --code-header-bg: transparent;
   --code-border: var(--border);
   /* Message-stream semantic tokens. "current" keeps following the UI theme;
      dedicated stream schemes override these below. */
@@ -1168,7 +1183,7 @@ pre,
     transparent
   );
   --stream-blockquote-text: var(--fg-dim);
-  --stream-table-header-bg: var(--code-header-bg);
+  --stream-table-header-bg: color-mix(in oklab, var(--panel-2) 70%, var(--bg));
   --stream-table-row-alt-bg: color-mix(in oklab, var(--bg) 50%, var(--panel));
   --stream-reasoning-fg: var(--fg-faint);
   --stream-reasoning-header-hover: var(--fg-dim);
@@ -1246,7 +1261,7 @@ html.ugs-stream-scheme-campbell {
   --diff-add-bg: rgba(22, 198, 12, 0.18);
   --diff-del-bg: rgba(231, 72, 86, 0.18);
   --code-bg: #0f1115;
-  --code-header-bg: #1a1a1a;
+  --code-header-bg: transparent;
   --code-border: #2a2a2a;
   --stream-surface-bg: #0c0c0c;
   --stream-surface-header-bg: #0c0c0c;
@@ -1302,7 +1317,7 @@ html.ugs-stream-scheme-campbell-powershell {
   --diff-add-bg: rgba(22, 198, 12, 0.18);
   --diff-del-bg: rgba(231, 72, 86, 0.18);
   --code-bg: #082448;
-  --code-header-bg: #0b2f61;
+  --code-header-bg: transparent;
   --code-border: #1c4a86;
   --stream-surface-bg: #012456;
   --stream-surface-header-bg: #012456;
@@ -1358,7 +1373,7 @@ html.ugs-stream-scheme-one-half-dark {
   --diff-add-bg: rgba(152, 195, 121, 0.18);
   --diff-del-bg: rgba(224, 108, 117, 0.18);
   --code-bg: #23272f;
-  --code-header-bg: #2d323c;
+  --code-header-bg: transparent;
   --code-border: #3a404d;
   --stream-surface-bg: #282c34;
   --stream-surface-header-bg: #282c34;
@@ -1414,7 +1429,7 @@ html.ugs-stream-scheme-solarized-dark {
   --diff-add-bg: rgba(133, 153, 0, 0.18);
   --diff-del-bg: rgba(220, 50, 47, 0.18);
   --code-bg: #073642;
-  --code-header-bg: #0d404d;
+  --code-header-bg: transparent;
   --code-border: #144b57;
   --stream-surface-bg: #002b36;
   --stream-surface-header-bg: #002b36;
@@ -1513,6 +1528,20 @@ html.ugs-stream-scheme-solarized-dark {
 }
 .ai-markdown > :first-child { margin-top: 0; }
 .ai-markdown > :last-child { margin-bottom: 0; }
+/* 按 --- 分段的段落组：用 1px 细线代替整段底色块，回到"一整页画布"的视觉 */
+.ai-markdown .ai-para-group {
+  border-top: 1px solid var(--stream-surface-border);
+  padding-top: 0.85em;
+}
+.ai-markdown .ai-para-group:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.ai-markdown .ai-para-group + .ai-para-group {
+  margin-top: 0.85em;
+}
+.ai-markdown .ai-para-group > :first-child { margin-top: 0; }
+.ai-markdown .ai-para-group > :last-child { margin-bottom: 0; }
 .ai-markdown p { margin: 0.75em 0; line-height: 1.75; }
 .ai-markdown h1,
 .ai-markdown h2,
@@ -1527,30 +1556,34 @@ html.ugs-stream-scheme-solarized-dark {
 .ai-markdown h2 { font-size: 1.18em; }
 .ai-markdown h3 { font-size: 1.06em; }
 .ai-markdown h4 { font-size: 1em; }
-/* 小节分隔线：每个二/三级标题上方画一条淡横线，首个标题不加 */
+/* 小节标题改深色带：h1/h2/h3 用浅色背景+圆角代替"上方细横线"，视觉锚点更强 */
 .ai-markdown h1:not(:first-child),
 .ai-markdown h2:not(:first-child),
 .ai-markdown h3:not(:first-child) {
-  margin-top: 1.3em;
-  padding-top: 1.1em;
-  border-top: 1px solid var(--stream-surface-border);
+  margin-top: 1.1em;
 }
-/* 自动分割：代码块、表格、引用块之前画淡横线，首个元素不加 */
+.ai-markdown h2,
+.ai-markdown h3 {
+  padding: 0.42em 0.7em;
+  background: color-mix(in oklab, var(--stream-surface-control-bg) 78%, transparent);
+  border-radius: 6px;
+}
+/* 自动分割：代码块/命令面板用浅背景色区分，仅留上间距（不再画顶部横线） */
 .ai-markdown .ai-code:not(:first-child),
+.ai-markdown .ai-plain-block:not(:first-child) {
+  margin-top: 1.1em;
+}
+/* 自动分割：表格、引用块、图表之前仍画淡横线，首个元素不加 */
 .ai-markdown .ai-mermaid:not(:first-child),
 .ai-markdown .ai-table-wrap:not(:first-child),
 .ai-markdown .ai-model-viewer:not(:first-child),
-.ai-markdown .ai-plain-block:not(:first-child),
 .ai-markdown blockquote:not(:first-child) {
   margin-top: 1.1em;
   padding-top: 0.9em;
   border-top: 1px solid var(--stream-surface-border);
 }
 /* ── 去重：模型输出的 hr 与 CSS 自动分割线不重复 ── */
-/* hr 紧邻标题/块元素之前 → hr 已充当分割线，去掉后者的 border-top */
-.ai-markdown hr + h1,
-.ai-markdown hr + h2,
-.ai-markdown hr + h3,
+/* hr 紧邻块元素之前 → hr 已充当分割线，去掉后者的 border-top */
 .ai-markdown hr + .ai-code,
 .ai-markdown hr + .ai-mermaid,
 .ai-markdown hr + .ai-table-wrap,
@@ -1560,6 +1593,12 @@ html.ugs-stream-scheme-solarized-dark {
   margin-top: 0.6em;
   padding-top: 0;
   border-top: none;
+}
+/* hr 紧邻 h1/h2/h3 之前：标题现在是深色带，不再依赖 border-top 分隔，只需收紧 margin */
+.ai-markdown hr + h1,
+.ai-markdown hr + h2,
+.ai-markdown hr + h3 {
+  margin-top: 0.6em;
 }
 /* 块元素紧跟 hr 之后 → 块元素的自动分割线已画，去掉 hr 的 border */
 .ai-markdown h1 + hr,
@@ -1775,6 +1814,21 @@ html.ugs-stream-scheme-solarized-dark {
 }
 .ai-code--compact .ai-code__scroll {
   background: var(--stream-tool-panel-bg);
+}
+/* Tiny (1-3 line) blocks: the outer .ai-code--tiny div already supplies
+   padding/background as a text-panel surface, so the generic .ai-code__scroll
+   code padding would double up. Reset it to flow with the surrounding text. */
+.ai-code--tiny__scroll code {
+  display: inline;
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+  word-break: normal;
+}
+/* 短代码 / 命令片段：用浅代码色背景区分，替代左侧竖线与顶部横线 */
+.ai-code--tiny,
+.ai-plain-block__body {
+  background: color-mix(in oklab, var(--code-bg) 30%, transparent);
 }
 
 /* File preview drawer: use the code surface as the whole drawer body instead of

@@ -75,8 +75,118 @@ pub fn ugs_dsh_sessions_root() -> PathBuf {
 /// 以纯 JSONL（`compression: none`）且每事件一行（`packChunks: false`）
 /// 落盘。整行替换 `session-persistence-jsonl` 的 config（dsh 的 patch
 /// 语义是替换而非合并，故必须同时给出 root）。`!!js` 表达式在运行时求值。
-pub fn ugs_patch_yaml() -> &'static str {
-    "- id: session-persistence-jsonl\n  config:\n    root: !!js process.env.UGS_DSH_SESSIONS\n    packChunks: false\n    compression: none\n"
+///
+/// 另外按 UGS 渠道注入模型与端点配置。dsh 内置**两条** DeepSeek 路径：
+///
+/// 1. **native**（`dsh-llm-deepseek`，路由名 `deepseek-official`）：按
+///    DeepSeek 私有 wire 发请求——带 `thinking:{type}`、`reasoning_effort`，
+///    历史里回传 `reasoning_content`。**官方 `api.deepseek.com` 专用**。
+/// 2. **pi-ai 通用兼容**（`dsh-llm-pi-ai`，OpenAI 兼容多 provider 适配器）：
+///    默认 dormant，一旦 config 给出 provider profiles 就注册路由。
+///    hand-declared route + `api: openai-completions` 只发**标准 OpenAI
+///    字段**，不带任何 DeepSeek 私有字段。
+///
+/// 判定：baseURL 为空或指向官方 `api.deepseek.com` → 走 native，保留完整
+/// 思考能力；baseURL 是第三方兼容网关（OpenRouter / SiliconFlow / 自建 /
+/// 中转）→ 走 pi-ai `openai-completions`。此前所有渠道一律套 native
+/// `deepseek-official`，第三方网关收到私有 `thinking`/`reasoning_effort`
+/// 字段直接 `HTTP 400 INVALID_REQUEST`——这正是第三方 DSH 一直不可用的根因。
+///
+/// pi-ai hand-declared route 必须显式列出 model catalog（否则请求前就
+/// `UNKNOWN_MODEL`），故第三方分支要求同时有 model 与 baseURL；缺 model
+/// 时退回 native（保持旧行为，不至于 UNKNOWN_MODEL 崩）。API key 均通过
+/// `apiKeyEnv: DEEPSEEK_API_KEY` 从 credential seam / 环境变量解析，UGS
+/// 已在 spawn 时注入 `DEEPSEEK_API_KEY`，不写进 config。
+///
+/// 两个字段都来自 `env_vars`（`UGS_DSH_MODEL` / `DEEPSEEK_BASE_URL`）。
+pub fn ugs_patch_yaml(model: Option<&str>, base_url: Option<&str>) -> String {
+    let mut out = String::from(
+        "- id: session-persistence-jsonl\n  config:\n    root: !!js process.env.UGS_DSH_SESSIONS\n    packChunks: false\n    compression: none\n",
+    );
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    let base_url = base_url.map(str::trim).filter(|b| !b.is_empty());
+
+    let third_party = base_url.is_some_and(|b| !is_official_deepseek(b));
+
+    if third_party && model.is_some() {
+        // 第三方兼容网关：走 pi-ai `openai-completions`。声明一条 UGS 专属
+        // 路由 `deepseek-compat`（pi-ai 不 ship 这个 key，属 hand-declared
+        // route），把 agent 默认模型指向它。不给 `compat` 段——pi-ai 对无法
+        // 识别的端点默认按纯 OpenAI 处理，正好只发标准字段、不带 DeepSeek
+        // 私有的 thinking/reasoning。
+        let model = model.unwrap();
+        let base_url = base_url.unwrap();
+        out.push_str(&format!(
+            "- id: agent-default-model\n  config:\n    provider: deepseek-compat\n    model: {model}\n",
+            model = yaml_scalar(model)
+        ));
+        out.push_str(&format!(
+            concat!(
+                "- id: llm-pi-ai\n  config:\n    providers:\n",
+                "      deepseek-compat:\n",
+                "        apiKeyEnv: DEEPSEEK_API_KEY\n",
+                "        api: openai-completions\n",
+                "        baseURL: {base_url}\n",
+                "        models:\n",
+                "          - id: {model}\n",
+                "            name: {model}\n",
+                "            contextWindow: 131072\n",
+                "            maxTokens: 8192\n",
+            ),
+            base_url = yaml_scalar(base_url),
+            model = yaml_scalar(model),
+        ));
+        return out;
+    }
+
+    // 官方直连（或缺 model 无法安全声明 pi-ai 路由时的兜底）：保持 native
+    // `deepseek-official`。
+    if let Some(model) = model {
+        // `agent-default-model` 的 plugin config 是 `{provider, model}`
+        // 必填整行替换；provider 固定 `deepseek-official`（dsh-llm-deepseek
+        // 注册的路由名），model 用渠道透传的 id。
+        out.push_str(&format!(
+            "- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: {}\n",
+            yaml_scalar(model)
+        ));
+    }
+    if let Some(base_url) = base_url {
+        // `llm-deepseek` 默认条目无 config（全靠 settings.yaml 的
+        // `llm-deepseek:` 段）。整行替换为 `{baseURL}`，让 headless 在
+        // 不读 settings.yaml 的场景下也能命中官方端点覆盖。`apiKeyEnv`
+        // 用默认值 `DEEPSEEK_API_KEY`，与 UGS 注入的环境变量对齐。
+        out.push_str(&format!(
+            "- id: llm-deepseek\n  config:\n    apiKeyEnv: DEEPSEEK_API_KEY\n    baseURL: {}\n",
+            yaml_scalar(base_url)
+        ));
+    }
+    out
+}
+
+/// baseURL 是否指向 DeepSeek 官方端点。官方（或其区域别名）才使用 native
+/// 适配器的私有 wire；其余一律视为第三方兼容网关。仅比对 host，忽略协议、
+/// 端口与路径（官方文档端点为 `https://api.deepseek.com`）。
+fn is_official_deepseek(base_url: &str) -> bool {
+    let after_scheme = base_url
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(base_url);
+    let host = after_scheme
+        .split(['/', ':'])
+        .next()
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    host == "api.deepseek.com" || host.ends_with(".deepseek.com") || host == "deepseek.com"
+}
+
+/// 把任意字符串编为 YAML 双引号标量，转义反斜杠与双引号。
+/// dsh 的 patch 文件按 YAML 解析，URL/model id 含 `:`、`/` 等字符时
+/// 必须引用，避免被误读为 map/anchor。
+fn yaml_scalar(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 /// 快照一个会话根目录下的全部会话目录（两层：项目目录 → 会话目录）。
@@ -445,13 +555,20 @@ fn tool_call_patch(event: &serde_json::Value) -> Option<serde_json::Value> {
     let args = serde_json::from_str::<serde_json::Value>(args_raw).ok();
     let subject = tool_subject_from_args(args.as_ref());
     let args = args.map(|value| clamp_json_strings(&value, 600));
-    Some(serde_json::json!({
+    // Moon Add: update_goal 是 dsh harness 内部的目标管理工具，不是面向用户
+    // 的调用。标记 ephemeral 让它只在流式期间短暂可见，最终消息持久化时被
+    // 前端 isPersistentToolPatch 过滤掉，不再作为「末尾莫名多出的工具卡片」出现。
+    let mut patch = serde_json::json!({
         "id": call_id,
         "name": name,
         "subject": subject,
         "status": "running",
         "args": args,
-    }))
+    });
+    if name == "update_goal" {
+        patch["ephemeral"] = serde_json::Value::Bool(true);
+    }
+    Some(patch)
 }
 
 /// 工具结果文本：`data.message.content[].content[].text`（兼容直接 text 块）。
@@ -643,11 +760,80 @@ mod tests {
 
     #[test]
     fn ugs_patch_yaml_targets_persistence_row() {
-        let yaml = ugs_patch_yaml();
+        let yaml = ugs_patch_yaml(None, None);
         assert!(yaml.contains("session-persistence-jsonl"));
         assert!(yaml.contains("compression: none"));
         assert!(yaml.contains("packChunks: false"));
         assert!(yaml.contains("UGS_DSH_SESSIONS"));
+        // 无 model/baseURL 时不应生成对应 patch 行，保持 dsh 默认行为。
+        assert!(!yaml.contains("agent-default-model"));
+        assert!(!yaml.contains("llm-deepseek"));
+    }
+
+    #[test]
+    fn ugs_patch_yaml_overrides_default_model_when_channel_supplies_one() {
+        let yaml = ugs_patch_yaml(Some("deepseek-v4-pro"), None);
+        assert!(yaml.contains("agent-default-model"));
+        assert!(yaml.contains("provider: deepseek-official"));
+        assert!(yaml.contains("model: \"deepseek-v4-pro\""));
+        // baseURL 缺省时不写 llm-deepseek 行。
+        assert!(!yaml.contains("llm-deepseek"));
+        // 无第三方 baseURL 不应触碰 pi-ai 路径。
+        assert!(!yaml.contains("llm-pi-ai"));
+    }
+
+    #[test]
+    fn ugs_patch_yaml_keeps_native_for_official_base_url() {
+        // 官方端点即便显式给出 baseURL，也走 native deepseek-official，
+        // 保留 thinking/reasoning 能力。
+        let yaml = ugs_patch_yaml(Some("deepseek-v4-pro"), Some("https://api.deepseek.com"));
+        assert!(yaml.contains("provider: deepseek-official"));
+        assert!(yaml.contains("id: llm-deepseek"));
+        assert!(yaml.contains("baseURL: \"https://api.deepseek.com\""));
+        assert!(!yaml.contains("llm-pi-ai"));
+        assert!(!yaml.contains("deepseek-compat"));
+    }
+
+    #[test]
+    fn ugs_patch_yaml_routes_third_party_through_pi_ai() {
+        // 第三方兼容网关：必须走 pi-ai openai-completions，绝不带 native
+        // deepseek-official（否则私有 thinking 字段触发 HTTP 400）。
+        let yaml = ugs_patch_yaml(
+            Some("deepseek-v4-pro"),
+            Some("https://ai-gateway.kurogames.com/v1"),
+        );
+        assert!(yaml.contains("id: llm-pi-ai"));
+        assert!(yaml.contains("provider: deepseek-compat"));
+        assert!(yaml.contains("deepseek-compat:"));
+        assert!(yaml.contains("api: openai-completions"));
+        assert!(yaml.contains("apiKeyEnv: DEEPSEEK_API_KEY"));
+        assert!(yaml.contains("baseURL: \"https://ai-gateway.kurogames.com/v1\""));
+        assert!(yaml.contains("id: \"deepseek-v4-pro\""));
+        // 关键：不得回落到 native 官方路由。
+        assert!(!yaml.contains("provider: deepseek-official"));
+        assert!(!yaml.contains("id: llm-deepseek"));
+    }
+
+    #[test]
+    fn ugs_patch_yaml_third_party_without_model_falls_back_to_native() {
+        // 第三方 baseURL 但缺 model：无法安全声明 pi-ai catalog（会
+        // UNKNOWN_MODEL），退回 native + baseURL 覆盖，保持旧行为不崩。
+        let yaml = ugs_patch_yaml(None, Some("https://ai-gateway.kurogames.com/v1"));
+        assert!(!yaml.contains("llm-pi-ai"));
+        assert!(yaml.contains("id: llm-deepseek"));
+        assert!(yaml.contains("baseURL: \"https://ai-gateway.kurogames.com/v1\""));
+        assert!(!yaml.contains("agent-default-model"));
+    }
+
+    #[test]
+    fn is_official_deepseek_matches_only_official_hosts() {
+        assert!(is_official_deepseek("https://api.deepseek.com"));
+        assert!(is_official_deepseek("https://api.deepseek.com/v1"));
+        assert!(is_official_deepseek("http://api.deepseek.com:443/v1"));
+        assert!(is_official_deepseek("https://cn.api.deepseek.com"));
+        assert!(!is_official_deepseek("https://ai-gateway.kurogames.com/v1"));
+        assert!(!is_official_deepseek("https://openrouter.ai/api/v1"));
+        assert!(!is_official_deepseek("https://api.deepseek.com.evil.com/v1"));
     }
 
     #[test]

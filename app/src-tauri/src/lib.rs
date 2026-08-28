@@ -12,11 +12,13 @@ use tauri::{
     AppHandle, Manager, Runtime,
 };
 
+mod autosave;
 mod cache_cleanup;
 mod cc_switch_import;
 mod cli_runtime;
 mod dsh_log;
 mod free_proxy;
+mod kimi_log;
 mod history;
 mod proxy_http;
 mod secure_store;
@@ -472,6 +474,214 @@ fn terminate_child_tree(child: &mut Child) {
     let _ = child.wait();
 }
 
+// ---------------------------------------------------------------------------
+// Windows Job Object + orphan-killing machinery
+//
+// PROBLEM: On Windows, when an AI CLI (claude/codex) exits, its tool-spawned
+// descendants (bash → grep/find/rg scanning UE source trees) are NOT
+// auto-reaped. `taskkill /T /PID <cli_pid>` only kills processes still in
+// the parent-child chain; if an intermediate process (bash) already exited,
+// its children are "orphaned" (re-parented to the system) and invisible to
+// `taskkill /T`. They keep burning CPU indefinitely.
+//
+// SOLUTION (3 layers):
+//   1. KILL_ON_JOB_CLOSE Job Object: assigned at spawn, guarantees kernel-level
+//      cleanup when UGS itself exits/crashes. (existing)
+//   2. Per-run_id job handle storage: instead of leaking the handle, store it
+//      keyed by run_id so we can explicitly query+kill+close it when the CLI
+//      exits, while UGS is still running. (new)
+//   3. QueryInformationJobObject(JobObjectBasicProcessIdList): on CLI exit,
+//      enumerate ALL PIDs still in the job (including orphaned grandchildren
+//      that `taskkill /T` cannot see) and kill each one. Then close the job
+//      handle as a final safety net. (new)
+//
+// The job tracks all processes that inherited it, regardless of whether
+// their parent is still alive — this is exactly the semantic needed to
+// catch orphans that `taskkill /T` misses.
+// ---------------------------------------------------------------------------
+
+/// Registry: run_id → Job Object handle (as isize for Send-safety).
+fn active_ai_cli_jobs() -> &'static Mutex<HashMap<String, isize>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, isize>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_ai_cli_job(run_id: &str, job: isize) {
+    if let Ok(mut active) = active_ai_cli_jobs().lock() {
+        active.insert(run_id.to_string(), job);
+    }
+}
+
+fn take_ai_cli_job(run_id: &str) -> Option<isize> {
+    active_ai_cli_jobs()
+        .lock()
+        .ok()
+        .and_then(|mut active| active.remove(run_id))
+}
+
+/// Windows Job Object configured with KILL_ON_JOB_CLOSE. Returns the job
+/// handle (as isize) so the caller can store it per-run_id and later
+/// query/kill/close it when the CLI exits.
+///
+/// While the returned handle is alive, every process assigned to the job
+/// (and every process those processes spawn, recursively) is guaranteed to
+/// be reaped by the kernel the moment the last job handle closes — whether
+/// that is an explicit close, a panic unwind, or UGS itself crashing.
+#[cfg(windows)]
+fn assign_child_to_kill_on_close_job(child: &Child) -> Option<isize> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return None;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const _,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if ok == 0 {
+            CloseHandle(job);
+            return None;
+        }
+        let proc_handle = child.as_raw_handle();
+        if AssignProcessToJobObject(job, proc_handle as _) == 0 {
+            CloseHandle(job);
+            return None;
+        }
+        // Return the handle — caller stores it per-run_id and explicitly
+        // closes it when the CLI exits. If UGS crashes before that, the OS
+        // closes all open handles, triggering KILL_ON_JOB_CLOSE.
+        Some(job as isize)
+    }
+}
+
+#[cfg(not(windows))]
+fn assign_child_to_kill_on_close_job(_child: &Child) -> Option<isize> {
+    None
+}
+
+/// Query the Job Object for ALL process PIDs currently assigned to it
+/// (including orphaned grandchildren whose intermediate parent already
+/// died — they are still in the job because they inherited it at spawn).
+/// Kill each one with `taskkill /F /PID`.
+///
+/// This is the critical function that catches orphans that `taskkill /T`
+/// misses: the job tracks membership by inheritance, not by parent-child
+/// linkage, so even processes whose parent has exited remain visible.
+#[cfg(windows)]
+fn kill_job_processes(job: isize) {
+    use windows_sys::Win32::System::JobObjects::{
+        QueryInformationJobObject, JobObjectBasicProcessIdList,
+    };
+
+    if job == 0 {
+        return;
+    }
+
+    // JOBOBJECT_BASIC_PROCESS_ID_LIST layout:
+    //   NumberOfAssignedProcesses: u32  (4 bytes)
+    //   NumberOfProcessIdsInList:  u32 (4 bytes)
+    //   ProcessIdList: [usize; N]      (8 bytes each on 64-bit)
+    //
+    // We allocate stack space for up to 512 PIDs — far more than any AI CLI
+    // turn would ever spawn. If the job has more (extremely unlikely), the
+    // query fails gracefully and we fall back to `taskkill /T` in
+    // `terminate_child_tree`.
+    const MAX_PIDS: usize = 512;
+    #[repr(C)]
+    struct JobPidList {
+        assigned: u32,
+        in_list: u32,
+        pids: [usize; MAX_PIDS],
+    }
+    let mut buf = JobPidList {
+        assigned: 0,
+        in_list: 0,
+        pids: [0; MAX_PIDS],
+    };
+
+    unsafe {
+        let ok = QueryInformationJobObject(
+            job as *mut _,
+            JobObjectBasicProcessIdList,
+            &mut buf as *mut _ as *mut _,
+            std::mem::size_of::<JobPidList>() as u32,
+            std::ptr::null_mut(),
+        );
+        if ok == 0 {
+            return; // query failed — fallback to taskkill /T
+        }
+        let count = buf.in_list as usize;
+        for i in 0..count.min(MAX_PIDS) {
+            let pid = buf.pids[i];
+            if pid == 0 {
+                continue;
+            }
+            // Kill each process directly. This catches orphans whose parent
+            // already exited — they are still in the job's PID list.
+            let mut cmd = Command::new("taskkill");
+            hide_console(&mut cmd);
+            let _ = cmd
+                .arg("/PID")
+                .arg(pid.to_string())
+                .arg("/F")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_job_processes(_job: isize) {}
+
+/// Close a Job Object handle. If the job has KILL_ON_JOB_CLOSE set, this
+/// triggers kernel-level termination of all remaining processes in the job
+/// as a final safety net.
+#[cfg(windows)]
+fn close_job_handle(job: isize) {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    if job != 0 {
+        unsafe {
+            let _ = CloseHandle(job as *mut _);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn close_job_handle(_job: isize) {}
+
+/// Terminate an AI CLI and ALL processes in its Job Object — including
+/// orphaned grandchildren (grep/find/rg) whose intermediate parent (bash)
+/// already exited and are therefore invisible to `taskkill /T`.
+///
+/// This is the robust replacement for `terminate_child_tree` in AI CLI
+/// contexts. Call this instead of `terminate_child_tree` whenever a
+/// `run_id` is available.
+///
+/// Order of operations:
+///   1. Query job for all PIDs (catches orphans) → kill each
+///   2. Close job handle (triggers KILL_ON_JOB_CLOSE for stragglers)
+///   3. `terminate_child_tree` (taskkill /T + child.kill + child.wait)
+fn terminate_ai_cli_tree(child: &mut Child, run_id: &str) {
+    if let Some(job) = take_ai_cli_job(run_id) {
+        kill_job_processes(job);
+        close_job_handle(job);
+    }
+    terminate_child_tree(child);
+}
+
 fn active_ai_cli_pids() -> &'static Mutex<HashMap<String, u32>> {
     static ACTIVE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -534,6 +744,28 @@ fn register_ai_cli(run_id: &str, pid: u32) {
     if let Ok(mut active) = active_ai_cli_pids().lock() {
         active.insert(run_id.to_string(), pid);
     }
+    if let Ok(mut visible) = active_ai_cli_visible_progress().lock() {
+        visible.insert(run_id.to_string(), std::time::Instant::now());
+    }
+}
+
+fn active_ai_cli_visible_progress() -> &'static Mutex<HashMap<String, std::time::Instant>> {
+    static ACTIVE: OnceLock<Mutex<HashMap<String, std::time::Instant>>> = OnceLock::new();
+    ACTIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn touch_visible_progress(run_id: &str) {
+    if let Ok(mut visible) = active_ai_cli_visible_progress().lock() {
+        visible.insert(run_id.to_string(), std::time::Instant::now());
+    }
+}
+
+fn visible_progress_elapsed(run_id: &str) -> std::time::Duration {
+    active_ai_cli_visible_progress()
+        .lock()
+        .ok()
+        .and_then(|visible| visible.get(run_id).map(std::time::Instant::elapsed))
+        .unwrap_or_default()
 }
 
 fn mark_ai_cli_cancelled(run_id: &str) -> Option<u32> {
@@ -557,8 +789,17 @@ fn take_ai_cli_cancelled(run_id: &str) -> bool {
 }
 
 fn unregister_ai_cli(run_id: &str) {
+    // Safety net: if the job handle wasn't already closed by
+    // `terminate_ai_cli_tree`, close it now. This triggers KILL_ON_JOB_CLOSE
+    // for any stray orphan processes still in the job.
+    if let Some(job) = take_ai_cli_job(run_id) {
+        close_job_handle(job);
+    }
     if let Ok(mut active) = active_ai_cli_pids().lock() {
         active.remove(run_id);
+    }
+    if let Ok(mut visible) = active_ai_cli_visible_progress().lock() {
+        visible.remove(run_id);
     }
     unregister_ai_cli_steer(run_id);
 }
@@ -2920,6 +3161,442 @@ async fn uninstall_skill(
     .await
     .map_err(|e| format!("卸载任务失败: {e}"))??;
     let _ = refresh_slash_catalog_async(app).await;
+    Ok(result)
+}
+
+// ============================================================================
+// 能力统一翻译：把 UGS 的 skill / MCP / LSP 能力翻译成各 agent 的原生格式并写入其
+// 原生配置位置（离线生成，不介入 agent 运行时）。核心原则：
+//   - skill  → 复用现有 SKILL.md 安装器，按 agent 写入 global + project 根目录；
+//   - MCP    → Claude 写项目 .mcp.json、Codex 写 ~/.codex/config.toml、Gemini 写
+//              ~/.gemini/settings.json（各自原生格式）；
+//   - LSP    → 运行时能力，无法文本翻译；生成统一目录清单，各 agent 复用同一 LSP。
+// 不支持原生配置格式的 agent（kimi / deepseek / zcode）会在结果中明确标记为「待接入」。
+// ============================================================================
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityTranslateRequest {
+    kind: String,
+    project_root: Option<String>,
+    targets: Vec<String>,
+    #[serde(default)]
+    overwrite: bool,
+    name: Option<String>,
+    slug: Option<String>,
+    text: Option<String>,
+    source_path: Option<String>,
+    #[serde(default)]
+    servers: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityTranslateTargetResult {
+    agent: String,
+    label: String,
+    ok: bool,
+    path: Option<String>,
+    message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapabilityTranslateResult {
+    kind: String,
+    results: Vec<CapabilityTranslateTargetResult>,
+}
+
+fn translate_agent_label(agent: &str) -> String {
+    match agent {
+        "claude-code" => "Claude Code".to_string(),
+        "codex" => "Codex".to_string(),
+        "gemini" => "Gemini".to_string(),
+        "agents" => "Agents (跨 agent 标准)".to_string(),
+        "kimi" => "Kimi Code".to_string(),
+        "deepseek-harness" => "DeepSeek Harness".to_string(),
+        "zcode" => "ZCode / GLM".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// 每个 agent 对应的 skill 安装目标 id（global + 项目内）。Gemini 目前只有 global 根。
+fn skill_target_ids_for_agent(agent: &str) -> Vec<&'static str> {
+    match agent {
+        "claude-code" => vec!["global-claude", "project-claude"],
+        "codex" => vec!["global-codex", "project-codex"],
+        "gemini" => vec!["global-gemini"],
+        "agents" => vec!["global-agents", "project-agents"],
+        _ => vec![],
+    }
+}
+
+fn translate_skill_to_agents_blocking(
+    req: &CapabilityTranslateRequest,
+) -> Result<CapabilityTranslateResult, String> {
+    let text = match req.text.as_deref().map(str::trim) {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => {
+            let src = req
+                .source_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "缺少 skill 文本或来源路径。".to_string())?;
+            let src_path = PathBuf::from(src);
+            let skill_file = if src_path.is_file() {
+                src_path
+            } else {
+                src_path.join("SKILL.md")
+            };
+            std::fs::read_to_string(&skill_file)
+                .map_err(|e| format!("读取 skill 来源失败（{}）：{e}", skill_file.display()))?
+        }
+    };
+    if text.trim().is_empty() {
+        return Err("Skill 内容为空，无法翻译。".to_string());
+    }
+    let name = req.name.clone().unwrap_or_default();
+    let slug = req.slug.clone().unwrap_or_default();
+    let project_root = req.project_root.clone();
+    let mut results = Vec::new();
+
+    for agent in &req.targets {
+        let target_ids = skill_target_ids_for_agent(agent);
+        if target_ids.is_empty() {
+            results.push(CapabilityTranslateTargetResult {
+                agent: agent.clone(),
+                label: translate_agent_label(agent),
+                ok: false,
+                path: None,
+                message: "该 agent 尚无标准 skill 安装目录，待接入。".to_string(),
+            });
+            continue;
+        }
+        let mut written = 0usize;
+        let mut skipped = 0usize;
+        let mut errors: Vec<String> = Vec::new();
+        let mut first_path: Option<String> = None;
+        for target_id in &target_ids {
+            if target_id.starts_with("project-")
+                && project_root.as_deref().map(str::trim).unwrap_or("").is_empty()
+            {
+                continue;
+            }
+            match install_skill_from_text_blocking(
+                text.clone(),
+                name.clone(),
+                slug.clone(),
+                (*target_id).to_string(),
+                req.overwrite,
+                None,
+                project_root.clone(),
+                None,
+            ) {
+                Ok(installed) => {
+                    written += 1;
+                    if first_path.is_none() {
+                        first_path = Some(installed.skill_file);
+                    }
+                }
+                Err(e) if e.contains("已存在") => skipped += 1,
+                Err(e) => errors.push(e),
+            }
+        }
+        let ok = errors.is_empty() && written > 0;
+        let message = if ok {
+            let mut parts = vec![format!("已写入 {written} 处")];
+            if skipped > 0 {
+                parts.push(format!("{skipped} 处已存在（未覆盖）"));
+            }
+            parts.join("，")
+        } else if written == 0 && skipped > 0 && errors.is_empty() {
+            format!("{skipped} 处已存在，未覆盖（可勾选「覆盖」重写）")
+        } else if errors.is_empty() {
+            "无可用写入位置".to_string()
+        } else {
+            errors.join("；")
+        };
+        results.push(CapabilityTranslateTargetResult {
+            agent: agent.clone(),
+            label: translate_agent_label(agent),
+            ok,
+            path: first_path,
+            message,
+        });
+    }
+
+    Ok(CapabilityTranslateResult {
+        kind: "skill".to_string(),
+        results,
+    })
+}
+
+/// 把 MCP server 表合并进一个 JSON 文件（Claude `.mcp.json` 与 Gemini `settings.json`
+/// 都使用 `mcpServers` 这一键；Gemini 额外写 `trust: true`）。
+fn merge_mcp_servers_into_json(
+    path: &Path,
+    servers: &serde_json::Map<String, serde_json::Value>,
+    trust: bool,
+) -> Result<(), String> {
+    let mut doc: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if !doc.is_object() {
+        doc = serde_json::json!({});
+    }
+    let root_obj = doc.as_object_mut().unwrap();
+    let mcp = root_obj
+        .entry("mcpServers".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !mcp.is_object() {
+        *mcp = serde_json::json!({});
+    }
+    let mcp_obj = mcp.as_object_mut().unwrap();
+    for (id, entry) in servers {
+        let mut e = entry.clone();
+        if trust {
+            if let Some(o) = e.as_object_mut() {
+                o.insert("trust".to_string(), serde_json::Value::Bool(true));
+            }
+        }
+        mcp_obj.insert(id.clone(), e);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    let serialized =
+        serde_json::to_string_pretty(&doc).map_err(|e| format!("序列化 JSON 失败：{e}"))?;
+    atomic_write(path, serialized.as_bytes())
+        .map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
+    Ok(())
+}
+
+fn codex_mcp_config_path() -> Option<PathBuf> {
+    user_home_dir().map(|h| h.join(".codex").join("config.toml"))
+}
+
+/// Codex 原生 MCP 配置写入 `~/.codex/config.toml` 的 `[mcp_servers.<name>]`。
+fn merge_codex_mcp_servers(
+    servers: &serde_json::Map<String, serde_json::Value>,
+) -> Result<PathBuf, String> {
+    let path = codex_mcp_config_path().ok_or_else(|| "未找到用户主目录。".to_string())?;
+    let mut doc: toml::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.parse::<toml::Value>().ok())
+        .unwrap_or_else(|| toml::Value::Table(toml::map::Map::new()));
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| "~/.codex/config.toml 不是有效的 TOML 表。".to_string())?;
+    let mcp = table
+        .entry("mcp_servers".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let mcp_table = mcp
+        .as_table_mut()
+        .ok_or_else(|| "mcp_servers 不是 TOML 表。".to_string())?;
+
+    let mut count = 0usize;
+    for (id, entry) in servers {
+        let Some(entry_obj) = entry.as_object() else {
+            continue;
+        };
+        let mut server = toml::map::Map::new();
+        if let Some(cmd) = entry_obj.get("command").and_then(|v| v.as_str()) {
+            server.insert("command".to_string(), toml::Value::String(cmd.to_string()));
+        }
+        if let Some(args) = entry_obj.get("args").and_then(|v| v.as_array()) {
+            let arr = args
+                .iter()
+                .filter_map(|a| a.as_str())
+                .map(|s| toml::Value::String(s.to_string()))
+                .collect::<Vec<_>>();
+            server.insert("args".to_string(), toml::Value::Array(arr));
+        }
+        if let Some(env) = entry_obj.get("env").and_then(|v| v.as_object()) {
+            let mut env_map = toml::map::Map::new();
+            for (k, v) in env {
+                if let Some(vs) = v.as_str() {
+                    env_map.insert(k.clone(), toml::Value::String(vs.to_string()));
+                }
+            }
+            server.insert("env".to_string(), toml::Value::Table(env_map));
+        }
+        mcp_table.insert(id.clone(), toml::Value::Table(server));
+        count += 1;
+    }
+    if count == 0 {
+        return Err("没有可翻译的 MCP server。".to_string());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    let serialized =
+        toml::to_string_pretty(&doc).map_err(|e| format!("序列化 TOML 失败：{e}"))?;
+    atomic_write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 config.toml 失败：{e}"))?;
+    Ok(path)
+}
+
+fn translate_mcp_to_agents_blocking(
+    req: &CapabilityTranslateRequest,
+) -> Result<CapabilityTranslateResult, String> {
+    let servers = req.servers.clone().unwrap_or_default();
+    let settings_json = serde_json::json!({
+        "mcp": { "enabled": true, "servers": servers }
+    });
+    let cwd = req.project_root.clone().unwrap_or_default();
+    let mcp_json = project_mcp_settings_json_from_settings(&settings_json, Some(cwd.as_str()))
+        .ok_or_else(|| "没有可翻译的 MCP server（请先启用至少一个 MCP）。".to_string())?;
+    let servers_map = mcp_json
+        .get("mcpServers")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .ok_or_else(|| "MCP server 转换为空。".to_string())?;
+
+    let mut results = Vec::new();
+    for agent in &req.targets {
+        let outcome: Result<Option<PathBuf>, String> = match agent.as_str() {
+            "claude-code" => {
+                let root = project_scan_root(cwd.trim())?;
+                let path = root.join(".mcp.json");
+                merge_mcp_servers_into_json(&path, &servers_map, false)?;
+                Ok(Some(path))
+            }
+            "codex" => merge_codex_mcp_servers(&servers_map).map(Some),
+            "gemini" => {
+                let home = user_home_dir().ok_or_else(|| "未找到用户主目录。".to_string())?;
+                let path = home.join(".gemini").join("settings.json");
+                merge_mcp_servers_into_json(&path, &servers_map, true)?;
+                Ok(Some(path))
+            }
+            other => Err(format!("该 agent（{other}）尚无标准 MCP 配置文件，待接入。")),
+        };
+        match outcome {
+            Ok(path) => results.push(CapabilityTranslateTargetResult {
+                agent: agent.clone(),
+                label: translate_agent_label(agent),
+                ok: true,
+                path: path.map(|p| display_preview_path(&p)),
+                message: "已写入原生 MCP 配置".to_string(),
+            }),
+            Err(e) => results.push(CapabilityTranslateTargetResult {
+                agent: agent.clone(),
+                label: translate_agent_label(agent),
+                ok: false,
+                path: None,
+                message: e,
+            }),
+        }
+    }
+
+    Ok(CapabilityTranslateResult {
+        kind: "mcp".to_string(),
+        results,
+    })
+}
+
+fn translate_lsp_to_agents_blocking(
+    req: &CapabilityTranslateRequest,
+) -> Result<CapabilityTranslateResult, String> {
+    let servers = req.servers.clone().unwrap_or_default();
+    let enabled = servers
+        .iter()
+        .filter(|s| s.get("enabled").and_then(|v| v.as_bool()) == Some(true))
+        .collect::<Vec<_>>();
+    if enabled.is_empty() {
+        return Err("没有已启用的 LSP server（请先启用至少一个 LSP）。".to_string());
+    }
+
+    let root = project_scan_root(
+        req.project_root
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default(),
+    )?;
+    let manifest_dir = root.join(".ugs");
+    std::fs::create_dir_all(&manifest_dir).map_err(|e| format!("创建 .ugs 目录失败：{e}"))?;
+
+    let mut manifest_servers = Vec::new();
+    for server in &enabled {
+        let id = server.get("id").and_then(|v| v.as_str()).unwrap_or("lsp");
+        let command = server
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let args = server
+            .get("args")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut entry = serde_json::Map::new();
+        entry.insert("id".to_string(), serde_json::Value::String(id.to_string()));
+        if let Some(cmd) = command {
+            entry.insert("command".to_string(), serde_json::Value::String(cmd.to_string()));
+        }
+        entry.insert(
+            "args".to_string(),
+            serde_json::Value::Array(args.into_iter().map(serde_json::Value::String).collect()),
+        );
+        manifest_servers.push(serde_json::Value::Object(entry));
+    }
+
+    let manifest = serde_json::json!({
+        "version": 1,
+        "kind": "lsp",
+        "servers": manifest_servers
+    });
+    let path = manifest_dir.join("lsp-manifest.json");
+    let serialized =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("序列化清单失败：{e}"))?;
+    atomic_write(&path, serialized.as_bytes())
+        .map_err(|e| format!("写入 LSP 清单失败：{e}"))?;
+
+    let mut results = Vec::new();
+    for agent in &req.targets {
+        results.push(CapabilityTranslateTargetResult {
+            agent: agent.clone(),
+            label: translate_agent_label(agent),
+            ok: true,
+            path: Some(display_preview_path(&path)),
+            message: "LSP 是运行时能力，无法文本翻译；已生成统一目录清单，各 agent 复用同一 LSP 进程/配置。"
+                .to_string(),
+        });
+    }
+    Ok(CapabilityTranslateResult {
+        kind: "lsp".to_string(),
+        results,
+    })
+}
+
+fn capability_translate_blocking(
+    req: CapabilityTranslateRequest,
+) -> Result<CapabilityTranslateResult, String> {
+    match req.kind.as_str() {
+        "skill" => translate_skill_to_agents_blocking(&req),
+        "mcp" => translate_mcp_to_agents_blocking(&req),
+        "lsp" => translate_lsp_to_agents_blocking(&req),
+        other => Err(format!("未知能力类型：{other}")),
+    }
+}
+
+#[tauri::command]
+async fn translate_capability(
+    app: AppHandle,
+    request: CapabilityTranslateRequest,
+) -> Result<CapabilityTranslateResult, String> {
+    let result =
+        tauri::async_runtime::spawn_blocking(move || capability_translate_blocking(request))
+            .await
+            .map_err(|e| format!("翻译任务失败：{e}"))??;
+    if result.kind == "skill" {
+        let _ = refresh_slash_catalog_async(app).await;
+    }
     Ok(result)
 }
 
@@ -13731,6 +14408,10 @@ async fn run_studio(
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("无法启动 node 执行 /studio：请确认 Node.js 已安装并在 PATH 中。({e})"))?;
+        // Windows: same Job Object protection as the main AI CLI path.
+        if let Some(job) = assign_child_to_kill_on_close_job(&child) {
+            register_ai_cli_job(&run_id, job);
+        }
         register_ai_cli(&run_id, child.id());
 
         let stdout = child.stdout.take();
@@ -13779,14 +14460,14 @@ async fn run_studio(
                 Ok(Some(status)) => break status,
                 Ok(None) => {
                     if take_ai_cli_cancelled(&run_id) {
-                        terminate_child_tree(&mut child);
+                        terminate_ai_cli_tree(&mut child, &run_id);
                         unregister_ai_cli(&run_id);
                         return Err("CLI \"studio\" 已由用户中断。".to_string());
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(e) => {
-                    terminate_child_tree(&mut child);
+                    terminate_ai_cli_tree(&mut child, &run_id);
                     unregister_ai_cli(&run_id);
                     return Err(format!("等待 /studio 进程失败: {e}"));
                 }
@@ -14208,7 +14889,12 @@ fn should_run_claude_bare_with_disable(
     let Some(env_vars) = env_vars else {
         return false;
     };
-    has_anthropic_gateway_env(env_vars)
+    env_value(env_vars, "UGS_CLAUDE_BARE")
+        .map(|value| {
+            let value = value.to_ascii_lowercase();
+            value == "1" || value == "true" || value == "yes" || value == "on"
+        })
+        .unwrap_or(false)
 }
 
 fn claude_gateway_settings_json(env_vars: &HashMap<String, String>) -> Option<serde_json::Value> {
@@ -14692,6 +15378,13 @@ fn partial_enabled() -> bool {
         .unwrap_or(false)
 }
 
+fn should_emit_complete_claude_text(
+    partial_requested: bool,
+    saw_text_delta_for_message: bool,
+) -> bool {
+    !partial_requested || !saw_text_delta_for_message
+}
+
 /// Read the no-progress timeout override. Set to 0 to disable idle detection.
 fn configured_ai_cli_idle_timeout_secs() -> u64 {
     std::env::var("ULTRAGAMESTUDIO_AI_CLI_IDLE_TIMEOUT_SECS")
@@ -14727,6 +15420,14 @@ fn activity_elapsed(last_activity: &Arc<Mutex<std::time::Instant>>) -> std::time
         .lock()
         .map(|current| current.elapsed())
         .unwrap_or_default()
+}
+
+fn should_emit_ai_cli_heartbeat(
+    visible_progress_elapsed: std::time::Duration,
+    since_last_heartbeat: std::time::Duration,
+    interval: std::time::Duration,
+) -> bool {
+    visible_progress_elapsed >= interval && since_last_heartbeat >= interval
 }
 
 fn trim_cli_error_context(text: &str) -> String {
@@ -14766,6 +15467,7 @@ pub(crate) fn emit_progress(app: &tauri::AppHandle, run_id: &str, text: &str) {
         "ai-cli-progress",
         serde_json::json!({ "runId": run_id, "text": text }),
     );
+    touch_visible_progress(run_id);
 }
 
 pub(crate) const AI_CLI_PROGRESS_BATCH_INTERVAL_MS: u64 = 75;
@@ -14874,9 +15576,10 @@ fn claude_result_failure(event: &serde_json::Value) -> Option<String> {
 }
 
 /// Extract the assistant text from a kimi stream-json assistant message.
-/// The Python kimi-cli (with `--final-message-only`) serializes `content` as a
-/// plain string; the npm kimi-code follows the Claude wire protocol where
-/// `content` can be a block array (`[{"type":"text","text":…}]`). Returns the
+/// The legacy Python kimi-cli serialized `content` as a plain string; current
+/// npm kimi-code (>=0.38) does the same, but older builds followed the Claude
+/// wire protocol where `content` was a block array
+/// (`[{"type":"text","text":…}]`). Accept both shapes. Returns the
 /// concatenated text, or `None` when the message carries no text.
 fn extract_kimi_assistant_text(content: Option<&serde_json::Value>) -> Option<String> {
     let value = content?;
@@ -15621,6 +16324,13 @@ fn remove_codex_sidecar(path: &Option<PathBuf>) {
 /// Passing those through to Codex would fail, so only forward explicit non-
 #[tauri::command]
 fn cancel_ai_cli(run_id: String) -> Result<(), String> {
+    // Kill all processes in the job (including orphaned grandchildren)
+    // BEFORE the taskkill /T fallback, so orphans that `taskkill /T`
+    // can't see are still reaped.
+    if let Some(job) = take_ai_cli_job(&run_id) {
+        kill_job_processes(job);
+        close_job_handle(job);
+    }
     if let Some(pid) = mark_ai_cli_cancelled(&run_id) {
         let _ = terminate_process_tree(pid);
     }
@@ -15678,6 +16388,53 @@ fn set_codex_startup_error(error: &Arc<Mutex<Option<String>>>, message: String) 
         if current.is_none() {
             *current = Some(message);
         }
+    }
+}
+
+/// Write one newline-delimited JSON-RPC 2.0 message to the zcode app-server
+/// (the bundled `vendor/zcode.cjs` runtime's `app-server` stdio protocol).
+fn write_zcode_protocol_message(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    message: &serde_json::Value,
+) -> Result<(), String> {
+    let mut stdin = stdin
+        .lock()
+        .map_err(|_| "ZCode app-server stdin 锁已损坏。".to_string())?;
+    serde_json::to_writer(&mut *stdin, message)
+        .map_err(|e| format!("编码 ZCode app-server 请求失败: {e}"))?;
+    stdin
+        .write_all(b"\n")
+        .and_then(|_| stdin.flush())
+        .map_err(|e| format!("写入 ZCode app-server 失败: {e}"))
+}
+
+/// Poll the reader-thread-populated session id / startup error until one is
+/// set (mirrors `wait_for_codex_start_id`, with zcode-specific diagnostics).
+fn wait_for_zcode_start_id(
+    value: &Arc<Mutex<Option<String>>>,
+    startup_error: &Arc<Mutex<Option<String>>>,
+    timeout: std::time::Duration,
+    stage: &str,
+) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if let Some(error) = startup_error
+            .lock()
+            .ok()
+            .and_then(|current| current.clone())
+        {
+            return Err(error);
+        }
+        if let Some(id) = value.lock().ok().and_then(|current| current.clone()) {
+            return Ok(id);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "ZCode {stage} 响应超时（{}s）。",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
@@ -15859,6 +16616,109 @@ fn normalize_extra_workspace_paths(
     out
 }
 
+/// Guarded, case-normalized key derived from [`workspace_dir_key`]: appends a
+/// trailing separator so a prefix match can only hit a whole-component
+/// boundary (`/a/bc` is never mistaken for `/a/b`).
+fn workspace_dir_key_guarded(path: &Path) -> String {
+    let mut key = workspace_dir_key(path);
+    if !key.ends_with('/') {
+        key.push('/');
+    }
+    key
+}
+
+/// Lowest common ancestor directory shared by every path in `paths`.
+///
+/// dsh's sandbox admits exactly ONE workspace root — the session's
+/// `process.cwd()` — and offers no `--add-dir` equivalent (unlike claude/codex/
+/// kimi's `--add-dir` or gemini's `--include-directories`). To give every
+/// configured folder the SAME write permission as the primary cwd, the only
+/// lever is to root the session at their common ancestor. Returns `None` when
+/// the folders share no directory (e.g. different drives) or the list is empty.
+fn common_ancestor_dir(paths: &[String]) -> Option<PathBuf> {
+    let dirs: Vec<PathBuf> = paths
+        .iter()
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .collect();
+    if dirs.is_empty() {
+        return None;
+    }
+    if dirs.len() == 1 {
+        return Some(dirs[0].clone());
+    }
+    let keys: Vec<String> = dirs
+        .iter()
+        .map(|dir| workspace_dir_key_guarded(dir))
+        .collect();
+    let mut current = dirs[0].clone();
+    loop {
+        let key = workspace_dir_key_guarded(&current);
+        if keys.iter().all(|k| k.starts_with(&key)) {
+            return Some(current);
+        }
+        if !current.pop() {
+            // Reached the volume root without finding a shared ancestor.
+            return None;
+        }
+    }
+}
+
+/// Pre-flight gate for the kimi adapter. Kimi Code CLI (>= 0.38) can run from
+/// EITHER a `/login`-populated config.toml OR an in-memory model synthesised
+/// from env vars (`KIMI_MODEL_NAME` + `KIMI_MODEL_API_KEY`, injected by the
+/// gateway resolver when the channel has a key + model). When neither exists
+/// the CLI would exit with a raw "No model configured" (or, before 0.38, hang
+/// for minutes), so fail fast here with an actionable reason + solution.
+fn ensure_kimi_ready(env_vars: Option<&HashMap<String, String>>) -> Result<(), String> {
+    let has_env_key = env_vars
+        .and_then(|vars| env_value(vars, "KIMI_MODEL_API_KEY"))
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let has_env_model = env_vars
+        .and_then(|vars| env_value(vars, "KIMI_MODEL_NAME"))
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    if has_env_key && has_env_model {
+        return Ok(());
+    }
+    if kimi_log::kimi_has_configured_model() {
+        return Ok(());
+    }
+    Err(
+        "Kimi Code 尚未配置：既没有可用的 API Key，也没有登录态（~/.kimi-code/config.toml 里没有 default_model）。\n\
+         \n请二选一：\n\
+         \n1. 在「设置 → 模型」里给 Kimi Code 渠道填上 API Key 与模型（UGS 会自动通过环境变量 KIMI_MODEL_API_KEY / KIMI_MODEL_NAME 注入，无需网页登录）；\n\
+         \n2. 或在本机终端运行 `kimi`，输入 `/login` 完成登录后重试。"
+            .to_string(),
+    )
+}
+
+/// Map kimi-code's raw English stderr failures to an actionable Chinese hint.
+/// The pre-flight (`ensure_kimi_ready`) already catches the "not configured"
+/// case before spawn; this is the fallback for failures that only surface once
+/// the CLI actually runs (invalid key, 401, 429, etc).
+fn kimi_failure_hint(detail: &str) -> Option<&'static str> {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("no model configured") {
+        Some("Kimi 尚未登录或未配置默认模型：在「设置 → 模型」给 Kimi Code 渠道填 API Key 与模型，或在本机终端运行 `kimi` 并输入 /login。")
+    } else if lower.contains("no credential configured") {
+        Some("Kimi 渠道缺少 API Key（KIMI_MODEL_API_KEY）：请在「设置 → 模型」里为该渠道填写 API Key。")
+    } else if lower.contains("invalid authentication")
+        || lower.contains("401")
+        || lower.contains("unauthorized")
+        || lower.contains("auth_error")
+    {
+        Some("Kimi API Key 无效、已过期或与所选模型/端点不匹配：请核对「设置 → 模型」里的 Key（中国区账号用 api.moonshot.cn 时还需在 Base URL 里填对应端点）。")
+    } else if lower.contains("rate limit") || lower.contains("429") {
+        Some("Kimi 额度受限或触发限流（429）：请稍后重试或检查账户余额/配额。")
+    } else {
+        None
+    }
+}
+
 /// Run a prompt through the locally-installed agent CLI (e.g. `claude`) using the
 /// machine's own environment/credentials — no API key is passed from the app.
 ///
@@ -15920,7 +16780,7 @@ async fn ai_cli(
             String::new()
         } else {
             format!(
-                "附加工作区目录（与主工作目录同属本次会话上下文，已授予访问权限）：\n{}\n跨项目/引擎源码搜索时，请同时检索这些目录的绝对路径，不要仅因主工作目录未命中就判定“找不到”。",
+                "附加工作区目录（与主工作目录同属本次会话上下文，权限一致，均可读写）：\n{}\n需要读写、搜索或分析这些目录时，请直接按绝对路径操作，不要仅因主工作目录未命中就判定“找不到”。",
                 extra_workspace_paths
                     .iter()
                     .map(|path| format!("- {path}"))
@@ -16003,11 +16863,28 @@ async fn ai_cli(
         // injected as UGS_DSH_SESSIONS before spawn and tailed for live
         // progress by dsh_log::run_tracer.
         let mut dsh_sessions_root: Option<std::path::PathBuf> = None;
+        // kimi-code live-progress tracer: tails the wire.jsonl session log
+        // (real text/think deltas + tool calls) into ai-cli-progress events.
+        // Unlike dsh, kimi's session log is read-only — no --patch needed,
+        // we just discover the new session dir after spawn and tail wire.jsonl.
+        let mut kimi_tracer_plan: Option<(Vec<std::path::PathBuf>, HashSet<std::path::PathBuf>, std::time::SystemTime)> = None;
         // Same trick for zcode: its npm shim runs `node <pkg>/bin/zcode.js`,
         // whose headless prompt is a `--prompt` argv value, so cmd.exe's
         // ~8191-char cap would truncate a long chat turn. Launching the launcher
         // directly with node raises the ceiling ~4x. See the is_zcode branch.
         let mut zcode_node_entry: Option<String> = None;
+        // When true, zcode is launched as the bundled runtime's `app-server`
+        // stdio JSON-RPC server (real `session/event` token streaming) instead
+        // of the one-shot `--prompt --json` path. Set in the is_zcode branch
+        // only when the vendor bundle is resolvable.
+        let mut zcode_app_server = false;
+        // The full turn prompt (workspace note + prompt + language directive)
+        // for the app-server writer thread; the one-shot path keeps it in argv.
+        let mut zcode_task: Option<String> = None;
+        // And for kimi-code: its npm shim runs `node <pkg>/dist/main.mjs`, and
+        // the headless prompt is likewise a `-p/--prompt` argv value (>=0.38),
+        // so the same cmd.exe ~8191-char cap applies. See the is_kimi branch.
+        let mut kimi_node_entry: Option<String> = None;
 
         if is_codex {
             if codex_app_server {
@@ -16115,19 +16992,51 @@ async fn ai_cli(
                 args.push(dir.clone());
             }
         } else if is_kimi {
-            // Kimi Code CLI print mode (headless one-shot). The prompt is
-            // piped in via stdin — when no `-p` is given and stdin is not a
-            // TTY, kimi reads the whole stdin as the single command. Print
-            // mode auto-approves tool calls and auto-dismisses questions, and
-            // `--final-message-only` shrinks the stream-json output to just
-            // the terminal assistant message, so parsing is trivial:
-            // each stdout line is `{"role":"assistant","content":"..."}`.
-            args.push("--print".into());
+            // Fail fast when kimi has no credential and no login: the CLI
+            // would otherwise hang (old versions) or exit with a raw
+            // "No model configured" error (>= 0.38) that lacks the UGS fix.
+            ensure_kimi_ready(env_vars.as_ref())?;
+            // Kimi Code CLI headless one-shot. The prompt is an argv value via
+            // `-p/--prompt` (never stdin). kimi-code >= 0.38 removed `--print`,
+            // `--input-format` and `--final-message-only`, and `--yolo`/`--auto`/
+            // `--plan` all conflict with `--prompt` — headless turns ALWAYS run
+            // fully autonomous (auto-approved tools, auto-dismissed questions).
+            // `--output-format stream-json` emits one `{"role":...}` line each:
+            //   {"role":"meta","type":"system.version",...}
+            //   {"role":"assistant","content":"<string>","tool_calls":[...]}
+            //   {"role":"tool","tool_call_id":...,"content":"..."}
+            // The terminal assistant line's `content` string is the answer.
+            //
+            // Live progress: kimi-code writes every step event in real time
+            // to `~/.kimi-code/sessions/<workspace-hash>/<session-uuid>/
+            // wire.jsonl` (ContentPart text/think deltas, ToolCall, ToolResult,
+            // etc). kimi_log::run_tracer tails that file into
+            // ai-cli-progress events so the run doesn't look frozen for
+            // minutes. The session log is read-only — no --patch needed.
+            let mut task = String::new();
+            if inject_extra_workspace_note {
+                task.push_str(&extra_workspace_note);
+                if !task.is_empty() {
+                    task.push_str("\n\n");
+                }
+            }
+            task.push_str(&prompt);
+            if !language_directive.is_empty() {
+                task.push_str("\n\n");
+                task.push_str(&language_directive);
+            }
+            // Prefer spawning the package's `dist/main.mjs` directly with node
+            // (bypasses the `.cmd` shim's cmd.exe ~8191-char command-line cap;
+            // node gets the ~32767-char CreateProcess ceiling). Fall back to
+            // the historical `cmd /C` shim path when the package layout isn't
+            // the expected npm shim.
+            if let Some(entry) = cli_runtime::resolve_kimi_node_entry(&binary) {
+                kimi_node_entry = Some(entry.to_string_lossy().to_string());
+            }
+            args.push("--prompt".into());
+            args.push(task);
             args.push("--output-format".into());
             args.push("stream-json".into());
-            args.push("--input-format".into());
-            args.push("text".into());
-            args.push("--final-message-only".into());
 
             if let Some(m) = model
                 .as_deref()
@@ -16135,13 +17044,6 @@ async fn ai_cli(
             {
                 args.push("--model".into());
                 args.push(m.to_string());
-            }
-
-            match permission.as_deref().unwrap_or("full") {
-                "readonly" => {
-                    args.push("--plan".into());
-                }
-                _ => {}
             }
 
             if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
@@ -16154,6 +17056,13 @@ async fn ai_cli(
                 args.push("--add-dir".into());
                 args.push(dir.clone());
             }
+            // Snapshot kimi session dirs BEFORE spawn so the live-progress
+            // tracer can tell this run's brand-new session directory apart
+            // from everything that existed before (see kimi_log::run_tracer).
+            let kimi_roots = kimi_log::kimi_sessions_roots();
+            let kimi_known = kimi_log::snapshot_session_dirs(&kimi_roots);
+            let kimi_spawned_at = std::time::SystemTime::now();
+            kimi_tracer_plan = Some((kimi_roots, kimi_known, kimi_spawned_at));
         } else if is_dsh {
             // dsh (`@deepseek-ai/dsh`) runs one headless task via the
             // `--profile headless "<task>"` positional argument and prints the
@@ -16192,11 +17101,30 @@ async fn ai_cli(
             // which dsh_log::run_tracer tails into `ai-cli-progress` events.
             // The patched root is injected via UGS_DSH_SESSIONS so the web/tui
             // profiles sharing `$DSH_HOME/sessions` are never touched.
+            //
+            // Channel model/baseURL are baked into the same patch file: dsh's
+            // `agent-default-model` composition entry defaults to
+            // `deepseek-v4-flash`, which breaks any third-party DeepSeek-
+            // compatible relay the channel points at (the relay receives the
+            // official model id and 400s). The channel's model is forwarded
+            // via UGS_DSH_MODEL (a UGS-only env var dsh itself never reads);
+            // baseURL is read from DEEPSEEK_BASE_URL, which the resolver
+            // already injects for dsh. Both are optional — when absent, the
+            // patch row is omitted and dsh's own defaults/settings.yaml win.
             let dsh_root = dsh_log::ugs_dsh_sessions_root();
             let _ = std::fs::create_dir_all(&dsh_root);
             let dsh_patch_path =
                 temp_output_path_for_cwd(cwd.as_deref(), "ultragamestudio-dsh", "yml");
-            let _ = std::fs::write(&dsh_patch_path, dsh_log::ugs_patch_yaml());
+            let dsh_model = env_vars
+                .as_ref()
+                .and_then(|vars| vars.get("UGS_DSH_MODEL").map(String::as_str));
+            let dsh_base_url = env_vars
+                .as_ref()
+                .and_then(|vars| vars.get("DEEPSEEK_BASE_URL").map(String::as_str));
+            let _ = std::fs::write(
+                &dsh_patch_path,
+                dsh_log::ugs_patch_yaml(dsh_model, dsh_base_url),
+            );
             temp_files.push(TempFileGuard::new(dsh_patch_path.clone()));
             args.push("--patch".into());
             args.push(dsh_patch_path.to_string_lossy().to_string());
@@ -16204,25 +17132,26 @@ async fn ai_cli(
             args.push("--profile".into());
             args.push("headless".into());
             args.push(task);
+            // dsh's sandbox admits a single workspace root (the session's
+            // `process.cwd()`) and has no `--add-dir` flag. So when extra
+            // workspace folders are configured, root the session at their
+            // common ancestor to give each folder the SAME write permission as
+            // the primary cwd. Falls back to the plain cwd when there are no
+            // extras or when they share no directory (different drives).
             if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
                 let p = std::path::Path::new(dir);
                 if p.is_dir() {
-                    workdir = Some(p.to_path_buf());
+                    let mut scope = vec![p.to_string_lossy().to_string()];
+                    scope.extend(extra_workspace_paths.iter().cloned());
+                    workdir = Some(common_ancestor_dir(&scope).unwrap_or_else(|| p.to_path_buf()));
                 }
             }
         } else if is_zcode {
-            // ZCode (zcode-app-cli) headless one-shot: the prompt is a single
-            // `--prompt` argv value (never stdin), `--json` emits one structured
-            // JSON envelope (`sessionId`/`turnId`/`response`/`usage`/
-            // `projection`) whose `response` field is the final answer, and
-            // `--mode` maps our permission modes onto its own
-            // build/edit/plan/yolo ladder. There is no `--model` flag: the
-            // model (and its provider/relay) lives in `~/.zcode/cli/config.json`
-            // (`provider.zai` + `model.main`), so this branch never forwards one.
-            // ZCode reads credentials ONLY from that config file (never env), so
-            // when the channel carried a key/base url/model (via ZCODE_* env)
-            // merge them in BEFORE spawning — otherwise a keyless config fails
-            // the whole turn with the opaque `Turn execution failed`.
+            // ZCode (zcode-app-cli) credentials live ONLY in
+            // `~/.zcode/cli/config.json` (`provider.zai` + `model.main`) — never
+            // env vars — so when the channel carried a key/base url/model (via
+            // ZCODE_* env) merge them in BEFORE spawning, otherwise a keyless
+            // config fails the whole turn with the opaque `Turn execution failed`.
             ensure_zcode_user_config(env_vars.as_ref())?;
             let mut task = String::new();
             if inject_extra_workspace_note {
@@ -16236,39 +17165,50 @@ async fn ai_cli(
                 task.push_str("\n\n");
                 task.push_str(&language_directive);
             }
-            // Prefer spawning the launcher's `bin/zcode.js` directly with node
-            // (bypasses the `.cmd` shim's cmd.exe ~8191-char command-line cap;
-            // node gets the ~32767-char CreateProcess ceiling). Fall back to
-            // the historical `cmd /C` shim path when the package layout isn't
-            // the expected npm shim.
-            if let Some(entry) = cli_runtime::resolve_zcode_node_entry(&binary) {
+            // Prefer the bundled runtime's `app-server` stdio JSON-RPC server
+            // (`node <pkg>/vendor/zcode.cjs app-server`), which streams REAL
+            // token deltas via `session/event` — the only zcode surface that
+            // emits machine-readable live output. Fall back to the historical
+            // `--prompt --json` one-shot (single envelope at EOF, no streaming)
+            // when the vendor bundle isn't in the expected npm layout.
+            if let Some(entry) = cli_runtime::resolve_zcode_runtime_entry(&binary) {
+                zcode_node_entry = Some(entry.to_string_lossy().to_string());
+                zcode_app_server = true;
+                zcode_task = Some(task.clone());
+                args.push("app-server".into());
+            } else if let Some(entry) = cli_runtime::resolve_zcode_node_entry(&binary) {
+                // Direct-launcher one-shot: `node <pkg>/bin/zcode.js --prompt
+                // <task> --json --mode <mode>`. Spawning node directly bypasses
+                // the `.cmd` shim's cmd.exe ~8191-char command-line cap (node
+                // gets the ~32767-char CreateProcess ceiling).
                 zcode_node_entry = Some(entry.to_string_lossy().to_string());
             }
-            args.push("--prompt".into());
-            args.push(task);
-            args.push("--json".into());
-            match permission.as_deref().unwrap_or("full") {
-                "readonly" => {
-                    args.push("--mode".into());
-                    args.push("plan".into());
+            if !zcode_app_server {
+                args.push("--prompt".into());
+                args.push(task);
+                args.push("--json".into());
+                match permission.as_deref().unwrap_or("full") {
+                    "readonly" => {
+                        args.push("--mode".into());
+                        args.push("plan".into());
+                    }
+                    "ask" => {
+                        args.push("--mode".into());
+                        args.push("build".into());
+                    }
+                    _ => {
+                        args.push("--mode".into());
+                        args.push("yolo".into());
+                    }
                 }
-                "ask" => {
-                    args.push("--mode".into());
-                    args.push("build".into());
-                }
-                _ => {
-                    args.push("--mode".into());
-                    args.push("yolo".into());
-                }
-            }
-            // Session continuity: continue a prior session (warm context) when
-            // the caller asks to resume one; otherwise start a fresh session
-            // (ZCode has no `--session-id` create flag, so a brand-new session
-            // is the default).
-            if let Some(sid) = session_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                if resume.unwrap_or(false) {
-                    args.push("--resume".into());
-                    args.push(sid.to_string());
+                // Session continuity (one-shot only; the app-server path maps
+                // this onto `session/resume` in the writer thread): continue a
+                // prior session (warm context) when the caller asks to resume.
+                if let Some(sid) = session_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    if resume.unwrap_or(false) {
+                        args.push("--resume".into());
+                        args.push(sid.to_string());
+                    }
                 }
             }
             if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
@@ -16289,11 +17229,9 @@ async fn ai_cli(
                 args.push("--input-format".into());
                 args.push("stream-json".into());
             }
-            // Free/relay channels inject their own Anthropic-compatible key and
-            // base URL. Use Claude Code's minimal print mode when available so
-            // user-level plugins/hooks (especially SessionEnd hooks) cannot
-            // turn a successful model call into exit=1. Older Claude builds do
-            // not know `--bare`, so probe once and fall back automatically.
+            // Only UGS-owned routes may opt into minimal print mode through the
+            // private UGS_CLAUDE_BARE capability flag. User-provided base URLs
+            // are data only and must never change launcher behavior.
             if should_run_claude_bare(env_vars.as_ref())
                 && claude_cli_supports_bare(&binary, &shell)
             {
@@ -16407,8 +17345,17 @@ async fn ai_cli(
             node_args.extend(args.iter().cloned());
             build_launch_command("node", &node_args, &None)
         } else if let Some(entry) = zcode_node_entry.as_deref() {
-            // zcode direct-launcher launch: `node <pkg>/bin/zcode.js --prompt
-            // <task> --json --mode <mode>`. Same cmd.exe-length bypass as dsh.
+            // zcode direct-node launch: either `node <pkg>/vendor/zcode.cjs
+            // app-server` (streaming protocol) or `node <pkg>/bin/zcode.js
+            // --prompt <task> --json --mode <mode>` (one-shot fallback). Same
+            // cmd.exe-length bypass as dsh.
+            let mut node_args = Vec::with_capacity(args.len() + 1);
+            node_args.push(entry.to_string());
+            node_args.extend(args.iter().cloned());
+            build_launch_command("node", &node_args, &None)
+        } else if let Some(entry) = kimi_node_entry.as_deref() {
+            // kimi-code direct entry launch: `node <pkg>/dist/main.mjs --prompt
+            // <task> --output-format stream-json …`. Same cmd.exe-length bypass.
             let mut node_args = Vec::with_capacity(args.len() + 1);
             node_args.push(entry.to_string());
             node_args.extend(args.iter().cloned());
@@ -16418,7 +17365,7 @@ async fn ai_cli(
         };
         if let Some(env_vars) = env_vars.as_ref() {
             for (key, value) in env_vars {
-                if !key.trim().is_empty() {
+                if !key.trim().is_empty() && key != "UGS_CLAUDE_BARE" {
                     cmd.env(key, value);
                 }
             }
@@ -16473,6 +17420,12 @@ async fn ai_cli(
             .map_err(|e| {
                 format!("无法启动 CLI \"{binary}\"：请确认它已安装并在 PATH 中。({e})")
             })?;
+        // Windows: pin the CLI into a KILL_ON_JOB_CLOSE job so any bash/grep/
+        // find/rg it spawns are reaped by the kernel even if UGS crashes or the
+        // normal `terminate_child_tree` path is skipped. No-op elsewhere.
+        if let Some(job) = assign_child_to_kill_on_close_job(&child) {
+            register_ai_cli_job(&run_id, job);
+        }
         register_ai_cli(&run_id, child.id());
         let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
         // Codex app-server may print repetitive diagnostics on stderr while a
@@ -16488,12 +17441,12 @@ async fn ai_cli(
         // the very END instead (right after the user's actual question) — models
         // weight the tail of a long agentic prompt more than the head, so this
         // is the strongest lever available without a real system-role channel.
-        let prompt = if inject_extra_workspace_note && (is_codex || is_gemini || is_kimi) {
+        let prompt = if inject_extra_workspace_note && (is_codex || is_gemini) {
             format!("{extra_workspace_note}\n\n{prompt}")
         } else {
             prompt
         };
-        let prompt = if !language_directive.is_empty() && (is_codex || is_gemini || is_kimi) {
+        let prompt = if !language_directive.is_empty() && (is_codex || is_gemini) {
             format!("{prompt}\n\n{language_directive}")
         } else {
             prompt
@@ -16513,6 +17466,16 @@ async fn ai_cli(
             stdin_pipe
                 .take()
                 .map(|stdin| Arc::new(Mutex::new(Some(stdin))))
+        } else {
+            None
+        };
+        // zcode app-server protocol state: the session id (populated by the
+        // reader from the `session/create`/`session/resume` response) and the
+        // startup error slot the writer fills when the handshake fails.
+        let zcode_session_id = Arc::new(Mutex::new(None::<String>));
+        let zcode_startup_error = Arc::new(Mutex::new(None::<String>));
+        let zcode_stdin = if zcode_app_server {
+            stdin_pipe.take().map(|stdin| Arc::new(Mutex::new(stdin)))
         } else {
             None
         };
@@ -16545,6 +17508,12 @@ async fn ai_cli(
         let writer_model = model.clone();
         let writer_cwd = cwd.clone();
         let writer_permission = permission.clone();
+        let writer_zcode_stdin = zcode_stdin.clone();
+        let writer_zcode_session_id = Arc::clone(&zcode_session_id);
+        let writer_zcode_startup_error = Arc::clone(&zcode_startup_error);
+        let writer_zcode_task = zcode_task.clone();
+        let writer_resume = resume;
+        let writer_resume_session_id = session_id.clone();
         let stdin_handle = if codex_app_server {
             std::thread::spawn(move || {
                 let Some(stdin) = writer_stdin else {
@@ -16674,11 +17643,108 @@ async fn ai_cli(
                     let _ = write_claude_stream_message(&stdin, &prompt);
                 }
             })
-        } else if is_dsh || is_zcode {
+        } else if zcode_app_server {
+            // zcode app-server writer: `session/create` (or `session/resume`)
+            // → `session/subscribe` (activates `session/event` streaming)
+            // → `session/send` (starts the turn). The reader thread parses the
+            // NDJSON responses/notifications and populates `zcode_session_id`.
+            std::thread::spawn(move || {
+                let Some(stdin) = writer_zcode_stdin else {
+                    return;
+                };
+                let cwd_path = writer_cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|cwd| !cwd.is_empty())
+                    .unwrap_or(".");
+                let workspace = serde_json::json!({
+                    "workspacePath": cwd_path,
+                    "workspaceKey": cwd_path,
+                });
+                let mode = match writer_permission.as_deref().unwrap_or("full") {
+                    "readonly" => "plan",
+                    "ask" => "build",
+                    _ => "yolo",
+                };
+                let resume_sid = writer_resume_session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|sid| !sid.is_empty());
+                let do_resume = writer_resume.unwrap_or(false) && resume_sid.is_some();
+                let session_msg = if do_resume {
+                    serde_json::json!({
+                        "method": "session/resume",
+                        "id": "ugs-zcode-session",
+                        "params": { "sessionId": resume_sid.unwrap() }
+                    })
+                } else {
+                    serde_json::json!({
+                        "method": "session/create",
+                        "id": "ugs-zcode-session",
+                        "params": { "workspace": workspace, "mode": mode }
+                    })
+                };
+                if let Err(error) = write_zcode_protocol_message(&stdin, &session_msg) {
+                    set_codex_startup_error(
+                        &writer_zcode_startup_error,
+                        format!("ZCode session 创建写入失败：{error}"),
+                    );
+                    return;
+                }
+                let session_id = match wait_for_zcode_start_id(
+                    &writer_zcode_session_id,
+                    &writer_zcode_startup_error,
+                    std::time::Duration::from_secs(codex_thread_start_timeout_secs()),
+                    "session/create",
+                ) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        set_codex_startup_error(&writer_zcode_startup_error, error);
+                        return;
+                    }
+                };
+                // Subscribe BEFORE send: the runtime's session-event gate only
+                // starts pushing `session/event` deltas once `deliveryKind` is
+                // set, so skipping this yields no live stream at all.
+                if let Err(error) = write_zcode_protocol_message(
+                    &stdin,
+                    &serde_json::json!({
+                        "method": "session/subscribe",
+                        "id": "ugs-zcode-subscribe",
+                        "params": {
+                            "sessionId": session_id,
+                            "deliveryKind": "desktop-continuous"
+                        }
+                    }),
+                ) {
+                    set_codex_startup_error(
+                        &writer_zcode_startup_error,
+                        format!("ZCode session/subscribe 写入失败：{error}"),
+                    );
+                    return;
+                }
+                if let Err(error) = write_zcode_protocol_message(
+                    &stdin,
+                    &serde_json::json!({
+                        "method": "session/send",
+                        "id": "ugs-zcode-send",
+                        "params": {
+                            "sessionId": session_id,
+                            "content": writer_zcode_task.unwrap_or_default()
+                        }
+                    }),
+                ) {
+                    set_codex_startup_error(
+                        &writer_zcode_startup_error,
+                        format!("ZCode session/send 写入失败：{error}"),
+                    );
+                }
+            })
+        } else if is_dsh || is_zcode || is_kimi {
             // dsh reads the task from argv (see the args branch above), not
-            // stdin; zcode likewise takes its prompt as a `--prompt` argv value.
-            // Close stdin immediately so neither can block on a half-open pipe;
-            // the task itself never uses this fd.
+            // stdin; zcode and kimi likewise take their prompt as a `--prompt`
+            // argv value. Close stdin immediately so none can block on a
+            // half-open pipe; the task itself never uses this fd.
             std::thread::spawn(move || {
                 drop(stdin_pipe);
             })
@@ -16698,8 +17764,20 @@ async fn ai_cli(
         let parse_gemini = is_gemini;
         let parse_kimi = is_kimi;
         let parse_dsh = is_dsh;
-        let parse_zcode = is_zcode;
+        // zcode has two stdout shapes: the historical `--json` one-shot (raw
+        // envelope parsed at EOF) and the new `app-server` NDJSON protocol
+        // (streamed `session/event` deltas). `parse_zcode` covers only the
+        // one-shot; `parse_zcode_app_server` handles the live protocol.
+        let parse_zcode = is_zcode && !zcode_app_server;
+        let parse_zcode_app_server = is_zcode && zcode_app_server;
         let claude_stdin_reader = claude_stdin.clone();
+        let zcode_session_id_reader = Arc::clone(&zcode_session_id);
+        let zcode_startup_error_reader = Arc::clone(&zcode_startup_error);
+        // The zcode app-server is BIDIRECTIONAL: it sends its own requests to
+        // the client (e.g. `session/requestRuntimePreferences`) that must be
+        // answered. The reader replies through this shared stdin handle (the
+        // `Mutex` inside serializes writes with the writer thread).
+        let zcode_stdin_reader = zcode_stdin.clone();
         let progress_model_hint2 = progress_model_hint.clone();
         let codex_turn_status = Arc::new(Mutex::new(None::<String>));
         let codex_turn_status_reader = Arc::clone(&codex_turn_status);
@@ -16778,6 +17856,38 @@ async fn ai_cli(
         } else {
             None
         };
+        // kimi live-progress tracer: tails wire.jsonl (real text/think deltas
+        // + tool calls) into ai-cli-progress events while the process runs.
+        // `active` flips once the tracer has forwarded any content — the
+        // stdout reader then stops re-forwarding the final answer (the log
+        // already streamed it) to avoid duplicating text in the live bubble;
+        // if the tracer never engages, stdout falls back to the old behavior.
+        let kimi_tracer_cancel = Arc::new(AtomicBool::new(false));
+        let kimi_tracer_active = Arc::new(AtomicBool::new(false));
+        let kimi_tracer_active_reader = Arc::clone(&kimi_tracer_active);
+        let kimi_tracer_handle = if let Some((roots, known, spawned_at)) = kimi_tracer_plan {
+            let app_tracer = app.clone();
+            let run_tracer_id = run_id.clone();
+            let activity_tracer = Arc::clone(&last_activity);
+            let received_tracer = Arc::clone(&received_content);
+            let active_tracer = Arc::clone(&kimi_tracer_active);
+            let cancel_tracer = Arc::clone(&kimi_tracer_cancel);
+            Some(std::thread::spawn(move || {
+                kimi_log::run_tracer(kimi_log::KimiTracerConfig {
+                    app: app_tracer,
+                    run_id: run_tracer_id,
+                    sessions_roots: roots,
+                    known,
+                    spawned_at,
+                    activity: activity_tracer,
+                    received: received_tracer,
+                    active: active_tracer,
+                    cancel: cancel_tracer,
+                });
+            }))
+        } else {
+            None
+        };
         let partial_streaming = partial_enabled();
         let out_handle = std::thread::spawn(move || -> String {
             let mut result = String::new();
@@ -16791,9 +17901,14 @@ async fn ai_cli(
             // actually saw. Accumulate it here so it can be returned as a
             // fallback instead of reporting a misleading "no reply" failure.
             let mut partial_text = String::new();
+            let mut saw_text_delta_for_message = false;
             // `prev_kind` tracks the last delta kind ("text" / "thinking") so we
             // can insert a separator when the model switches between them.
             let mut prev_kind: &str = "";
+            // zcode app-server: whether a `reasoning_delta` is currently open,
+            // so we can wrap the model's chain-of-thought in `<think>` markers
+            // and close it when text resumes (mirrors the claude convention).
+            let mut zcode_in_think = false;
             // tool_use id → start time, so a tool_result can report its duration.
             let mut tool_starts: HashMap<String, std::time::Instant> = HashMap::new();
             let mut init_done = false;
@@ -16849,14 +17964,201 @@ async fn ai_cli(
                         received_content_reader.store(true, Ordering::Relaxed);
                         continue;
                     }
+                    if parse_zcode_app_server {
+                        // zcode app-server NDJSON (newline-delimited JSON-RPC):
+                        // responses carry an `id`, notifications carry a
+                        // `method`. Real text arrives as `session/event`
+                        // notifications whose `payload.kind` is `text_delta`
+                        // (answer) or `reasoning_delta` (chain-of-thought);
+                        // `state.updated` marks turn start/completion.
+                        let v: serde_json::Value = match serde_json::from_str(&line) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
+                        // --- Server-initiated REQUEST: carries BOTH `id` and
+                        // `method` (e.g. `session/requestRuntimePreferences`).
+                        // The server awaits our reply, so answer immediately.
+                        // A `-32601` (method not found) tells the server there
+                        // is no interactive client and it falls back to its
+                        // built-in defaults for preferences/permissions. ---
+                        if v.get("id").is_some() && v.get("method").is_some() {
+                            if let Some(stdin) = zcode_stdin_reader.as_ref() {
+                                let req_id = v
+                                    .get("id")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                let reply = serde_json::json!({
+                                    "id": req_id,
+                                    "error": {
+                                        "code": -32601,
+                                        "message": "Method not found"
+                                    }
+                                });
+                                let _ = write_zcode_protocol_message(stdin, &reply);
+                            }
+                            continue;
+                        }
+                        // --- Responses (have an `id`, no `method`) ---
+                        if v.get("id").is_some() {
+                            if v.get("id").and_then(|id| id.as_str())
+                                == Some("ugs-zcode-session")
+                            {
+                                if let Some(error) = v.get("error") {
+                                    if let Ok(mut slot) = zcode_startup_error_reader.lock() {
+                                        if slot.is_none() {
+                                            let msg = error
+                                                .get("message")
+                                                .and_then(|m| m.as_str())
+                                                .unwrap_or("session 创建/恢复失败");
+                                            *slot = Some(format!("ZCode session 失败：{msg}"));
+                                        }
+                                    }
+                                } else if let Some(sid) = v
+                                    .pointer("/result/session/sessionId")
+                                    .or_else(|| v.pointer("/result/sessionId"))
+                                    .or_else(|| v.pointer("/result/record/sessionId"))
+                                    .and_then(|s| s.as_str())
+                                {
+                                    if let Ok(mut slot) = zcode_session_id_reader.lock() {
+                                        if slot.is_none() {
+                                            *slot = Some(sid.to_string());
+                                        }
+                                    }
+                                }
+                            } else if v.get("id").and_then(|id| id.as_str())
+                                == Some("ugs-zcode-send")
+                            {
+                                if let Some(error) = v.get("error") {
+                                    if let Ok(mut slot) = claude_stream_error_reader.lock() {
+                                        if slot.is_none() {
+                                            let msg = error
+                                                .get("message")
+                                                .and_then(|m| m.as_str())
+                                                .unwrap_or("session/send 失败");
+                                            *slot = Some(format!("ZCode 本轮执行出错：{msg}"));
+                                        }
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+                        // --- Notifications (have a `method`, no `id`) ---
+                        let Some(method) = v.get("method").and_then(|m| m.as_str()) else {
+                            continue;
+                        };
+                        match method {
+                            "session/event" => {
+                                let payload = v.get("params").and_then(|p| p.get("payload"));
+                                let kind = payload
+                                    .and_then(|p| p.get("kind"))
+                                    .and_then(|k| k.as_str());
+                                match kind {
+                                    Some("text_delta") => {
+                                        let delta = payload
+                                            .and_then(|p| p.get("delta"))
+                                            .and_then(|d| d.as_str())
+                                            .unwrap_or("");
+                                        if !delta.is_empty() {
+                                            if zcode_in_think {
+                                                progress.push("</think>");
+                                                zcode_in_think = false;
+                                            }
+                                            acc.push_str(delta);
+                                            progress.push(delta);
+                                            received_content_reader
+                                                .store(true, Ordering::Relaxed);
+                                            touch_activity(&meaningful_activity_reader);
+                                        }
+                                    }
+                                    Some("reasoning_delta") => {
+                                        let delta = payload
+                                            .and_then(|p| p.get("delta"))
+                                            .and_then(|d| d.as_str())
+                                            .unwrap_or("");
+                                        if !delta.is_empty() {
+                                            if !zcode_in_think {
+                                                progress.push("<think>");
+                                                zcode_in_think = true;
+                                            }
+                                            progress.push(delta);
+                                            received_content_reader
+                                                .store(true, Ordering::Relaxed);
+                                            touch_activity(&meaningful_activity_reader);
+                                        }
+                                    }
+                                    Some("tool_call")
+                                    | Some("tool_input_start")
+                                    | Some("tool_input_delta")
+                                    | Some("tool_input_end") => {
+                                        emitted_tool_use_reader.store(true, Ordering::Relaxed);
+                                        touch_activity(&meaningful_activity_reader);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            "state.updated" => {
+                                let reason = v
+                                    .pointer("/params/reason")
+                                    .and_then(|r| r.as_str());
+                                match reason {
+                                    Some("prompt_started") => {
+                                        if !requesting_done {
+                                            requesting_done = true;
+                                            progress.emit_now("⏳ 正在请求模型…\n");
+                                        }
+                                    }
+                                    Some("prompt_completed") => {
+                                        if zcode_in_think {
+                                            progress.push("</think>");
+                                            zcode_in_think = false;
+                                        }
+                                        received_content_reader.store(true, Ordering::Relaxed);
+                                        progress.flush();
+                                        // Signal the wait loop: the turn is
+                                        // logically done (the app-server itself
+                                        // stays alive as a server).
+                                        stream_result_seen_reader.store(true, Ordering::Relaxed);
+                                    }
+                                    Some("prompt_failed") => {
+                                        if zcode_in_think {
+                                            progress.push("</think>");
+                                            zcode_in_think = false;
+                                        }
+                                        let detail = v
+                                            .pointer("/params/error")
+                                            .and_then(|e| e.as_str())
+                                            .or_else(|| {
+                                                v.pointer("/params/message").and_then(|m| m.as_str())
+                                            })
+                                            .unwrap_or("ZCode 本轮执行失败");
+                                        if let Ok(mut slot) = claude_stream_error_reader.lock() {
+                                            if slot.is_none() {
+                                                *slot = Some(detail.to_string());
+                                            }
+                                        }
+                                        progress.flush();
+                                        stream_result_seen_reader.store(true, Ordering::Relaxed);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     if parse_kimi {
-                        // kimi print stream-json with `--final-message-only`
-                        // emits one JSON object per line; the terminal assistant
-                        // message carries the final answer in `content`. On the
-                        // Python kimi-cli the content is a plain string; the
-                        // npm kimi-code follows the Claude wire protocol, where
-                        // it can be a block array (`[{"type":"text","text":…}]`)
-                        // — accept both shapes.
+                        // kimi `-p --output-format stream-json` emits one JSON
+                        // object per line; the assistant line carries the final
+                        // answer in `content` (a plain string on current
+                        // kimi-code; historically a block array too — accept
+                        // both shapes). `meta`/`tool` lines are ignored here.
+                        //
+                        // While the wire.jsonl tracer is live it already
+                        // streamed the text incrementally, so skip
+                        // re-forwarding the final answer to avoid duplicating
+                        // the bubble; when the tracer never engaged (log
+                        // missing/unreadable), keep streaming stdout so the
+                        // run still fills in at the end.
                         let v: serde_json::Value = match serde_json::from_str(&line) {
                             Ok(v) => v,
                             Err(_) => continue,
@@ -16866,7 +18168,11 @@ async fn ai_cli(
                             if let Some(tx) = text {
                                 if !tx.trim().is_empty() {
                                     acc.push_str(&tx);
-                                    progress.push(&tx);
+                                    if !kimi_tracer_active_reader
+                                        .load(Ordering::Relaxed)
+                                    {
+                                        progress.push(&tx);
+                                    }
                                     received_content_reader.store(true, Ordering::Relaxed);
                                 }
                             }
@@ -17210,7 +18516,9 @@ async fn ai_cli(
                             if let Some(ev) = v.get("event") {
                                 let ev_type =
                                     ev.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                                if ev_type == "content_block_delta" {
+                                if ev_type == "message_start" {
+                                    saw_text_delta_for_message = false;
+                                } else if ev_type == "content_block_delta" {
                                     if let Some(delta) = ev.get("delta") {
                                         match delta.get("type").and_then(|t| t.as_str()) {
                                             Some("text_delta") => {
@@ -17221,6 +18529,7 @@ async fn ai_cli(
                                                         progress.emit_now("</think>");
                                                     }
                                                     prev_kind = "text";
+                                                    saw_text_delta_for_message = true;
                                                     progress.push(tx);
                                                     partial_text.push_str(tx);
                                                     received_content_reader
@@ -17273,7 +18582,10 @@ async fn ai_cli(
                                                 acc.push_str(tx);
                                                 received_content_reader
                                                     .store(true, Ordering::Relaxed);
-                                                if !partial_streaming {
+                                                if should_emit_complete_claude_text(
+                                                    partial_streaming,
+                                                    saw_text_delta_for_message,
+                                                ) {
                                                     if prev_kind == "thinking" {
                                                         progress.emit_now("</think>");
                                                     }
@@ -17325,6 +18637,10 @@ async fn ai_cli(
                                     }
                                 }
                             }
+                            // Delta presence is scoped to one assistant message.
+                            // A later tool-loop response may contain only a complete
+                            // assistant event even if an earlier message had deltas.
+                            saw_text_delta_for_message = false;
                         }
                         Some("user") => {
                             // Tool results arrive as a `user`-role message. Show a
@@ -17516,7 +18832,7 @@ async fn ai_cli(
                     .ok()
                     .and_then(|current| current.clone())
                 {
-                    terminate_child_tree(&mut child);
+                    terminate_ai_cli_tree(&mut child, &run_id);
                     break Err(error);
                 }
                 if !codex_first_event_seen.load(Ordering::Relaxed) {
@@ -17531,7 +18847,7 @@ async fn ai_cli(
                                 )
                         });
                     if first_event_timed_out {
-                        terminate_child_tree(&mut child);
+                        terminate_ai_cli_tree(&mut child, &run_id);
                         break Err(format!(
                             "Codex turn 已启动，但 {}s 内未收到模型或工具事件，已终止。",
                             codex_first_event_timeout_secs()
@@ -17543,7 +18859,7 @@ async fn ai_cli(
                     .ok()
                     .and_then(|current| current.clone());
                 if let Some(status) = status {
-                    terminate_child_tree(&mut child);
+                    terminate_ai_cli_tree(&mut child, &run_id);
                     break Ok(WaitOutcome::CodexTurnCompleted(status));
                 }
                 if let Some(path) = codex_last_message_path.as_deref() {
@@ -17560,12 +18876,34 @@ async fn ai_cli(
                     .as_deref()
                     .is_some_and(codex_last_message_ready)
                 {
-                    terminate_child_tree(&mut child);
+                    terminate_ai_cli_tree(&mut child, &run_id);
                     break Ok(WaitOutcome::CodexLastMessageReady);
                 }
             }
+            if zcode_app_server {
+                // The writer thread records a `session/create`/`session/resume`/
+                // subscribe/send handshake failure here; surface it instead of
+                // letting the (never-exiting) server linger until the timeout.
+                if let Some(error) = zcode_startup_error
+                    .lock()
+                    .ok()
+                    .and_then(|current| current.clone())
+                {
+                    terminate_ai_cli_tree(&mut child, &run_id);
+                    break Err(error);
+                }
+            }
             match child.try_wait() {
-                Ok(Some(status)) => break Ok(WaitOutcome::Exited(status)),
+                Ok(Some(status)) => {
+                    // The CLI's main process exited on its own. On Windows its
+                    // tool-spawned descendants (bash → grep/find/rg scanning UE
+                    // trees) are NOT auto-reaped when the parent dies — they
+                    // become orphans and keep burning CPU. Kill the whole tree
+                    // so a finished turn never leaves stray search processes
+                    // behind. This is a no-op if the tree is already gone.
+                    terminate_ai_cli_tree(&mut child, &run_id);
+                    break Ok(WaitOutcome::Exited(status));
+                }
                 Ok(None) => {
                     // Stream-json (claude/gemini) signalled its terminal result.
                     // Allow a short grace for a clean self-exit, then break early
@@ -17574,31 +18912,32 @@ async fn ai_cli(
                         let since = stream_complete_at
                             .get_or_insert_with(std::time::Instant::now);
                         if since.elapsed() >= stream_complete_grace {
-                            terminate_child_tree(&mut child);
+                            terminate_ai_cli_tree(&mut child, &run_id);
                             break Ok(WaitOutcome::StreamCompleted);
                         }
                     }
                     if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
-                        terminate_child_tree(&mut child);
+                        terminate_ai_cli_tree(&mut child, &run_id);
                         break Err(format!("CLI \"{binary}\" 超时（{timeout_secs}s）已终止。"));
                     }
                     if let Some(idle) = idle_timeout {
                         if activity_elapsed(watchdog_activity) >= idle {
-                            terminate_child_tree(&mut child);
+                            terminate_ai_cli_tree(&mut child, &run_id);
                             break Err(format!(
                                 "CLI \"{binary}\" 空转超过 {idle_timeout_secs}s 未产生输出，已终止。"
                             ));
                         }
                     }
-                    // Heartbeat: during a silent gap (slow first token, long tool
-                    // run, extended thinking with partial streaming off), drop a
-                    // "still running" line so the node never looks frozen. Reads
-                    // activity only — must NOT touch it, or idle detection breaks.
+                    // Heartbeat is based on visible progress, not raw stdout/stderr.
+                    // Compatible CLIs may emit frequent protocol events UGS does not
+                    // render; those events must not keep the UI blank indefinitely.
                     let beat = std::time::Duration::from_secs(AI_CLI_HEARTBEAT_SECS);
                     let now = std::time::Instant::now();
-                    if activity_elapsed(watchdog_activity) >= beat
-                        && now.duration_since(last_heartbeat) >= beat
-                    {
+                    if should_emit_ai_cli_heartbeat(
+                        visible_progress_elapsed(&run_id),
+                        now.duration_since(last_heartbeat),
+                        beat,
+                    ) {
                         let total = run_started_at.elapsed().as_secs();
                         let thread_started = codex_thread_id
                             .lock()
@@ -17624,7 +18963,7 @@ async fn ai_cli(
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 Err(e) => {
-                    terminate_child_tree(&mut child);
+                    terminate_ai_cli_tree(&mut child, &run_id);
                     break Err(format!("等待 CLI \"{binary}\" 失败: {e}"));
                 }
             }
@@ -17681,6 +19020,11 @@ async fn ai_cli(
         // progress (closing tool cards, trailing answer text) reaches the UI.
         if let Some(tracer) = dsh_tracer_handle {
             dsh_tracer_cancel.store(true, Ordering::Relaxed);
+            let _ = tracer.join();
+        }
+        // Stop the kimi wire.jsonl tracer and drain its last batch.
+        if let Some(tracer) = kimi_tracer_handle {
+            kimi_tracer_cancel.store(true, Ordering::Relaxed);
             let _ = tracer.join();
         }
         let output = if let Some(path) = codex_last_message_path.as_ref() {
@@ -17786,6 +19130,11 @@ async fn ai_cli(
                 } else {
                     stderr.trim()
                 };
+                if is_kimi {
+                    if let Some(hint) = kimi_failure_hint(detail) {
+                        return Err(format!("CLI \"{binary}\" 退出码 {code}: {detail}\n\n{hint}"));
+                    }
+                }
                 Err(format!("CLI \"{binary}\" 退出码 {code}: {detail}"))
             }
             Ok(WaitOutcome::CodexTurnCompleted(status)) if codex_status_success(&status) => {
@@ -19231,30 +20580,44 @@ mod tests {
     }
 
     #[test]
-    fn claude_bare_mode_requires_gateway_api_env() {
+    fn claude_bare_mode_requires_explicit_internal_capability() {
         let mut env = HashMap::new();
         assert!(!should_run_claude_bare_with_disable(Some(&env), false));
 
-        env.insert("ANTHROPIC_API_KEY".to_string(), "freecc".to_string());
-        assert!(!should_run_claude_bare_with_disable(Some(&env), false));
-
+        env.insert("ANTHROPIC_API_KEY".to_string(), "token".to_string());
         env.insert(
             "ANTHROPIC_BASE_URL".to_string(),
-            "http://127.0.0.1:8766/ch/open_router".to_string(),
+            "https://relay.example/anthropic".to_string(),
         );
+        assert!(!should_run_claude_bare_with_disable(Some(&env), false));
+
+        env.insert("UGS_CLAUDE_BARE".to_string(), "1".to_string());
         assert!(should_run_claude_bare_with_disable(Some(&env), false));
     }
 
     #[test]
     fn claude_bare_mode_can_be_disabled() {
         let mut env = HashMap::new();
-        env.insert("ANTHROPIC_API_KEY".to_string(), "freecc".to_string());
-        env.insert(
-            "ANTHROPIC_BASE_URL".to_string(),
-            "http://127.0.0.1:8766/ch/open_router".to_string(),
-        );
+        env.insert("UGS_CLAUDE_BARE".to_string(), "true".to_string());
 
         assert!(!should_run_claude_bare_with_disable(Some(&env), true));
+    }
+
+    #[test]
+    fn claude_bare_mode_never_depends_on_gateway_url() {
+        let mut env = HashMap::new();
+        env.insert("ANTHROPIC_AUTH_TOKEN".to_string(), "tok".to_string());
+        for url in [
+            "https://relay-a.example/anthropic",
+            "https://relay-b.example/v1",
+            "http://127.0.0.1:8766/ch/custom",
+        ] {
+            env.insert("ANTHROPIC_BASE_URL".to_string(), url.to_string());
+            assert!(!should_run_claude_bare_with_disable(Some(&env), false));
+        }
+
+        env.insert("UGS_CLAUDE_BARE".to_string(), "yes".to_string());
+        assert!(should_run_claude_bare_with_disable(Some(&env), false));
     }
 
     #[test]
@@ -19288,6 +20651,29 @@ mod tests {
                 "session_id": "default"
             })
         );
+    }
+
+    #[test]
+    fn claude_complete_assistant_text_falls_back_when_no_delta_arrived() {
+        assert!(should_emit_complete_claude_text(true, false));
+        assert!(!should_emit_complete_claude_text(true, true));
+        assert!(should_emit_complete_claude_text(false, false));
+    }
+
+    #[test]
+    fn heartbeat_depends_on_visible_progress_gap() {
+        let beat = std::time::Duration::from_secs(AI_CLI_HEARTBEAT_SECS);
+        assert!(should_emit_ai_cli_heartbeat(beat, beat, beat));
+        assert!(!should_emit_ai_cli_heartbeat(
+            std::time::Duration::from_secs(1),
+            beat,
+            beat,
+        ));
+        assert!(!should_emit_ai_cli_heartbeat(
+            beat,
+            std::time::Duration::from_secs(1),
+            beat,
+        ));
     }
 
     #[test]
@@ -19994,6 +21380,70 @@ mod tests {
             Some("gemini-key")
         );
     }
+
+    #[test]
+    fn translate_agent_label_maps_known_and_unknown_agents() {
+        assert_eq!(translate_agent_label("claude-code"), "Claude Code");
+        assert_eq!(translate_agent_label("codex"), "Codex");
+        assert_eq!(translate_agent_label("gemini"), "Gemini");
+        assert_eq!(translate_agent_label("agents"), "Agents (跨 agent 标准)");
+        assert_eq!(translate_agent_label("kimi"), "Kimi Code");
+        assert_eq!(translate_agent_label("mystery"), "mystery");
+    }
+
+    #[test]
+    fn skill_target_ids_for_agent_returns_expected_roots() {
+        assert_eq!(
+            skill_target_ids_for_agent("claude-code"),
+            vec!["global-claude", "project-claude"]
+        );
+        assert_eq!(
+            skill_target_ids_for_agent("codex"),
+            vec!["global-codex", "project-codex"]
+        );
+        assert_eq!(skill_target_ids_for_agent("gemini"), vec!["global-gemini"]);
+        assert_eq!(
+            skill_target_ids_for_agent("agents"),
+            vec!["global-agents", "project-agents"]
+        );
+        assert!(skill_target_ids_for_agent("zcode").is_empty());
+    }
+
+    #[test]
+    fn merge_mcp_servers_into_json_merges_and_sets_trust() {
+        let dir = std::env::temp_dir().join(format!("ugs-capability-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "mcpServers": { "existing": { "command": "old" } },
+                "keepMe": true
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let servers: serde_json::Map<String, serde_json::Value> =
+            serde_json::json!({ "my-server": { "command": "npx", "args": ["-y", "x"] } })
+                .as_object()
+                .unwrap()
+                .clone();
+
+        merge_mcp_servers_into_json(&path, &servers, true).unwrap();
+
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(doc["keepMe"], serde_json::json!(true));
+        assert_eq!(doc["mcpServers"]["existing"]["command"], serde_json::json!("old"));
+        assert_eq!(
+            doc["mcpServers"]["my-server"]["command"],
+            serde_json::json!("npx")
+        );
+        assert_eq!(doc["mcpServers"]["my-server"]["trust"], serde_json::json!(true));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -20048,6 +21498,7 @@ pub fn run() {
             start_slash_catalog_scan(app.handle().clone());
             init_vcs_scan_service(app.handle().clone());
             cache_cleanup::spawn_startup_cache_cleanup();
+            autosave::spawn_autosave_service();
 
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                 let window_to_hide = window.clone();
@@ -20130,6 +21581,7 @@ pub fn run() {
             install_skill_from_zip_url,
             install_skill_from_text,
             uninstall_skill,
+            translate_capability,
             scan_model_clis,
             validate_cli_path,
             check_cli_updates,
@@ -20196,7 +21648,11 @@ pub fn run() {
             secure_store::secure_secret_delete,
             free_proxy::free_proxy_ensure,
             free_proxy::free_proxy_stop,
-            proxy_http::proxy_http
+            proxy_http::proxy_http,
+            cache_cleanup::manual_cache_cleanup,
+            autosave::autosave_now,
+            autosave::autosave_config,
+            autosave::autosave_list_snapshots
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -132,6 +132,31 @@ export interface SkillUninstallResult {
   removed: boolean;
 }
 
+export interface CapabilityTranslateTargetResult {
+  agent: string;
+  label: string;
+  ok: boolean;
+  path?: string | null;
+  message: string;
+}
+
+export interface CapabilityTranslateResult {
+  kind: string;
+  results: CapabilityTranslateTargetResult[];
+}
+
+export interface CapabilityTranslateRequest {
+  kind: 'skill' | 'mcp' | 'lsp';
+  projectRoot?: string | null;
+  targets: string[];
+  overwrite?: boolean;
+  name?: string | null;
+  slug?: string | null;
+  text?: string | null;
+  sourcePath?: string | null;
+  servers?: unknown[];
+}
+
 export interface StudioRunOptions {
   cwd?: string;
   extraWorkspacePaths?: string[];
@@ -1850,6 +1875,45 @@ export async function removeBackgroundJob(
   await invoke('remove_background_job', { cwd: cwd ?? null, fileStem });
 }
 
+export interface ManualCacheCleanupResult {
+  filesRemoved: number;
+  bytesFreed: number;
+}
+
+/**
+ * Run a manual cache-retention sweep with an explicit retention window (days),
+ * deleting stale cache files and unfavorited sessions older than that. Returns
+ * null outside the desktop shell.
+ */
+export async function runManualCacheCleanup(
+  retentionDays: number,
+): Promise<ManualCacheCleanupResult | null> {
+  if (!tauriAvailable()) return null;
+  const invoke = await getInvoke();
+  return invoke<ManualCacheCleanupResult>('manual_cache_cleanup', {
+    retentionDays,
+  });
+}
+
+export interface AutosaveRunResult {
+  scannedWorkspaces: number;
+  snapshottedWorkspaces: number;
+  filesBackedUp: number;
+  bytesWritten: number;
+  errors: string[];
+}
+
+/**
+ * Run a manual AutoSave pass immediately, snapshotting committed-but-changed
+ * VCS files of every known workspace into `.ultragamestudio/autosave/`.
+ * Returns null outside the desktop shell.
+ */
+export async function runAutosaveNow(): Promise<AutosaveRunResult | null> {
+  if (!tauriAvailable()) return null;
+  const invoke = await getInvoke();
+  return invoke<AutosaveRunResult>('autosave_now');
+}
+
 /**
  * Absolute path to the bundled `ugs-job.mjs` background-job wrapper, or null
  * when it can't be located (or outside the desktop shell). The chat system
@@ -2125,6 +2189,30 @@ export async function uninstallSkill(params: {
     targetId: params.targetId,
     slug: params.slug,
     projectRoot: params.projectRoot ?? null,
+  });
+}
+
+/**
+ * Translate a UGS capability (skill / MCP / LSP) into each target agent's native
+ * format and write it offline. Desktop-only. Returns a per-agent result report.
+ */
+export async function translateCapability(
+  request: CapabilityTranslateRequest,
+): Promise<CapabilityTranslateResult> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<CapabilityTranslateResult>('translate_capability', {
+    kind: request.kind,
+    projectRoot: request.projectRoot ?? null,
+    targets: request.targets,
+    overwrite: request.overwrite ?? false,
+    name: request.name ?? null,
+    slug: request.slug ?? null,
+    text: request.text ?? null,
+    sourcePath: request.sourcePath ?? null,
+    servers: request.servers ?? null,
   });
 }
 

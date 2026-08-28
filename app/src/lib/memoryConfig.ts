@@ -13,7 +13,7 @@
  */
 
 import { readSettingsRaw, writeSettingsRaw } from '@/lib/generationSettingsStore';
-import { setMemoryLimits } from '@/lib/memoryStore';
+import { setMemoryLimits, setMemoryNudgeThresholdPct } from '@/lib/memoryStore';
 
 const REL_PATH = 'settings/memoryConfig.v1.json';
 const LEGACY_KEY = 'ultragamestudio.memoryConfig.v1';
@@ -37,6 +37,12 @@ export interface MemoryConfig {
   reviewMinIntervalMinutes: number;
   /** Prefer the cheapest model tier for review when routing allows. */
   reviewPreferCheapModel: boolean;
+  /** When a memory write overflows, evict the oldest entries instead of rejecting. */
+  evictOnOverflow: boolean;
+  /** Usage percentage at which the snapshot appends a "consolidate first" nudge. */
+  nudgeThresholdPct: number;
+  /** Char budget for the compact snapshot injected into argv-capped adapters. */
+  compactSnapshotCharLimit: number;
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -49,6 +55,9 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   reviewMinMessages: 6,
   reviewMinIntervalMinutes: 30,
   reviewPreferCheapModel: true,
+  evictOnOverflow: false,
+  nudgeThresholdPct: 85,
+  compactSnapshotCharLimit: 600,
 };
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
@@ -74,6 +83,14 @@ function coerce(raw: Partial<MemoryConfig> | null | undefined): MemoryConfig {
       1440,
     ),
     reviewPreferCheapModel: raw.reviewPreferCheapModel ?? d.reviewPreferCheapModel,
+    evictOnOverflow: raw.evictOnOverflow ?? d.evictOnOverflow,
+    nudgeThresholdPct: clampInt(raw.nudgeThresholdPct, d.nudgeThresholdPct, 50, 100),
+    compactSnapshotCharLimit: clampInt(
+      raw.compactSnapshotCharLimit,
+      d.compactSnapshotCharLimit,
+      200,
+      4000,
+    ),
   };
 }
 
@@ -88,6 +105,7 @@ export function loadMemoryConfig(): MemoryConfig {
   }
   const config = coerce(parsed);
   setMemoryLimits({ memory: config.memoryCharLimit, user: config.userCharLimit });
+  setMemoryNudgeThresholdPct(config.nudgeThresholdPct);
   return config;
 }
 
@@ -96,6 +114,7 @@ export function saveMemoryConfig(config: MemoryConfig): MemoryConfig {
   const next = coerce(config);
   writeSettingsRaw(REL_PATH, LEGACY_KEY, JSON.stringify(next));
   setMemoryLimits({ memory: next.memoryCharLimit, user: next.userCharLimit });
+  setMemoryNudgeThresholdPct(next.nudgeThresholdPct);
   return next;
 }
 

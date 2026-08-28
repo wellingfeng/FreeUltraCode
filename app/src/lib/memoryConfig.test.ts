@@ -7,7 +7,7 @@ import {
   saveMemoryConfig,
   setLastReviewAt,
 } from './memoryConfig';
-import { getMemoryLimits } from './memoryStore';
+import { getMemoryLimits, getMemoryNudgeThresholdPct } from './memoryStore';
 import { resetGenerationSettingsStoreForTests } from './generationSettingsStore';
 
 beforeEach(() => {
@@ -38,6 +38,36 @@ describe('memoryConfig', () => {
     saveMemoryConfig({ ...DEFAULT_MEMORY_CONFIG, memoryCharLimit: 1500, userCharLimit: 900 });
     loadMemoryConfig();
     expect(getMemoryLimits()).toEqual({ memory: 1500, user: 900 });
+  });
+
+  it('round-trips eviction + nudge settings', () => {
+    saveMemoryConfig({
+      ...DEFAULT_MEMORY_CONFIG,
+      evictOnOverflow: true,
+      nudgeThresholdPct: 70,
+      compactSnapshotCharLimit: 1000,
+    });
+    const loaded = loadMemoryConfig();
+    expect(loaded.evictOnOverflow).toBe(true);
+    expect(loaded.nudgeThresholdPct).toBe(70);
+    expect(loaded.compactSnapshotCharLimit).toBe(1000);
+  });
+
+  it('clamps nudge threshold and compact snapshot limit', () => {
+    saveMemoryConfig({
+      ...DEFAULT_MEMORY_CONFIG,
+      nudgeThresholdPct: 5, // below 50
+      compactSnapshotCharLimit: 50, // below 200
+    });
+    const loaded = loadMemoryConfig();
+    expect(loaded.nudgeThresholdPct).toBe(50);
+    expect(loaded.compactSnapshotCharLimit).toBe(200);
+  });
+
+  it('syncs nudge threshold into memoryStore', () => {
+    saveMemoryConfig({ ...DEFAULT_MEMORY_CONFIG, nudgeThresholdPct: 60 });
+    loadMemoryConfig();
+    expect(getMemoryNudgeThresholdPct()).toBe(60);
   });
 });
 

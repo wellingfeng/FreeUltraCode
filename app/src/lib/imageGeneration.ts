@@ -62,7 +62,7 @@ type ImageProviderApiKind =
   | 'minimax'
   | 'volcengine-openai';
 
-export type CustomImageProviderApiKind = 'openai-images';
+export type CustomImageProviderApiKind = ImageProviderApiKind;
 
 export interface ImageProviderDefinition {
   id: ImageProviderId;
@@ -94,6 +94,7 @@ export interface CustomImageProviderDefinition {
   defaultModel: string;
   models: string[];
   needsKey: boolean;
+  needsAccountId?: boolean;
   local: boolean;
   defaultBaseUrl: string;
   supportsBaseUrl: true;
@@ -101,6 +102,8 @@ export interface CustomImageProviderDefinition {
   credentialUrl?: string;
   keyLabel?: string;
   keyPlaceholder?: string;
+  accountIdLabel?: string;
+  accountIdPlaceholder?: string;
   note: string;
 }
 
@@ -124,6 +127,8 @@ export interface ImageGenerationSettings {
   providerBaseUrls: Partial<Record<ImageProviderId, string>>;
   providerModels: Partial<Record<ImageProviderId, string>>;
   providerModelLists: Partial<Record<ImageProviderId, string[]>>;
+  /** 内置渠道显示名覆盖，用于卡片内联重命名内置渠道。 */
+  providerLabels: Partial<Record<ImageProviderId, string>>;
   /**
    * Visual-QA closed loop. When enabled, a vision model judges each generated
    * image against the prompt; if it scores below `verifyThreshold`, the channel
@@ -736,6 +741,7 @@ export const DEFAULT_IMAGE_GENERATION_SETTINGS: ImageGenerationSettings = {
   providerBaseUrls: {},
   providerModels: {},
   providerModelLists: {},
+  providerLabels: {},
   verifyEnabled: false,
   verifyThreshold: 70,
   verifyMaxRetries: 1,
@@ -782,6 +788,14 @@ function normalizeImageModels(value: unknown, fallback: string): string[] {
   return out.length > 0 ? out : ['custom-image-model'];
 }
 
+const IMAGE_PROVIDER_API_KINDS = new Set<string>(
+  IMAGE_PROVIDERS.map((provider) => provider.apiKind),
+);
+
+function isImageProviderApiKind(value: unknown): value is ImageProviderApiKind {
+  return typeof value === 'string' && IMAGE_PROVIDER_API_KINDS.has(value);
+}
+
 function normalizeCustomImageProvider(
   value: unknown,
   index: number,
@@ -814,15 +828,19 @@ function normalizeCustomImageProvider(
     typeof source.endpointPlaceholder === 'string' && source.endpointPlaceholder.trim()
       ? source.endpointPlaceholder.trim()
       : 'https://api.example.com/v1';
+  const apiKind: CustomImageProviderApiKind = isImageProviderApiKind(source.apiKind)
+    ? source.apiKind
+    : 'openai-images';
   return {
     id,
     label,
     category: source.category === 'free-credit' ? 'free-credit' : 'commercial',
-    apiKind: 'openai-images',
+    apiKind,
     defaultModel,
     models: normalizeImageModels(source.models, defaultModel),
     needsKey: source.needsKey !== false,
-    local: false,
+    needsAccountId: source.needsAccountId === true ? true : undefined,
+    local: source.local === true,
     defaultBaseUrl,
     supportsBaseUrl: true,
     endpointPlaceholder,
@@ -837,6 +855,14 @@ function normalizeCustomImageProvider(
     keyPlaceholder:
       typeof source.keyPlaceholder === 'string' && source.keyPlaceholder.trim()
         ? source.keyPlaceholder.trim()
+        : undefined,
+    accountIdLabel:
+      typeof source.accountIdLabel === 'string' && source.accountIdLabel.trim()
+        ? source.accountIdLabel.trim()
+        : undefined,
+    accountIdPlaceholder:
+      typeof source.accountIdPlaceholder === 'string' && source.accountIdPlaceholder.trim()
+        ? source.accountIdPlaceholder.trim()
         : undefined,
     note:
       typeof source.note === 'string' && source.note.trim()
@@ -856,8 +882,11 @@ function normalizeCustomImageProviders(value: unknown): CustomImageProviderDefin
 export function imageProviders(
   settings = loadImageGenerationSettings(),
 ): ImageProviderDefinition[] {
+  const labels = settings.providerLabels ?? {};
   return [
-    ...IMAGE_PROVIDERS,
+    ...IMAGE_PROVIDERS.map((provider) =>
+      labels[provider.id] ? { ...provider, label: labels[provider.id]! } : provider,
+    ),
     ...settings.customProviders.map(
       (provider): ImageProviderDefinition => ({ ...provider, custom: true }),
     ),
@@ -931,6 +960,7 @@ export function normalizeImageGenerationSettings(
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
     providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
+    providerLabels: cleanRecord(source.providerLabels, validKey),
     verifyEnabled:
       typeof source.verifyEnabled === 'boolean'
         ? source.verifyEnabled
@@ -1100,57 +1130,58 @@ async function generateWithProvider(
 ): Promise<string[]> {
   switch (imageProviderById(providerId, settings).apiKind) {
     case 'cloudflare':
-      return generateCloudflare(prompt, model, settings, signal);
+      return generateCloudflare(providerId, prompt, model, settings, signal);
     case 'pollinations':
-      return generatePollinations(prompt, model, settings, signal);
+      return generatePollinations(providerId, prompt, model, settings, signal);
     case 'ai-horde':
-      return generateAiHorde(prompt, model, settings, signal);
+      return generateAiHorde(providerId, prompt, model, settings, signal);
     case 'siliconflow':
-      return generateSiliconFlow(prompt, model, settings, signal);
+      return generateSiliconFlow(providerId, prompt, model, settings, signal);
     case 'openai-images':
     case 'zhipu-openai':
       return generateOpenAiImages(providerId, prompt, model, settings, signal);
     case 'google-gemini-image':
-      return generateGoogleGeminiImage(prompt, model, settings, signal);
+      return generateGoogleGeminiImage(providerId, prompt, model, settings, signal);
     case 'google-imagen':
-      return generateGoogleImagen(prompt, model, settings, signal);
+      return generateGoogleImagen(providerId, prompt, model, settings, signal);
     case 'bfl-flux':
-      return generateBflFlux(prompt, model, settings, signal);
+      return generateBflFlux(providerId, prompt, model, settings, signal);
     case 'ideogram-v4':
-      return generateIdeogram(prompt, model, settings, signal);
+      return generateIdeogram(providerId, prompt, model, settings, signal);
     case 'stability-ai':
-      return generateStabilityAi(prompt, model, settings, signal);
+      return generateStabilityAi(providerId, prompt, model, settings, signal);
     case 'adobe-firefly':
-      return generateAdobeFirefly(prompt, model, settings, signal);
+      return generateAdobeFirefly(providerId, prompt, model, settings, signal);
     case 'luma-photon':
-      return generateLumaPhoton(prompt, model, settings, signal);
+      return generateLumaPhoton(providerId, prompt, model, settings, signal);
     case 'xai-images':
-      return generateXaiImages(prompt, model, settings, signal);
+      return generateXaiImages(providerId, prompt, model, settings, signal);
     case 'replicate':
-      return generateReplicate(prompt, model, settings, signal);
+      return generateReplicate(providerId, prompt, model, settings, signal);
     case 'fal-ai':
-      return generateFalAi(prompt, model, settings, signal);
+      return generateFalAi(providerId, prompt, model, settings, signal);
     case 'runware':
-      return generateRunware(prompt, model, settings, signal);
+      return generateRunware(providerId, prompt, model, settings, signal);
     case 'dashscope-wanx':
-      return generateDashScopeWanx(prompt, model, settings, signal);
+      return generateDashScopeWanx(providerId, prompt, model, settings, signal);
     case 'minimax':
-      return generateMiniMax(prompt, model, settings, signal);
+      return generateMiniMax(providerId, prompt, model, settings, signal);
     case 'volcengine-openai':
       return generateVolcengineSeedream(providerId, prompt, model, settings, signal);
     case 'comfyui':
-      return generateComfyUi(prompt, model, settings, signal);
+      return generateComfyUi(providerId, prompt, model, settings, signal);
   }
 }
 
 async function generateCloudflare(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const accountId = settings.providerAccountIds.cloudflare?.trim();
-  const apiKey = settings.providerKeys.cloudflare?.trim();
+  const accountId = settings.providerAccountIds[providerId]?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!accountId || !apiKey) throw new Error('Cloudflare Account ID or API token is missing.');
   if (tauriAvailable()) {
     return [
@@ -1180,18 +1211,19 @@ async function generateCloudflare(
 }
 
 async function generatePollinations(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys.pollinations?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   const headers: Record<string, string> = {
     Accept: 'image/*',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const url = new URL(
-    `${imageProviderBaseUrl('pollinations', settings)}/image/${encodeURIComponent(prompt)}`,
+    `${imageProviderBaseUrl(providerId, settings)}/image/${encodeURIComponent(prompt)}`,
   );
   url.searchParams.set('model', model);
   url.searchParams.set('width', '1024');
@@ -1207,15 +1239,16 @@ async function generatePollinations(
 }
 
 async function generateSiliconFlow(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys.siliconflow?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('SiliconFlow API key is missing.');
   const isQwenImage = model.startsWith('Qwen/Qwen-Image');
-  const response = await tauriFetch(`${imageProviderBaseUrl('siliconflow', settings)}/images/generations`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/images/generations`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1264,15 +1297,16 @@ async function generateOpenAiImages(
 }
 
 async function generateGoogleGeminiImage(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['google-gemini-image']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Google API key is missing.');
   const response = await tauriFetch(
-    `${imageProviderBaseUrl('google-gemini-image', settings)}/models/${encodeURIComponent(
+    `${imageProviderBaseUrl(providerId, settings)}/models/${encodeURIComponent(
       model,
     )}:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
@@ -1296,15 +1330,16 @@ async function generateGoogleGeminiImage(
 }
 
 async function generateGoogleImagen(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['google-imagen']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Google API key is missing.');
   const response = await tauriFetch(
-    `${imageProviderBaseUrl('google-imagen', settings)}/models/${encodeURIComponent(
+    `${imageProviderBaseUrl(providerId, settings)}/models/${encodeURIComponent(
       model,
     )}:predict?key=${encodeURIComponent(apiKey)}`,
     {
@@ -1325,14 +1360,15 @@ async function generateGoogleImagen(
 }
 
 async function generateBflFlux(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['bfl-flux']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('BFL API key is missing.');
-  const baseUrl = imageProviderBaseUrl('bfl-flux', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(`${baseUrl}/v1/${encodeModelPath(model)}`, {
     method: 'POST',
     headers: {
@@ -1377,18 +1413,19 @@ async function generateBflFlux(
 }
 
 async function generateIdeogram(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys.ideogram?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Ideogram API key is missing.');
   const form = new FormData();
   appendFormValue(form, 'text_prompt', prompt);
   appendFormValue(form, 'rendering_speed', model === 'ideogram-v4-turbo' ? 'TURBO' : 'DEFAULT');
   appendFormValue(form, 'aspect_ratio', '1x1');
-  const response = await tauriFetch(`${imageProviderBaseUrl('ideogram', settings)}/v1/ideogram-v4/generate`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/v1/ideogram-v4/generate`, {
     method: 'POST',
     headers: { 'Api-Key': apiKey },
     body: form,
@@ -1398,12 +1435,13 @@ async function generateIdeogram(
 }
 
 async function generateStabilityAi(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['stability-ai']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Stability AI API key is missing.');
   const form = new FormData();
   appendFormValue(form, 'prompt', prompt);
@@ -1417,7 +1455,7 @@ async function generateStabilityAi(
           ? '/stable-image/generate/sdxl'
           : '/stable-image/generate/sd3';
   if (endpoint.endsWith('/sd3')) appendFormValue(form, 'model', model);
-  const response = await tauriFetch(`${imageProviderBaseUrl('stability-ai', settings)}${endpoint}`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1430,13 +1468,14 @@ async function generateStabilityAi(
 }
 
 async function generateAdobeFirefly(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const clientId = settings.providerAccountIds['adobe-firefly']?.trim();
-  const clientSecret = settings.providerKeys['adobe-firefly']?.trim();
+  const clientId = settings.providerAccountIds[providerId]?.trim();
+  const clientSecret = settings.providerKeys[providerId]?.trim();
   if (!clientId || !clientSecret) {
     throw new Error('Adobe Firefly Client ID or Client Secret is missing.');
   }
@@ -1455,7 +1494,7 @@ async function generateAdobeFirefly(
   const tokenJson = await readJsonResponse(tokenResponse);
   const token = stringValue(tokenJson.access_token) || stringValue(tokenJson.accessToken);
   if (!token) throw new Error('Adobe IMS did not return an access token.');
-  const response = await tauriFetch(`${imageProviderBaseUrl('adobe-firefly', settings)}/images/generate`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/images/generate`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1475,14 +1514,15 @@ async function generateAdobeFirefly(
 }
 
 async function generateLumaPhoton(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['luma-photon']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Luma API key is missing.');
-  const baseUrl = imageProviderBaseUrl('luma-photon', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(`${baseUrl}/generations/image`, {
     method: 'POST',
     headers: {
@@ -1522,14 +1562,15 @@ async function generateLumaPhoton(
 }
 
 async function generateXaiImages(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await tauriFetch(`${imageProviderBaseUrl('xai-grok-imagine', settings)}/images/generations`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/images/generations`, {
     method: 'POST',
-    headers: requestHeaders('xai-grok-imagine', settings),
+    headers: requestHeaders(providerId, settings),
     body: JSON.stringify({
       model,
       prompt,
@@ -1543,14 +1584,15 @@ async function generateXaiImages(
 }
 
 async function generateReplicate(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys.replicate?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('Replicate API token is missing.');
-  const baseUrl = imageProviderBaseUrl('replicate', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1598,14 +1640,15 @@ async function generateReplicate(
 }
 
 async function generateFalAi(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['fal-ai']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('fal.ai API key is missing.');
-  const baseUrl = imageProviderBaseUrl('fal-ai', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1659,14 +1702,15 @@ async function generateFalAi(
 }
 
 async function generateRunware(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const response = await tauriFetch(imageProviderBaseUrl('runware', settings), {
+  const response = await tauriFetch(imageProviderBaseUrl(providerId, settings), {
     method: 'POST',
-    headers: requestHeaders('runware', settings),
+    headers: requestHeaders(providerId, settings),
     body: JSON.stringify([
       {
         taskType: 'imageInference',
@@ -1685,14 +1729,15 @@ async function generateRunware(
 }
 
 async function generateMiniMax(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys.minimax?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('MiniMax API key is missing.');
-  const response = await tauriFetch(`${imageProviderBaseUrl('minimax', settings)}/image_generation`, {
+  const response = await tauriFetch(`${imageProviderBaseUrl(providerId, settings)}/image_generation`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1744,14 +1789,15 @@ async function generateVolcengineSeedream(
 }
 
 async function generateDashScopeWanx(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['dashscope-wanx']?.trim();
+  const apiKey = settings.providerKeys[providerId]?.trim();
   if (!apiKey) throw new Error('DashScope API key is missing.');
-  const baseUrl = imageProviderBaseUrl('dashscope-wanx', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   if (
     model.startsWith('wan2.6') ||
     model.startsWith('qwen-image-2.0') ||
@@ -1829,13 +1875,14 @@ async function generateDashScopeWanx(
 }
 
 async function generateAiHorde(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['ai-horde']?.trim() || '0000000000';
-  const baseUrl = imageProviderBaseUrl('ai-horde', settings);
+  const apiKey = settings.providerKeys[providerId]?.trim() || '0000000000';
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(`${baseUrl}/generate/async`, {
     method: 'POST',
     headers: {
@@ -1887,12 +1934,13 @@ async function generateAiHorde(
 }
 
 async function generateComfyUi(
+  providerId: ImageProviderId,
   prompt: string,
   model: string,
   settings: ImageGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const baseUrl = imageProviderBaseUrl('local-comfyui', settings);
+  const baseUrl = imageProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(`${baseUrl}/prompt-text-to-image`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

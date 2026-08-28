@@ -562,7 +562,7 @@ export function selectionFromKey(key: string): GatewaySelection | null {
 export function gatewayRouteEnv(
   route: Pick<
     ResolvedGatewayRoute,
-    'transport' | 'adapter' | 'apiKey' | 'baseUrl' | 'model'
+    'transport' | 'adapter' | 'providerId' | 'apiKey' | 'baseUrl' | 'model'
   >,
 ): Record<string, string> | undefined {
   const env: Record<string, string> = {};
@@ -594,17 +594,25 @@ export function gatewayRouteEnv(
       }
       if (route.baseUrl) env.ANTHROPIC_BASE_URL = route.baseUrl;
       if (route.model) env.ANTHROPIC_MODEL = route.model;
+      // Private launcher capability. Never infer CLI behavior from a user URL.
+      if (route.providerId?.startsWith(FREE_CHANNEL_PROVIDER_PREFIX)) {
+        env.UGS_CLAUDE_BARE = '1';
+      }
     } else if (route.adapter === 'codex') {
       if (route.apiKey) env.OPENAI_API_KEY = route.apiKey;
       if (route.baseUrl) env.OPENAI_BASE_URL = route.baseUrl;
     } else if (route.adapter === 'deepseek-harness') {
       // dsh reads its DeepSeek key + endpoint from the inherited environment /
-      // credential store (DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL); the model itself
-      // lives in `$DSH_HOME/settings.yaml`, so only key + base url are injected.
-      // Injecting the base url lets a third-party DeepSeek-compatible relay
-      // (SiliconFlow / OpenRouter / ...) be used through the same dsh CLI.
+      // credential store (DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL). The model id
+      // itself lives in the cordis composition (`agent-default-model`), which
+      // is normally only settable via `$DSH_HOME/settings.yaml`; UGS therefore
+      // forwards the channel's model through a private env var
+      // (`UGS_DSH_MODEL`) and bakes it into the `--patch` overlay that
+      // `ai_cli` writes for this run (see `dsh_log::ugs_patch_yaml`). The
+      // env var is read by UGS only — dsh never sees it directly.
       if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
       if (route.baseUrl) env.DEEPSEEK_BASE_URL = route.baseUrl;
+      if (route.model) env.UGS_DSH_MODEL = route.model;
     } else if (route.adapter === 'zcode') {
       // ZCode reads its provider + model from `~/.zcode/cli/config.json`
       // (provider.zai + model.main), never from env vars directly. The Rust
@@ -616,12 +624,21 @@ export function gatewayRouteEnv(
       if (route.baseUrl) env.ZCODE_BASE_URL = route.baseUrl;
       if (route.model) env.ZCODE_MODEL = route.model;
     } else if (route.adapter === 'kimi') {
-      // Kimi Code CLI accepts KIMI_API_KEY from the environment. Inject the
-      // channel key when present so a relay/self-provisioned key works
-      // through the same CLI; without a key the CLI falls back to its own
-      // login state (~/.kimi). The base url is never injected — Kimi's CLI
-      // does not read one from env.
-      if (route.apiKey) env.KIMI_API_KEY = route.apiKey;
+      // Kimi Code CLI (>= 0.38) synthesises an in-memory provider/model from
+      // env vars instead of requiring `/login` or a hand-written config.toml.
+      // The active overlay (applyEnvModelConfig) keys off KIMI_MODEL_NAME and
+      // requires KIMI_MODEL_API_KEY — plain KIMI_API_KEY is NOT read by it
+      // (that one leaves the synth provider with "no credential configured").
+      // So inject the channel's model + key + base url as a set; without BOTH
+      // model and key the CLI falls back to its own login state
+      // (~/.kimi-code/config.toml). KIMI_MODEL_BASE_URL defaults to
+      // https://api.moonshot.ai/v1 when omitted, so a cn/relay endpoint must
+      // be carried through explicitly.
+      if (route.apiKey && route.model) {
+        env.KIMI_MODEL_API_KEY = route.apiKey;
+        env.KIMI_MODEL_NAME = route.model;
+        if (route.baseUrl) env.KIMI_MODEL_BASE_URL = route.baseUrl;
+      }
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;

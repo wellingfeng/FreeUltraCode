@@ -77,6 +77,31 @@
       "- 若本地工具或技能不可用，直接说明替代方案。",
       "- 多方案比较时先给推荐项，再用短表格列权衡。"
     ],
+    "kimi": [
+      "",
+      "## Kimi Code Defaults",
+      "",
+      "- 遵循 Kimi Code CLI 的工程代理习惯：读代码、改文件、验证结果。",
+      "- 优先用本地工具完成任务；完成后给出改动点和验证结论。",
+      "- 与 Kimi Code 自身配置叠加时，以用户最新指令和仓库约定为准。"
+    ],
+    "deepseek-harness": [
+      "",
+      "## DeepSeek Harness Defaults",
+      "",
+      "- 遵循 DeepSeek Harness 的工程代理习惯：读代码、改文件、验证结果。",
+      "- 输出紧凑；避免长背景铺垫。",
+      "- 遇到不确定事实先标明假设，再给可验证下一步。",
+      "- 多方案比较时先给推荐项，再用短表格列权衡。"
+    ],
+    "zcode": [
+      "",
+      "## ZCode / GLM Defaults",
+      "",
+      "- 遵循 ZCode (GLM) CLI 的工程代理习惯：读代码、改文件、验证结果。",
+      "- 输出保持紧凑；先给结论，再补必要限制。",
+      "- 代码任务优先产出最小可验证改动，并说明验证命令。"
+    ],
     "openai-coding": [
       "",
       "## OpenAI-Compatible Coding Defaults",
@@ -106,7 +131,10 @@
   "adapterProfiles": {
     "claude-code": "claude-code",
     "codex": "codex",
-    "gemini": "gemini"
+    "gemini": "gemini",
+    "kimi": "kimi",
+    "deepseek-harness": "deepseek-harness",
+    "zcode": "zcode"
   },
   "providerProfiles": {
     "freecc:auto": "free-auto",
@@ -146,6 +174,21 @@
     },
     {
       "adapter": "gemini",
+      "modelClass": "default",
+      "systemDefault": true
+    },
+    {
+      "adapter": "kimi",
+      "modelClass": "default",
+      "systemDefault": true
+    },
+    {
+      "adapter": "deepseek-harness",
+      "modelClass": "default",
+      "systemDefault": true
+    },
+    {
+      "adapter": "zcode",
       "modelClass": "default",
       "systemDefault": true
     }

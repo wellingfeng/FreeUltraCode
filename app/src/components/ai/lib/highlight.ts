@@ -176,6 +176,41 @@ export function highlightCode(
       className: `hljs language-${lang}`,
     };
   }
+  // 无 language tag 的 fence：尝试 highlightAuto 在已注册语言里识别。
+  // 仅当最佳匹配有非平凡的 relevance 才采用，避免把纯中文散文误判成 apache/cpp。
+  // 短代码（<2 行或总长 <24 char）不做 auto：单行函数调用 often 被误判成 excel/brainfuck。
+  // 排除 shell/cmd 系语言：dos/bash/powershell/shellsession 的关键字（cd/set/echo/dir/rem/copy/for/if）
+  // 极度贪心，任何含这些词的普通代码都会被猜成 cmd。想高亮脚本，靠模型显式写 ```cmd/bash。
+  const AUTO_DETECT_BLOCKLIST = new Set([
+    'dos',
+    'bash',
+    'powershell',
+    'shellsession',
+  ]);
+  const autoCandidates = [...HL_REGISTERED].filter(
+    (name) => !AUTO_DETECT_BLOCKLIST.has(name),
+  );
+  const trimmed = code.trim();
+  const lines = trimmed.split('\n');
+  if (trimmed.length >= 24 || lines.length >= 2) {
+    try {
+      const auto = hljs.highlightAuto(code, autoCandidates);
+      const detected = auto.language?.toLowerCase();
+      if (
+        detected &&
+        detected !== 'plaintext' &&
+        HL_REGISTERED.has(detected) &&
+        (auto.relevance ?? 0) >= 6
+      ) {
+        return {
+          html: auto.value,
+          className: `hljs language-${detected}`,
+        };
+      }
+    } catch {
+      // lowlight/hljs auto 在某些输入上会抛；fallback 到 plaintext。
+    }
+  }
   return {
     html: hljs.highlight(code, { language: 'plaintext', ignoreIllegals: true }).value,
     className: 'hljs language-plaintext',

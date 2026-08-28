@@ -56,7 +56,7 @@ type SpeechProviderApiKind =
   | 'huggingface-inference'
   | 'generic-local-speech';
 
-export type CustomSpeechProviderApiKind = 'generic-online-speech' | 'generic-local-speech';
+export type CustomSpeechProviderApiKind = SpeechProviderApiKind;
 export interface SpeechProviderDefinition {
   id: SpeechProviderId;
   label: string;
@@ -92,6 +92,7 @@ export interface CustomSpeechProviderDefinition {
   defaultVoice: string;
   voices: string[];
   needsKey: boolean;
+  needsAccountId?: boolean;
   local: boolean;
   defaultBaseUrl: string;
   supportsBaseUrl: true;
@@ -99,6 +100,8 @@ export interface CustomSpeechProviderDefinition {
   credentialUrl?: string;
   keyLabel?: string;
   keyPlaceholder?: string;
+  accountIdLabel?: string;
+  accountIdPlaceholder?: string;
   note: string;
 }
 
@@ -112,6 +115,8 @@ export interface SpeechGenerationSettings {
   providerModels: Partial<Record<SpeechProviderId, string>>;
   providerModelLists: Partial<Record<SpeechProviderId, string[]>>;
   providerVoices: Partial<Record<SpeechProviderId, string>>;
+  /** 内置渠道显示名覆盖，用于卡片内联重命名内置渠道。 */
+  providerLabels: Partial<Record<SpeechProviderId, string>>;
 }
 
 export interface SpeechGenerationResult {
@@ -724,6 +729,7 @@ export const DEFAULT_SPEECH_GENERATION_SETTINGS: SpeechGenerationSettings = {
   providerModels: {},
   providerModelLists: {},
   providerVoices: {},
+  providerLabels: {},
 };
 
 function isKnownSpeechProviderId(
@@ -770,6 +776,14 @@ function normalizeSpeechStringList(value: unknown, fallback: string): string[] {
   return out;
 }
 
+const SPEECH_PROVIDER_API_KINDS = new Set<string>(
+  SPEECH_PROVIDERS.map((provider) => provider.apiKind),
+);
+
+function isSpeechProviderApiKind(value: unknown): value is SpeechProviderApiKind {
+  return typeof value === 'string' && SPEECH_PROVIDER_API_KINDS.has(value);
+}
+
 function normalizeCustomSpeechProvider(
   value: unknown,
   index: number,
@@ -790,8 +804,9 @@ function normalizeCustomSpeechProvider(
     suffix += 1;
   }
   usedIds.add(id);
-  const apiKind: CustomSpeechProviderApiKind =
-    source.apiKind === 'generic-local-speech' ? 'generic-local-speech' : 'generic-online-speech';
+  const apiKind: CustomSpeechProviderApiKind = isSpeechProviderApiKind(source.apiKind)
+    ? source.apiKind
+    : 'generic-online-speech';
   const defaultModel =
     typeof source.defaultModel === 'string' && source.defaultModel.trim()
       ? source.defaultModel.trim()
@@ -818,6 +833,7 @@ function normalizeCustomSpeechProvider(
     defaultVoice,
     voices: normalizeSpeechStringList(source.voices, defaultVoice),
     needsKey: source.needsKey === true,
+    needsAccountId: source.needsAccountId === true ? true : undefined,
     local: source.local === true || apiKind === 'generic-local-speech',
     defaultBaseUrl,
     supportsBaseUrl: true,
@@ -833,6 +849,14 @@ function normalizeCustomSpeechProvider(
     keyPlaceholder:
       typeof source.keyPlaceholder === 'string' && source.keyPlaceholder.trim()
         ? source.keyPlaceholder.trim()
+        : undefined,
+    accountIdLabel:
+      typeof source.accountIdLabel === 'string' && source.accountIdLabel.trim()
+        ? source.accountIdLabel.trim()
+        : undefined,
+    accountIdPlaceholder:
+      typeof source.accountIdPlaceholder === 'string' && source.accountIdPlaceholder.trim()
+        ? source.accountIdPlaceholder.trim()
         : undefined,
     note:
       typeof source.note === 'string' && source.note.trim()
@@ -854,8 +878,11 @@ function normalizeCustomSpeechProviders(value: unknown): CustomSpeechProviderDef
 export function speechProviders(
   settings = loadSpeechGenerationSettings(),
 ): SpeechProviderDefinition[] {
+  const labels = settings.providerLabels ?? {};
   return [
-    ...SPEECH_PROVIDERS,
+    ...SPEECH_PROVIDERS.map((provider) =>
+      labels[provider.id] ? { ...provider, label: labels[provider.id]! } : provider,
+    ),
     ...settings.customProviders.map(
       (provider): SpeechProviderDefinition => ({ ...provider, custom: true }),
     ),
@@ -924,6 +951,7 @@ export function normalizeSpeechGenerationSettings(value: unknown): SpeechGenerat
     providerModels: cleanRecord(source.providerModels, validKey),
     providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
     providerVoices: cleanRecord(source.providerVoices, validKey),
+    providerLabels: cleanRecord(source.providerLabels, validKey),
   };
 }
 

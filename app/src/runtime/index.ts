@@ -13,6 +13,7 @@ export {
   RETRYABLE_FAILURE_CODES,
 } from './failure';
 export { appendExecutionContract } from './contract';
+export { appendWorkspaceLayout, WORKSPACE_LAYOUT_DIRECTIVE } from './workspaceLayout';
 export { getDataInputs, buildDataContextString } from './context';
 export { runWithConcurrency, delay } from './concurrency';
 export { formatClock, formatDuration } from './format';

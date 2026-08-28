@@ -407,7 +407,10 @@ function VisionProviderRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: 'var(--channel-card-tint)' }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

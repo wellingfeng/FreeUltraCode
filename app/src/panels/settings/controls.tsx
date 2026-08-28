@@ -1,6 +1,7 @@
 import {
   Fragment,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -10,6 +11,9 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
+
+const isZh =
+  typeof navigator !== 'undefined' && navigator.language?.startsWith('zh');
 
 export function SelectControl<T extends string>({
   value,
@@ -23,7 +27,9 @@ export function SelectControl<T extends string>({
   icon?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -36,7 +42,33 @@ export function SelectControl<T extends string>({
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
+  // Reset query and focus the search input when the dropdown opens.
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+      return;
+    }
+    setQuery('');
+    const id = requestAnimationFrame(() => {
+      searchRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+
   const selected = options.find((o) => o.id === value);
+
+  // Filter options by label / hint / group (case-insensitive).
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((opt) => {
+      return (
+        opt.label.toLowerCase().includes(q) ||
+        (opt.hint?.toLowerCase().includes(q) ?? false) ||
+        (opt.group?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [options, query]);
 
   return (
     <div ref={rootRef} className="relative w-full">
@@ -65,55 +97,87 @@ export function SelectControl<T extends string>({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-20 mt-1 w-full min-w-[16rem] max-w-[20rem] overflow-hidden rounded-md border border-border bg-panel py-1 shadow-xl">
-          <ul role="listbox" className="max-h-80 overflow-y-auto">
-            {options.map((option, index) => {
-              const active = option.id === value;
-              const showGroupHeader =
-                !!option.group && option.group !== options[index - 1]?.group;
-              return (
-                <Fragment key={option.id}>
-                  {showGroupHeader && (
-                    <li
-                      role="presentation"
-                      className={cn(
-                        'px-3 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-faint',
-                        index > 0 && 'mt-1 border-t border-border-soft',
-                      )}
-                    >
-                      {option.group}
-                    </li>
-                  )}
-                  <li>
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => {
-                        onChange(option.id);
-                        setOpen(false);
-                      }}
-                      className={cn(
-                        'flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
-                        active
-                          ? 'bg-border-soft text-fg'
-                          : 'text-fg-dim hover:bg-border-soft hover:text-fg',
-                      )}
-                    >
-                      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
-                        {active && <Check size={14} strokeWidth={2.4} className="text-accent" />}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                      {option.hint && (
-                        <span className="shrink-0 font-mono text-[10px] text-fg-faint">
-                          {option.hint}
+        <div className="absolute right-0 top-full z-20 mt-1 w-full min-w-[16rem] max-w-[20rem] overflow-hidden rounded-md border border-border bg-panel shadow-xl">
+          {/* Search input — auto-focused when the menu opens. */}
+          <div className="border-b border-border-soft px-2.5 py-1.5">
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const first = filtered[0];
+                  if (first) {
+                    onChange(first.id);
+                    setOpen(false);
+                  }
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setOpen(false);
+                }
+              }}
+              placeholder={isZh ? '输入以筛选…' : 'Type to filter…'}
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full bg-transparent text-sm text-fg outline-none placeholder:text-fg-faint"
+            />
+          </div>
+          <ul role="listbox" className="max-h-80 overflow-y-auto py-1">
+            {filtered.length === 0 ? (
+              <li className="px-3 py-2 text-sm text-fg-faint">
+                {isZh ? '无匹配结果' : 'No matches'}
+              </li>
+            ) : (
+              filtered.map((option, index) => {
+                const active = option.id === value;
+                const showGroupHeader =
+                  !!option.group && option.group !== filtered[index - 1]?.group;
+                return (
+                  <Fragment key={option.id}>
+                    {showGroupHeader && (
+                      <li
+                        role="presentation"
+                        className={cn(
+                          'px-3 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-faint',
+                          index > 0 && 'mt-1 border-t border-border-soft',
+                        )}
+                      >
+                        {option.group}
+                      </li>
+                    )}
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onClick={() => {
+                          onChange(option.id);
+                          setOpen(false);
+                        }}
+                        className={cn(
+                          'flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors',
+                          active
+                            ? 'bg-border-soft text-fg'
+                            : 'text-fg-dim hover:bg-border-soft hover:text-fg',
+                        )}
+                      >
+                        <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center">
+                          {active && <Check size={14} strokeWidth={2.4} className="text-accent" />}
                         </span>
-                      )}
-                    </button>
-                  </li>
-                </Fragment>
-              );
-            })}
+                        <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                        {option.hint && (
+                          <span className="shrink-0 font-mono text-[10px] text-fg-faint">
+                            {option.hint}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  </Fragment>
+                );
+              })
+            )}
           </ul>
         </div>
       )}

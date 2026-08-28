@@ -5,7 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react';
-import { FileCode, FileText, FolderOpen, ImageOff, Loader2, Copy, Check, AlertTriangle } from 'lucide-react';
+import { FileCode, FileText, FolderOpen, ImageOff, Loader2, Copy, Check } from 'lucide-react';
 import {
   displayFileRefPath,
   fileRefLineSuffix,
@@ -439,24 +439,19 @@ export function VisibleFileChip({
         onContextMenu={openContextMenu}
         title={chipTitle}
         className={
-          'ai-file-chip inline-flex max-w-full items-center gap-1 rounded border bg-transparent px-0.5 py-px align-baseline font-mono text-[12px] leading-snug ' +
-          (fileMissing
-            ? 'border-status-error/30 text-status-error'
-            : 'border-transparent ') +
+          'ai-file-chip inline-flex max-w-full items-center gap-1 rounded border border-transparent bg-transparent px-0.5 py-px align-baseline font-mono text-[12px] leading-snug ' +
           (interactive && !fileMissing
             ? 'ai-file-chip--interactive cursor-pointer'
             : 'cursor-default text-fg-dim')
         }
       >
-        {fileMissing ? (
-          <AlertTriangle size={11} className="shrink-0 opacity-70" />
-        ) : isImage ? (
+        {!fileMissing && (isImage ? (
           <ImageOff size={11} className="shrink-0 opacity-70" />
         ) : isDocument ? (
           <FileText size={11} className="shrink-0 opacity-70" />
         ) : (
           <FileCode size={11} className="shrink-0 opacity-70" />
-        )}
+        ))}
         <span className="ai-file-chip__label min-w-0 whitespace-normal break-all text-left">
           {originalPath}
           {lineSuffix && (

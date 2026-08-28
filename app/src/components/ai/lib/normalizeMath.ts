@@ -20,7 +20,9 @@ const INLINE = /\\\(([\s\S]+?)\\\)/g;
 const CURRENCY = /(?<![\\$])\$(?=\d)/g;
 
 // Opaque placeholder token (private-use char) to mask code spans during rewrite.
-const MARK = '';
+// Written as fromCharCode so the invisible char can never be silently stripped
+// by an editor (that exact accident once broke protectWindowsPaths).
+const MARK = String.fromCharCode(0xE000);
 
 /** Replace `\( … \)` and `\[ … \]` with `$ … $` / `$$ … $$`, and escape currency. */
 export function normalizeMath(md: string): string {

@@ -89,6 +89,37 @@ describe('stripMemoryWrites', () => {
   });
 });
 
+describe('tolerant MEMORY sentinel matching', () => {
+  // Models fumble the exact delimiter (missing `>`, extra `>`, inner whitespace).
+  // A strict indexOf misses those, leaking raw protocol JSON into the bubble —
+  // the same failure mode core/interaction.ts already hardened against.
+  const cases: Array<[string, string]> = [
+    ['single >', '<<UGS_MEMORY>'],
+    ['triple >', '<<UGS_MEMORY>>>'],
+    ['inner spaces', '<< UGS_MEMORY >>'],
+  ];
+
+  for (const [name, open] of cases) {
+    it(`parses a block with a ${name} open sentinel`, () => {
+      const text = `前言。\n\n${open}\n{"target":"user","operations":[{"action":"add","content":"偏好 Unity"}]}\n<<UGS_MEMORY_END>>`;
+      expect(parseMemoryWrites(text)).toHaveLength(1);
+    });
+
+    it(`strips a block with a ${name} open sentinel`, () => {
+      const text = `前言。\n\n${open}\n{"target":"user","operations":[{"action":"add","content":"x"}]}\n<<UGS_MEMORY_END>>\n后语。`;
+      const out = stripMemoryWrites(text);
+      expect(out).toContain('前言。');
+      expect(out).toContain('后语。');
+      expect(out).not.toContain('UGS_MEMORY');
+    });
+  }
+
+  it('tolerates a fumbled close sentinel', () => {
+    const text = `前言。\n\n<<UGS_MEMORY>>\n{"target":"memory","action":"add","content":"x"}\n<<UGS_MEMORY_END>`;
+    expect(stripMemoryWrites(text)).toBe('前言。');
+  });
+});
+
 describe('MEMORY_WRITE_INSTRUCTION', () => {
   it('starts with a blank-line separator and names both targets', () => {
     expect(MEMORY_WRITE_INSTRUCTION.startsWith('\n\n')).toBe(true);

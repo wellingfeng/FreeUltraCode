@@ -10,6 +10,7 @@ import {
   workflowSessionKeyId,
   workflowDeleteProtectionReason,
   workflowReadOnlyReason,
+  composerDraftPatchForSessionFromRecord,
   type WorkflowSessionKey,
 } from './useStore';
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
@@ -782,6 +783,74 @@ describe('workflow read-only guard', () => {
     useStore.getState().selectSession('s_b');
 
     expect(useStore.getState().composerDraft).toBe('draft for B');
+  });
+
+  it('restores a persisted draft for the same active session on bootstrap', () => {
+    const sessionKey: WorkflowSessionKey = {
+      workspaceId: 'ws_1',
+      sessionId: 's_a',
+    };
+    const patch = composerDraftPatchForSessionFromRecord(
+      {
+        activeWorkspaceId: 'ws_1',
+        activeSessionId: 's_a',
+        composerDraft: '',
+        composerDrafts: {},
+      },
+      sessionKey,
+      { composerDraft: 'persisted hello' },
+    );
+    expect(patch.composerDraft).toBe('persisted hello');
+    expect(patch.composerDrafts[workflowSessionKeyId(sessionKey)]).toBe(
+      'persisted hello',
+    );
+  });
+
+  it('restores a persisted draft when switching to a different session', () => {
+    const target: WorkflowSessionKey = {
+      workspaceId: 'ws_1',
+      sessionId: 's_b',
+    };
+    const patch = composerDraftPatchForSessionFromRecord(
+      {
+        activeWorkspaceId: 'ws_1',
+        activeSessionId: 's_a',
+        composerDraft: 'draft for A',
+        composerDrafts: {},
+      },
+      target,
+      { composerDraft: 'persisted B' },
+    );
+    expect(patch.composerDraft).toBe('persisted B');
+    expect(patch.composerDrafts[workflowSessionKeyId(target)]).toBe(
+      'persisted B',
+    );
+    // The outgoing session's in-memory draft is still flushed.
+    expect(
+      patch.composerDrafts[
+        workflowSessionKeyId({ workspaceId: 'ws_1', sessionId: 's_a' })
+      ],
+    ).toBe('draft for A');
+  });
+
+  it('prefers an in-memory draft over the persisted value', () => {
+    const target: WorkflowSessionKey = {
+      workspaceId: 'ws_1',
+      sessionId: 's_b',
+    };
+    const patch = composerDraftPatchForSessionFromRecord(
+      {
+        activeWorkspaceId: 'ws_1',
+        activeSessionId: 's_a',
+        composerDraft: '',
+        composerDrafts: {
+          [workflowSessionKeyId(target)]: 'fresher in-memory',
+        },
+      },
+      target,
+      { composerDraft: 'stale persisted' },
+    );
+    expect(patch.composerDraft).toBe('fresher in-memory');
   });
 
   it('keeps composer controls scoped to each session', () => {

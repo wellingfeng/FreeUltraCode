@@ -288,4 +288,66 @@ describe('AIDock per-session scroll persistence', () => {
       await cleanup();
     }
   });
+
+  it('persists the background-grown message window so switch-back restores the true bottom', async () => {
+    // Regression for the "scrolled to bottom, switched away and back, scrollbar
+    // no longer at bottom" bug. Switching back used to reset the lazy message
+    // window to INITIAL_MESSAGE_WINDOW (5), so the restore first pinned against
+    // a truncated 5-message tail and then had to re-anchor while the window
+    // re-expanded in the background — a fragile two-step path. Persisting the
+    // idle-grown window means the switch-back restore lands directly on the
+    // content the user actually scrolled.
+    //
+    // Note: jsdom cannot model the real-browser scrollHeight growth during the
+    // window re-expansion (the stubbed scroll metrics stay static), so the
+    // scroll position alone cannot catch this. The regression signal is the
+    // window size, observed via the "load earlier" hidden-message count: it
+    // must stay 20 (80 loaded) after switching back, not reset to 95 (5 loaded).
+    resetStore();
+    const longMessages = makeMessages('long', 100);
+    useStore.setState({ activeSessionId: 'session-long', messages: longMessages });
+    const { container, cleanup } = await renderDock();
+    try {
+      // Wait for the idle background growth to finish. jsdom has no
+      // requestIdleCallback, so scheduleIdleMessageWindow falls back to an 80ms
+      // setTimeout per page (5 -> 20 -> 35 -> 50 -> 65 -> 80 for 100 messages).
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      });
+
+      // Park the session at the absolute bottom.
+      const stream = getStream(container);
+      setScrollMetrics(stream, { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 });
+      await fireScroll(stream);
+      expect(stream.scrollTop).toBe(1500);
+
+      // After full growth the window is 80, leaving 20 hidden behind the
+      // "load earlier" button.
+      const loadEarlier = container.querySelector<HTMLElement>(
+        '[data-ugs-load-earlier-messages="true"]',
+      );
+      expect(loadEarlier?.textContent ?? '').toContain('20');
+
+      // Switch away and back.
+      await act(async () => {
+        useStore.setState({ activeSessionId: 'session-b', messages: sessionBMessages });
+      });
+      await act(async () => {
+        useStore.setState({ activeSessionId: 'session-long', messages: longMessages });
+      });
+
+      // The restored scroll must stay at the bottom...
+      const streamBack = getStream(container);
+      expect(streamBack.scrollTop).toBe(1500);
+      // ...and the window must NOT have reset to INITIAL_MESSAGE_WINDOW (5),
+      // which would show 95 hidden and force the fragile re-anchor path.
+      const loadEarlierBack = container.querySelector<HTMLElement>(
+        '[data-ugs-load-earlier-messages="true"]',
+      );
+      expect(loadEarlierBack?.textContent ?? '').toContain('20');
+      expect(loadEarlierBack?.textContent ?? '').not.toContain('95');
+    } finally {
+      await cleanup();
+    }
+  });
 });

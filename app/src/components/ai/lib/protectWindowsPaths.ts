@@ -26,7 +26,10 @@ const INLINE_CODE = /`[^`\n]*`/g;
 const WIN_PATH = /(?:[A-Za-z]:\\|\\\\)[^\s"'`<>|?*\r\n]*/g;
 
 // Opaque placeholder (private-use char) to mask code spans during the rewrite.
-const MARK = '';
+// Written as fromCharCode: a literal \uE000 is invisible and once got stripped
+// to '' by an editor, which made the restore regex match bare digits in prose
+// and swap stashed code spans into them.
+const MARK = String.fromCharCode(0xE000);
 
 /**
  * Double the backslashes in Windows-style path tokens so CommonMark's

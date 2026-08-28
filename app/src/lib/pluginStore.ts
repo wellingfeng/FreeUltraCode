@@ -573,6 +573,25 @@ export function parseSkillFrontmatter(
   };
 }
 
+async function httpErrorMessage(response: Response): Promise<string> {
+  let detail = '';
+  try {
+    const text = await response.text();
+    if (text) {
+      try {
+        const parsed = JSON.parse(text) as { message?: string; error?: string };
+        detail = parsed.message || parsed.error || text.slice(0, 240);
+      } catch {
+        detail = text.slice(0, 240);
+      }
+    }
+  } catch {
+    // 读取响应体失败时退化为状态码文案
+  }
+  const base = `${response.status} ${response.statusText}`;
+  return detail ? `${base} — ${detail}` : base;
+}
+
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, {
     signal,
@@ -580,7 +599,7 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    throw new Error(await httpErrorMessage(response));
   }
   return (await response.json()) as T;
 }
@@ -593,7 +612,7 @@ function isLobeHubAuthRequiredError(err: unknown): boolean {
 async function fetchText(url: string, signal?: AbortSignal): Promise<string> {
   const response = await fetch(url, { signal, cache: 'no-store' });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    throw new Error(await httpErrorMessage(response));
   }
   return response.text();
 }

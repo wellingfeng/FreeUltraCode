@@ -11,6 +11,8 @@
  * Pure + synchronous so it can run on every render of the streaming bubble.
  */
 
+import { hasBoxDrawing, isAsciiTableSep, isAsciiTableRow } from './asciiArt';
+
 const FENCE_LINE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const MARKDOWN_WRAPPER_INFO = /^(?:markdown|md|mdx)$/i;
 const MERMAID_FENCE_INFO = /^(?:mermaid|mmd)$/i;
@@ -160,7 +162,26 @@ function lastNonEmptyLine(lines: string[]): number {
  * the outer close, fragmenting the stream into random code blocks/lists. When
  * the wrapper is the whole message (or follows only route/timing chrome), remove
  * that wrapper and render the intended Markdown body.
+ *
+ * 也识别「整段塞进 ```markdown 但 body 是裸 HTML/SVG」的情况：模型常把
+ * <!DOCTYPE html> / <svg ...> 直接当 markdown 包一层 ```markdown，body 内
+ * 不再用嵌套 fence，此时 unwrap 必须依旧生效，否则整段被原样透成纯文本。
  */
+const HTML_HEAVY_LINE = /^\s*<(?:!doctype\b|html\b|head\b|body\b|style\b|script\b|svg\b|\/?[a-z][a-z0-9-]*(?:\s|>|\/))/iu;
+
+function looksLikeHtmlDocumentBody(lines: string[]): boolean {
+  let htmlLines = 0;
+  let nonEmpty = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    nonEmpty += 1;
+    if (HTML_HEAVY_LINE.test(line)) htmlLines += 1;
+  }
+  if (nonEmpty === 0) return false;
+  // body 中超过 40% 的非空行是 HTML 标签开头，且至少 3 行：当作 HTML/SVG 文档。
+  return htmlLines >= 3 && htmlLines / nonEmpty >= 0.4;
+}
+
 export function unwrapMarkdownWrapper(md: string): string {
   const lines = md.split('\n');
   const first = lines.findIndex((line) => {
@@ -180,8 +201,70 @@ export function unwrapMarkdownWrapper(md: string): string {
   if (last <= first || !isFenceClose(lines[last], open)) return md;
 
   const body = lines.slice(first + 1, last);
-  if (!body.some(isFenceLine)) return md;
-  return [...prefix, ...body, ...lines.slice(last + 1)].join('\n');
+  // 旧规则：body 里至少得有一个嵌套 fence 才解包，避免误吃 prose。
+  // 新规则：body 是高浓度 HTML/SVG 文档（模型把整段网页当 markdown 包）也解包，
+  // 并把解包后的裸 HTML/SVG 包成 ```html / ```svg 围栏，让 rehype-highlight 接管。
+  if (body.some(isFenceLine)) {
+    return [...prefix, ...body, ...lines.slice(last + 1)].join('\n');
+  }
+  if (looksLikeHtmlDocumentBody(body)) {
+    const joined = body.join('\n');
+    // <svg 优先于 <!doctype/html：模型常只发一段 SVG 而非整页 HTML。
+    const isSvg = /^\s*<svg\b/imu.test(joined) || (/<svg\b/iu.test(joined) && !/<!doctype\b|<html\b/iu.test(joined));
+    const fenced = [isSvg ? '```svg' : '```html', ...body, '```'];
+    return [...prefix, ...fenced, ...lines.slice(last + 1)].join('\n');
+  }
+  return md;
+}
+
+const SVG_ELEMENT =
+  /<(?:a|circle|clipPath|defs|ellipse|filter|g|image|line|linearGradient|marker|mask|path|pattern|polygon|polyline|radialGradient|rect|symbol|text|use)\b/i;
+
+function looksLikeSvgDocument(block: string): boolean {
+  return SVG_ELEMENT.test(block);
+}
+
+/**
+ * 模型有时直接输出一段裸 `<svg>…</svg>`（既没包 ```svg，也没套
+ * ```markdown 外壳）。react-markdown 不启 rehype-raw，裸 SVG 会被当作
+ * raw HTML 文本原样显示成源码，用户看到的就是“没解析”。这里把裸 SVG 块
+ * 包成 ```svg 围栏，交给 SvgBlock 渲染成图。
+ *
+ * 用跨行正则匹配 `<svg … </svg>`，`<svg` 前面允许有同行说明文字（如
+ * “示意图如下：<svg …”），不再要求 `<svg` 在行首。已有 ```svg 围栏和
+ * inline code 先被占位掩蔽，不会被二次包裹；只处理已闭合的块，半截流式
+ * 输出保持原样；不含任何 SVG 子元素的行内提及（如“用 `<svg>` 标签”）不
+ * 围栏化。围栏前后按需补换行，保证 CommonMark 能在行首识别 fence。
+ */
+export function fenceBareSvgBlocks(md: string): string {
+  if (!/<svg\b/i.test(md)) return md;
+
+  const MARK = String.fromCharCode(0xE000);
+  const stash: string[] = [];
+  const mask = (s: string): string => {
+    stash.push(s);
+    return `${MARK}${stash.length - 1}${MARK}`;
+  };
+
+  let work = md
+    .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, mask)
+    .replace(/`[^`\n]*`/g, mask);
+
+  const SVG_BLOCK = /<svg\b[\s\S]*?<\/svg\s*>/gi;
+  work = work.replace(SVG_BLOCK, (block: string, offset: number, whole: string) => {
+    if (!looksLikeSvgDocument(block)) return block;
+    const lead = offset === 0 || whole[offset - 1] === '\n' ? '' : '\n';
+    const rest = whole.slice(offset + block.length);
+    const trail = rest === '' || rest.startsWith('\n') ? '' : '\n';
+    return mask(lead + '```svg\n' + block.trim() + '\n```' + trail);
+  });
+
+  work = work.replace(
+    new RegExp(`${MARK}(\\d+)${MARK}`, 'g'),
+    (_m, i: string) => stash[Number(i)] ?? _m,
+  );
+
+  return work;
 }
 
 function isLooseDiffLine(line: string): boolean {
@@ -264,8 +347,115 @@ export function fenceLooseDiffBlocks(md: string): string {
   return out.join('\n');
 }
 
+/**
+ * 模型经常用框线字符（├── └── ┌─┐ 等）画目录树/流程图，却不包 ``` 围栏。
+ * CommonMark 把它们当普通段落，HTML 会折叠连续空格导致对齐错乱。这里把
+ * 连续 ≥2 行的框线艺术自动包成 ```text 围栏，交给等宽文本块渲染。
+ * 已在围栏内的内容原样保留，避免二次包裹破坏结构。
+ */
+export function fenceAsciiArtBlocks(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let openFence: FenceToken | null = null;
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const token = fenceToken(line);
+
+    if (openFence) {
+      out.push(line);
+      if (isFenceClose(line, openFence)) openFence = null;
+      i += 1;
+      continue;
+    }
+    if (token) {
+      openFence = token;
+      out.push(line);
+      i += 1;
+      continue;
+    }
+
+    if (line.trim() !== '' && hasBoxDrawing(line)) {
+      const block: string[] = [];
+      let j = i;
+      while (j < lines.length && !isFenceLine(lines[j]) && hasBoxDrawing(lines[j])) {
+        block.push(lines[j]);
+        j += 1;
+      }
+      if (block.length >= 2) {
+        out.push('```text', ...block, '```');
+        i = j;
+        continue;
+      }
+    }
+
+    out.push(line);
+    i += 1;
+  }
+
+  return out.join('\n');
+}
+
+/**
+ * 模型常画 `+---+` 边框式 ASCII 表格而不包围栏。识别由分隔行 + 单元格行
+ * 交替组成的块（≥2 个分隔行、≥2 个单元格行），整体包成 ```text 围栏，交给
+ * CodeBlock 的 AsciiTableFromText 渲染为真正的 <table>。
+ */
+export function fenceAsciiTables(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let openFence: FenceToken | null = null;
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const token = fenceToken(line);
+
+    if (openFence) {
+      out.push(line);
+      if (isFenceClose(line, openFence)) openFence = null;
+      i += 1;
+      continue;
+    }
+    if (token) {
+      openFence = token;
+      out.push(line);
+      i += 1;
+      continue;
+    }
+
+    if (isAsciiTableSep(line)) {
+      const block: string[] = [];
+      let j = i;
+      while (j < lines.length && (isAsciiTableSep(lines[j]) || isAsciiTableRow(lines[j]))) {
+        block.push(lines[j]);
+        j += 1;
+      }
+      const sepCount = block.filter(isAsciiTableSep).length;
+      const rowCount = block.filter(isAsciiTableRow).length;
+      if (sepCount >= 2 && rowCount >= 2) {
+        out.push('```text', ...block, '```');
+        i = j;
+        continue;
+      }
+    }
+
+    out.push(line);
+    i += 1;
+  }
+
+  return out.join('\n');
+}
+
 function normalizeMarkdownContainers(md: string): string {
-  return fenceLooseDiffBlocks(unwrapMarkdownWrapper(normalizeFenceLineBreaks(md)));
+  return fenceAsciiTables(
+    fenceAsciiArtBlocks(
+      fenceLooseDiffBlocks(
+        fenceBareSvgBlocks(unwrapMarkdownWrapper(normalizeFenceLineBreaks(md))),
+      ),
+    ),
+  );
 }
 
 function danglingFenceClose(md: string): string | null {

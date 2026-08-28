@@ -60,6 +60,7 @@ const MANAGED_SETTINGS: ReadonlyArray<
     "ultragamestudio.memoryReviewState.v1",
   ],
   ["settings/cacheCleanup.v1.json", "ultragamestudio.cacheCleanup.v1"],
+  ["settings/autosave.v1.json", "ultragamestudio.autosave.v1"],
   ["settings/knowledgeBase.v1.json", "ultragamestudio.knowledgeBase.v1"],
 ];
 

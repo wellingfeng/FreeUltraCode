@@ -234,6 +234,7 @@ import {
   cleanMessageText,
   renderMessageText,
   routeLabelFromText,
+  timingLineFromText,
 } from "@/components/ai/lib/messageText";
 import { translatePublicText } from "@/lib/publicTranslation";
 import { captureConversation } from "@/lib/sessionScreenshot";
@@ -1209,6 +1210,37 @@ function providerSelection(provider: Provider, modelOverride?: string) {
   };
 }
 
+/**
+ * The pinned provider's real model when the stored modelClass is only a bare
+ * Claude tier placeholder. With no modelOverride pinned, runtime resolution
+ * (resolveChannelModel) uses the channel's configured model — or a per-tier
+ * map entry — so a bare "sonnet" written by older clamping logic would
+ * otherwise display a model the run never uses (e.g. "sonnet" on a kimi-k3
+ * channel). A tier that the channel's model list explicitly maps is a real
+ * pick and stays visible.
+ */
+function providerDisplayModel(
+  modelClass: string | undefined,
+  provider: Provider,
+): string {
+  const stored = modelClass?.trim();
+  const channelModel = (provider.model ?? "").trim();
+  const tierMapped =
+    !!stored &&
+    (provider.models ?? []).some(
+      (model) => model.trim().toLowerCase() === stored.toLowerCase(),
+    );
+  if (
+    stored &&
+    channelModel &&
+    !tierMapped &&
+    ["sonnet", "opus", "haiku"].includes(stored.toLowerCase())
+  ) {
+    return channelModel;
+  }
+  return stored || channelModel || "default";
+}
+
 function remoteAdapterToRuntimeAdapter(adapter: unknown): RuntimeAdapterId {
   if (adapter === "codex") return "codex";
   if (adapter === "gemini") return "gemini";
@@ -1356,6 +1388,7 @@ function InteractionWidget({
   active,
   onAnswer,
   onDismiss,
+  onDraftChange,
   workspaceCwd,
   remoteRootPath,
 }: {
@@ -1364,13 +1397,46 @@ function InteractionWidget({
   active: boolean;
   onAnswer: (answer: InteractionAnswer) => void;
   onDismiss: () => void;
+  onDraftChange: (draft: { values?: string[]; text?: string }) => void;
   workspaceCwd?: string;
   remoteRootPath?: string;
 }) {
   const req = message.interaction;
   const status = message.interactionStatus ?? "pending";
-  const [selected, setSelected] = useState<string[]>([]);
-  const [text, setText] = useState("");
+  const [selected, setSelectedState] = useState<string[]>(
+    () => message.interactionDraft?.values ?? [],
+  );
+  const [text, setTextState] = useState(
+    () => message.interactionDraft?.text ?? "",
+  );
+  // Keep the draft on the message so a session switch (which unmounts this
+  // widget) doesn't lose what the user already typed/selected.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const textRef = useRef(text);
+  textRef.current = text;
+  const setSelected = useCallback(
+    (updater: (cur: string[]) => string[]) => {
+      setSelectedState((cur) => {
+        const next = updater(cur);
+        selectedRef.current = next;
+        onDraftChange({ values: next, text: textRef.current });
+        return next;
+      });
+    },
+    [onDraftChange],
+  );
+  const setText = useCallback(
+    (updater: string | ((cur: string) => string)) => {
+      setTextState((cur) => {
+        const next = typeof updater === "function" ? updater(cur) : updater;
+        textRef.current = next;
+        onDraftChange({ values: selectedRef.current, text: next });
+        return next;
+      });
+    },
+    [onDraftChange],
+  );
 
   if (!req) return null;
 
@@ -1905,6 +1971,7 @@ export default function AIDock({
   });
   const answerInteraction = useStore((s) => s.answerInteraction);
   const dismissInteraction = useStore((s) => s.dismissInteraction);
+  const setInteractionDraft = useStore((s) => s.setInteractionDraft);
   const streamRef = useRef<HTMLDivElement>(null);
   // 中间信息流：滚动条默认隐藏，仅滚动或光标靠近右缘（分割线一侧）时显示。
   useEffect(() => {
@@ -3410,9 +3477,10 @@ export default function AIDock({
           : getFreeChannelModel(selectedFreeChannel.id) || "default"))
     : selectedDefaultProvider
       ? (runSelection.modelOverride ??
-        (runSelection.modelClass ||
-          (selectedDefaultProvider.provider.model ?? "").trim() ||
-          "default"))
+        providerDisplayModel(
+          runSelection.modelClass,
+          selectedDefaultProvider.provider,
+        ))
       : runSelection.modelClass || "default";
   const [keyModalChannel, setKeyModalChannel] = useState<FreeChannel | null>(
     null,
@@ -4168,6 +4236,15 @@ export default function AIDock({
     }
     return null;
   }, [messages]);
+  // The leading `⏱ …` line of the latest assistant turn, hoisted out of the
+  // bubble so it can sit at the very bottom of the stream. It tracks the turn's
+  // live clock because the streaming path keeps rewriting that line in the
+  // message text while the turn is running.
+  const lastAssistantTiming = useMemo(() => {
+    if (!lastAssistantId) return "";
+    const message = messages.find((m) => m.id === lastAssistantId);
+    return message ? timingLineFromText(message.text) : "";
+  }, [lastAssistantId, messages]);
   // The tail of the list is what's visible at the bottom on session switch, so
   // those messages render their (expensive) markdown eagerly to keep the initial
   // view correct and scroll-to-bottom precise. Everything above upgrades lazily
@@ -4695,7 +4772,15 @@ export default function AIDock({
       growMessageWindow({
         targetSize,
         pageSize: BACKGROUND_MESSAGE_WINDOW_PAGE,
-        persist: false,
+        // Persist the idle-grown window per session. Otherwise switching back
+        // to a session resets the window to INITIAL_MESSAGE_WINDOW, so the
+        // scroll restore first anchors against a truncated tail and then has
+        // to re-anchor while `growMessageWindow` re-expands it in the
+        // background — a fragile two-step path that can leave the restored
+        // bottom position short of the real bottom in a real browser. Keeping
+        // the grown window means the switch-back restore lands directly on the
+        // same content the user actually scrolled.
+        persist: true,
       });
     });
   }, [
@@ -8044,6 +8129,9 @@ export default function AIDock({
                             handleInteractionAnswer(m, answer)
                           }
                           onDismiss={() => handleInteractionDismiss(m)}
+                          onDraftChange={(draft) =>
+                            setInteractionDraft(m.id, draft)
+                          }
                         />
                       ) : editingQueuedMessage ? (
                         <div className="ai-stream-user-bubble flex w-[min(100%,46rem)] max-w-[96%] flex-col gap-2 rounded-md px-3 py-2.5 text-left">
@@ -8181,6 +8269,13 @@ export default function AIDock({
                     </li>
                   );
                 })}
+                {lastAssistantTiming && (
+                  <li className="flex justify-center pt-1">
+                    <span className="rounded-full border border-border bg-panel-2 px-3 py-1 font-mono text-[11px] leading-4 text-fg-dim tabular-nums">
+                      {lastAssistantTiming}
+                    </span>
+                  </li>
+                )}
               </ul>
             )}
           </div>

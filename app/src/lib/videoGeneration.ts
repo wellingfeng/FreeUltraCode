@@ -53,7 +53,7 @@ type VideoProviderApiKind =
   | 'huggingface-inference'
   | 'generic-local-video';
 
-export type CustomVideoProviderApiKind = 'generic-online-video' | 'generic-local-video';
+export type CustomVideoProviderApiKind = VideoProviderApiKind;
 
 export interface VideoProviderDefinition {
   id: VideoProviderId;
@@ -101,6 +101,8 @@ export interface VideoGenerationSettings {
   providerBaseUrls: Partial<Record<VideoProviderId, string>>;
   providerModels: Partial<Record<VideoProviderId, string>>;
   providerModelLists: Partial<Record<VideoProviderId, string[]>>;
+  /** 内置渠道显示名覆盖，用于卡片内联重命名内置渠道。 */
+  providerLabels: Partial<Record<VideoProviderId, string>>;
 }
 
 export interface VideoGenerationResult {
@@ -603,6 +605,7 @@ export const DEFAULT_VIDEO_GENERATION_SETTINGS: VideoGenerationSettings = {
   providerBaseUrls: {},
   providerModels: {},
   providerModelLists: {},
+  providerLabels: {},
 };
 
 function isKnownVideoProviderId(
@@ -686,6 +689,14 @@ function normalizeVideoModels(value: unknown, fallback: string): string[] {
   return out.length > 0 ? out : ['custom-video-model'];
 }
 
+const VIDEO_PROVIDER_API_KINDS = new Set<string>(
+  VIDEO_PROVIDERS.map((provider) => provider.apiKind),
+);
+
+function isVideoProviderApiKind(value: unknown): value is VideoProviderApiKind {
+  return typeof value === 'string' && VIDEO_PROVIDER_API_KINDS.has(value);
+}
+
 function normalizeCustomVideoProvider(
   value: unknown,
   index: number,
@@ -706,8 +717,9 @@ function normalizeCustomVideoProvider(
     suffix += 1;
   }
   usedIds.add(id);
-  const apiKind: CustomVideoProviderApiKind =
-    source.apiKind === 'generic-local-video' ? 'generic-local-video' : 'generic-online-video';
+  const apiKind: CustomVideoProviderApiKind = isVideoProviderApiKind(source.apiKind)
+    ? source.apiKind
+    : 'generic-online-video';
   const defaultModel =
     typeof source.defaultModel === 'string' && source.defaultModel.trim()
       ? source.defaultModel.trim()
@@ -764,8 +776,11 @@ function normalizeCustomVideoProviders(value: unknown): CustomVideoProviderDefin
 export function videoProviders(
   settings = loadVideoGenerationSettings(),
 ): VideoProviderDefinition[] {
+  const labels = settings.providerLabels ?? {};
   return [
-    ...VIDEO_PROVIDERS,
+    ...VIDEO_PROVIDERS.map((provider) =>
+      labels[provider.id] ? { ...provider, label: labels[provider.id]! } : provider,
+    ),
     ...settings.customProviders.map(
       (provider): VideoProviderDefinition => ({ ...provider, custom: true }),
     ),
@@ -795,6 +810,7 @@ export function normalizeVideoGenerationSettings(value: unknown): VideoGeneratio
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
     providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
+    providerLabels: cleanRecord(source.providerLabels, validKey),
   };
 }
 
@@ -972,17 +988,17 @@ async function generateWithProvider(
 ): Promise<string[]> {
   switch (videoProviderById(providerId, settings).apiKind) {
     case 'google-veo':
-      return generateGoogleVeo(prompt, model, settings, targetDurationSeconds, signal);
+      return generateGoogleVeo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'runway':
-      return generateRunway(prompt, model, settings, targetDurationSeconds, signal);
+      return generateRunway(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'luma-ray':
-      return generateLumaRay(prompt, model, settings, targetDurationSeconds, signal);
+      return generateLumaRay(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'kling-ai':
-      return generateKling(prompt, model, settings, targetDurationSeconds, signal);
+      return generateKling(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'minimax-hailuo':
-      return generateMiniMaxVideo(prompt, model, settings, signal);
+      return generateMiniMaxVideo(providerId, prompt, model, settings, signal);
     case 'dashscope-wan':
-      return generateDashScopeWan(prompt, model, settings, targetDurationSeconds, signal);
+      return generateDashScopeWan(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'pika':
     case 'pixverse':
     case 'vidu':
@@ -991,11 +1007,11 @@ async function generateWithProvider(
     case 'generic-online-video':
       return generateGenericOnlineVideo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'bytedance-seedance':
-      return generateSeedanceVideo(prompt, model, settings, targetDurationSeconds, signal);
+      return generateSeedanceVideo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'replicate':
-      return generateReplicateVideo(prompt, model, settings, targetDurationSeconds, signal);
+      return generateReplicateVideo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'fal-ai':
-      return generateFalVideo(prompt, model, settings, targetDurationSeconds, signal);
+      return generateFalVideo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'huggingface-inference':
       return generateHuggingFaceVideo(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'generic-local-video':
@@ -1004,15 +1020,16 @@ async function generateWithProvider(
 }
 
 async function generateGoogleVeo(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('google-veo', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Google API key is missing.');
-  const baseUrl = videoProviderBaseUrl('google-veo', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(
     `${baseUrl}/models/${encodeURIComponent(model)}:predictLongRunning`,
     {
@@ -1053,15 +1070,16 @@ async function generateGoogleVeo(
 }
 
 async function generateRunway(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('runway', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Runway API key is missing.');
-  const baseUrl = videoProviderBaseUrl('runway', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1091,15 +1109,16 @@ async function generateRunway(
 }
 
 async function generateLumaRay(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('luma-ray', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Luma API key is missing.');
-  const baseUrl = videoProviderBaseUrl('luma-ray', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1128,15 +1147,16 @@ async function generateLumaRay(
 }
 
 async function generateKling(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('kling-ai', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Kling API token is missing.');
-  const baseUrl = videoProviderBaseUrl('kling-ai', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: apiKey.toLowerCase().startsWith('bearer ') ? apiKey : `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1165,14 +1185,15 @@ async function generateKling(
 }
 
 async function generateMiniMaxVideo(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('minimax-hailuo', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('MiniMax API key is missing.');
-  const baseUrl = videoProviderBaseUrl('minimax-hailuo', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1214,15 +1235,16 @@ async function generateMiniMaxVideo(
 }
 
 async function generateDashScopeWan(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('dashscope-wan', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('DashScope API key is missing.');
-  const baseUrl = videoProviderBaseUrl('dashscope-wan', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1257,15 +1279,16 @@ async function generateDashScopeWan(
 }
 
 async function generateSeedanceVideo(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('bytedance-seedance', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('火山方舟 API Key is missing.');
-  const baseUrl = videoProviderBaseUrl('bytedance-seedance', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1349,15 +1372,16 @@ async function generateGenericOnlineVideo(
 }
 
 async function generateReplicateVideo(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('replicate-video', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Replicate API token is missing.');
-  const baseUrl = videoProviderBaseUrl('replicate-video', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1389,16 +1413,17 @@ async function generateReplicateVideo(
 }
 
 async function generateFalVideo(
+  providerId: VideoProviderId,
   prompt: string,
   model: string,
   settings: VideoGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = videoProviderKey('fal-video', settings);
+  const apiKey = videoProviderKey(providerId, settings);
   if (!apiKey) throw new Error('fal API key is missing.');
   const modelPath = model.replace(/^\/+/, '');
-  const baseUrl = videoProviderBaseUrl('fal-video', settings);
+  const baseUrl = videoProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Key ${apiKey}`,
     'Content-Type': 'application/json',

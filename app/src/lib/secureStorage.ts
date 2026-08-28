@@ -128,6 +128,53 @@ function cacheSecret(secretName: string, value: string): void {
 }
 
 const pendingSecretWrites = new Set<Promise<void>>();
+const secretWriteChains = new Map<string, Promise<void>>();
+const secretWriteErrors = new Map<string, unknown>();
+const latestSecretWrites = new Map<string, string>();
+
+function queueSecretPersistence(
+  secretName: string,
+  value: string,
+): Promise<void> {
+  latestSecretWrites.set(secretName, value);
+  const active = secretWriteChains.get(secretName);
+  if (active) return active;
+
+  const task = (async () => {
+    while (latestSecretWrites.has(secretName)) {
+      const next = latestSecretWrites.get(secretName) ?? '';
+      latestSecretWrites.delete(secretName);
+      try {
+        if (next) await secureSecretSet(secretName, next);
+        else await secureSecretDelete(secretName);
+        secretWriteErrors.delete(secretName);
+      } catch (err) {
+        secretWriteErrors.set(secretName, err);
+      }
+    }
+    const error = secretWriteErrors.get(secretName);
+    if (error) throw error;
+  })();
+  secretWriteChains.set(secretName, task);
+  pendingSecretWrites.add(task);
+  const finalize = () => {
+    pendingSecretWrites.delete(task);
+    if (secretWriteChains.get(secretName) === task) {
+      secretWriteChains.delete(secretName);
+    }
+    if (latestSecretWrites.has(secretName)) {
+      void queueSecretPersistence(
+        secretName,
+        latestSecretWrites.get(secretName) ?? '',
+      ).catch(() => undefined);
+    }
+  };
+  void task.then(finalize, (error) => {
+    finalize();
+    console.warn('[secureStorage] failed to persist secret', secretName, error);
+  });
+  return task;
+}
 
 async function persistSecretNow(
   secretName: string,
@@ -135,20 +182,13 @@ async function persistSecretNow(
 ): Promise<void> {
   cacheSecret(secretName, value);
   if (!secureStorageAvailable()) return;
-  if (value) await secureSecretSet(secretName, value);
-  else await secureSecretDelete(secretName);
+  await queueSecretPersistence(secretName, value);
 }
 
 function persistSecretSoon(secretName: string, value: string): void {
   cacheSecret(secretName, value);
   if (!secureStorageAvailable()) return;
-  const task = (
-    value ? secureSecretSet(secretName, value) : secureSecretDelete(secretName)
-  ).catch((err) => {
-    console.warn("[secureStorage] failed to persist secret", secretName, err);
-  });
-  pendingSecretWrites.add(task);
-  void task.finally(() => pendingSecretWrites.delete(task));
+  void queueSecretPersistence(secretName, value).catch(() => undefined);
 }
 
 /**
@@ -158,9 +198,16 @@ function persistSecretSoon(secretName: string, value: string): void {
  */
 export async function flushSecureStorage(): Promise<void> {
   if (!secureStorageAvailable()) return;
-  const inFlight = [...pendingSecretWrites];
-  if (inFlight.length === 0) return;
-  await Promise.all(inFlight);
+  while (pendingSecretWrites.size > 0) {
+    await Promise.allSettled([...pendingSecretWrites]);
+  }
+  if (secretWriteErrors.size > 0) {
+    const [secretName, error] = secretWriteErrors.entries().next().value as [
+      string,
+      unknown,
+    ];
+    throw new Error(`安全存储写入失败 (${secretName}): ${String(error)}`);
+  }
 }
 
 /**
@@ -174,7 +221,7 @@ export async function writeSecureRecordAwaited(
 ): Promise<void> {
   const next = serializeRecord(record);
   const prev = memorySecrets.get(secretName) ?? "";
-  if (next === prev) return;
+  if (next === prev && !secretWriteErrors.has(secretName)) return;
   await persistSecretNow(secretName, next);
 }
 
@@ -192,7 +239,7 @@ export function writeSecureRecord(
 ): boolean {
   const next = serializeRecord(record);
   const prev = memorySecrets.get(secretName) ?? "";
-  if (next === prev) return false;
+  if (next === prev && !secretWriteErrors.has(secretName)) return false;
   persistSecretSoon(secretName, next);
   return true;
 }
@@ -216,7 +263,7 @@ export function readSecureSecret(secretName: string): string {
 export function writeSecureSecret(secretName: string, value: string): boolean {
   const next = value.trim();
   const prev = memorySecrets.get(secretName) ?? "";
-  if (next === prev) return false;
+  if (next === prev && !secretWriteErrors.has(secretName)) return false;
   persistSecretSoon(secretName, next);
   return true;
 }
@@ -510,6 +557,9 @@ export function flushSecretsToLocalStorageFallback(): void {
 export function resetSecureStorageForTests(): void {
   memorySecrets.clear();
   pendingSecretWrites.clear();
+  secretWriteChains.clear();
+  secretWriteErrors.clear();
+  latestSecretWrites.clear();
   initialized = false;
   secureReady = false;
 }

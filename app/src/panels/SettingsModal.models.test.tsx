@@ -9,10 +9,35 @@ import {
 } from '@/lib/apiConfig';
 import { ACTIVE_GATEWAY_SELECTION_STORAGE } from '@/lib/gatewayConfig';
 import { workflowDefaultGatewaySelection } from '@/lib/modelGateway/resolver';
+import { installQuitFlushHandler } from '@/lib/quitFlush';
 import { remoteProviderId } from '@/lib/remoteWorkspace';
 import { defaultComposer } from '@/store/sampleSessions';
 import { useStore } from '@/store/useStore';
 import SettingsModal from './SettingsModal';
+
+const tauriEventMocks = vi.hoisted(() => ({
+  listen: vi.fn(async (event: string, handler: () => void) => {
+    void event;
+    void handler;
+    return () => undefined;
+  }),
+}));
+
+const tauriMocks = vi.hoisted(() => ({
+  isTauri: vi.fn(() => true),
+}));
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: tauriEventMocks.listen,
+}));
+
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>();
+  return {
+    ...actual,
+    isTauri: tauriMocks.isTauri,
+  };
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -177,6 +202,7 @@ afterEach(() => {
   window.localStorage.clear();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
+  tauriMocks.isTauri.mockReturnValue(true);
 });
 
 describe('SettingsModal programming model selection', () => {
@@ -444,6 +470,162 @@ describe('SettingsModal programming model selection', () => {
     expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
       'sk-new-value',
     );
+  });
+
+  it('persists a DeepSeek Harness API key immediately on input', async () => {
+    const provider: Provider = {
+      id: 'provider-deepseek-immediate',
+      kind: 'deepseek-harness',
+      name: 'MyDeepSeekHarness',
+      apiKey: '',
+      baseUrl: 'https://api.deepseek.com',
+      transport: 'cli',
+      model: 'deepseek-v4-pro',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ 'deepseek-harness': provider.id }),
+    );
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+      const keyInput = view.container.querySelector<HTMLInputElement>(
+        'input[type="password"]',
+      );
+      expect(keyInput).toBeInstanceOf(HTMLInputElement);
+
+      await setInputValue(keyInput!, 'sk-deepseek-immediate');
+
+      const storedProviders = JSON.parse(
+        window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+      ) as Provider[];
+      expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
+        'sk-deepseek-immediate',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps an immediate API key edit durable before the tray quit flush', async () => {
+    const provider: Provider = {
+      id: 'provider-tray-quit',
+      kind: 'zcode',
+      name: 'ZCode/GLM',
+      apiKey: 'sk-old',
+      baseUrl: 'https://ai-gateway.example.com',
+      model: 'glm-5.3',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ zcode: provider.id }),
+    );
+
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+      const keyInput = view.container.querySelector<HTMLInputElement>(
+        'input[type="password"]',
+      );
+      expect(keyInput).toBeInstanceOf(HTMLInputElement);
+      await setInputValue(keyInput!, 'sk-tray-new');
+
+      const storedProviders = JSON.parse(
+        window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+      ) as Provider[];
+      expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
+        'sk-tray-new',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps an immediate API key edit durable on beforeunload', async () => {
+    const provider: Provider = {
+      id: 'provider-beforeunload',
+      kind: 'zcode',
+      name: 'ZCode/GLM',
+      apiKey: 'sk-old',
+      baseUrl: 'https://ai-gateway.example.com',
+      model: 'glm-5.3',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ zcode: provider.id }),
+    );
+
+    await installQuitFlushHandler();
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+      const keyInput = view.container.querySelector<HTMLInputElement>(
+        'input[type="password"]',
+      );
+      expect(keyInput).toBeInstanceOf(HTMLInputElement);
+      await setInputValue(keyInput!, 'sk-beforeunload-new');
+
+      window.dispatchEvent(new Event('beforeunload'));
+
+      const storedProviders = JSON.parse(
+        window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+      ) as Provider[];
+      expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
+        'sk-beforeunload-new',
+      );
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('keeps an immediate API key edit durable when the tray quit event fires', async () => {
+    const provider: Provider = {
+      id: 'provider-tray-event',
+      kind: 'zcode',
+      name: 'ZCode/GLM',
+      apiKey: 'sk-old',
+      baseUrl: 'https://ai-gateway.example.com',
+      model: 'glm-5.3',
+    };
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify([provider]));
+    window.localStorage.setItem(
+      ACTIVE_PROVIDER_BY_KIND_STORAGE,
+      JSON.stringify({ zcode: provider.id }),
+    );
+
+    await installQuitFlushHandler();
+    const view = await renderSettingsModal();
+
+    try {
+      await clickButtonByText(view.container, '编程渠道');
+      const keyInput = view.container.querySelector<HTMLInputElement>(
+        'input[type="password"]',
+      );
+      expect(keyInput).toBeInstanceOf(HTMLInputElement);
+      await setInputValue(keyInput!, 'sk-tray-event-new');
+
+      const listener = tauriEventMocks.listen.mock.calls.find(
+        ([event]) => event === 'ugs:before-quit',
+      )?.[1] as (() => void) | undefined;
+      expect(listener).toBeTypeOf('function');
+      listener?.();
+
+      const storedProviders = JSON.parse(
+        window.localStorage.getItem(PROVIDERS_STORAGE) ?? '[]',
+      ) as Provider[];
+      expect(storedProviders.find((p) => p.id === provider.id)?.apiKey).toBe(
+        'sk-tray-event-new',
+      );
+    } finally {
+      await view.cleanup();
+    }
   });
 
   it('switches the Settings default channel while a workflow is running without rebinding the active session', async () => {

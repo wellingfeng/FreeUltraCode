@@ -508,6 +508,15 @@ export interface StoreState {
    * quietly; the AI editor proceeds with what it has. See core/interaction.ts.
    */
   dismissInteraction: (messageId: string) => void;
+  /**
+   * Persist the widget's in-progress draft (typed text / toggled options) onto
+   * the message so it survives session switches. Pass an empty object (or omit
+   * fields) to clear. No-op once the interaction is no longer pending.
+   */
+  setInteractionDraft: (
+    messageId: string,
+    draft: { values?: string[]; text?: string },
+  ) => void;
   setComposer: (patch: Partial<ComposerSettings>) => void;
   /**
    * If the active session was started in "worktree" mode and has not begun yet

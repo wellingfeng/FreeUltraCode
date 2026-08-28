@@ -105,7 +105,7 @@ describe('StatusBar', () => {
       },
     ]);
     recordModelUsageForRoute(
-      { providerName: 'KuroAI', model: 'gpt-5.5' },
+      { providerName: 'RelayAI', model: 'gpt-5.5' },
       {
         inputTokens: 80_000,
         outputTokens: 1_000,

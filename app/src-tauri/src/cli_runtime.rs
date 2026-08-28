@@ -435,6 +435,58 @@ pub fn resolve_zcode_node_entry(zcode_binary: &str) -> Option<PathBuf> {
     entry.is_file().then_some(entry)
 }
 
+/// zcode (`zcode-app-cli`) exposes a real-time token stream through the bundled
+/// runtime's `app-server` subcommand (`node <pkg>/vendor/zcode.cjs app-server`),
+/// a newline-delimited JSON-RPC 2.0 stdio server (`session/create` →
+/// `session/subscribe` → `session/send` → `session/event` deltas). The npm
+/// launcher (`bin/zcode.js`) would only re-spawn that same runtime with one
+/// extra process layer (and its own TUI/config setup), so the protocol agent
+/// points `node` straight at the vendor bundle. Returns `None` when the
+/// expected npm layout is missing so the caller can fall back to the
+/// historical `--prompt --json` one-shot path.
+pub fn resolve_zcode_runtime_entry(zcode_binary: &str) -> Option<PathBuf> {
+    let launcher = if looks_like_path(zcode_binary) {
+        let p = Path::new(zcode_binary);
+        p.exists().then(|| p.to_path_buf())?
+    } else {
+        resolve_command_path(zcode_binary)?
+    };
+    let dir = launcher.parent()?;
+    let entry = dir
+        .join("node_modules")
+        .join("zcode-app-cli")
+        .join("vendor")
+        .join("zcode.cjs");
+    entry.is_file().then_some(entry)
+}
+
+/// kimi-code (`@moonshot-ai/kimi-code`) ships as an npm `.cmd`/shell shim that
+/// runs `node <pkg>/dist/main.mjs`. Its headless prompt (`-p/--prompt`) is a
+/// single argv value, so launching via `cmd /C kimi.cmd -p "<task>"` caps the
+/// whole command line at cmd.exe's ~8191-char limit — the same trap as dsh and
+/// zcode. Spawning `dist/main.mjs` directly with `node` bypasses cmd.exe and
+/// raises the ceiling to the Windows CreateProcess limit (~32767 chars, ~4x).
+/// Returns `None` if the package layout isn't the expected npm shim so the
+/// caller can fall back to the historical `cmd /C` path.
+pub fn resolve_kimi_node_entry(kimi_binary: &str) -> Option<PathBuf> {
+    // Resolve the launcher to a concrete file (bare "kimi" -> full shim path).
+    let launcher = if looks_like_path(kimi_binary) {
+        let p = Path::new(kimi_binary);
+        p.exists().then(|| p.to_path_buf())?
+    } else {
+        resolve_command_path(kimi_binary)?
+    };
+    let dir = launcher.parent()?;
+    // Standard npm global/local layout: the shim sits next to `node_modules`.
+    let entry = dir
+        .join("node_modules")
+        .join("@moonshot-ai")
+        .join("kimi-code")
+        .join("dist")
+        .join("main.mjs");
+    entry.is_file().then_some(entry)
+}
+
 #[cfg(windows)]
 fn pathext_variants(command: &str) -> Vec<String> {
     let pathext = std::env::var_os("PATHEXT")

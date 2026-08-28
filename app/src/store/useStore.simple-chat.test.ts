@@ -1226,7 +1226,7 @@ describe('simple-workflow chat mode', () => {
         {
           id: providerId,
           kind: 'codex',
-          name: 'Codex Runner · KuroAI',
+          name: 'Codex Runner · RelayAI',
           apiKey: 'remote-runner',
           baseUrl: 'https://runner.test',
           transport: 'cli',
@@ -1337,7 +1337,7 @@ describe('simple-workflow chat mode', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    expect(useStore.getState().sendPrompt('测试 KuroAI 远程模型')).toBe(true);
+    expect(useStore.getState().sendPrompt('测试 RelayAI 远程模型')).toBe(true);
     await waitFor(
       () =>
         !useStore.getState().aiStreaming &&
@@ -3389,11 +3389,11 @@ describe('simple-workflow chat mode', () => {
     expect(calls[3].prompt).toContain('再切回原模型呢？');
   });
 
-  it('does not use native Claude session continuity for a Kimi base URL', async () => {
+  it('downgrades a Kimi base URL to text mode when the session references a document', async () => {
     // Kimi 等非 Anthropic 原生上游不认识 Claude 的 `document` block：claude CLI
     // `--resume` 重放历史（含 PDF/Office 附件产生的 document 块）会直接 400。
-    // 因此指向非 api.anthropic.com 的 claude-code CLI 渠道必须降级为每轮纯
-    // 文本全量模式（不传 sessionId/resume），而不是启动 native session。
+    // 因此当会话确实引用了文档文件时，指向非 api.anthropic.com 的 claude-code
+    // CLI 渠道必须降级为每轮纯文本全量模式（不传 sessionId/resume）。
     window.localStorage.clear();
     await historyStore.ready();
     const workspace = await historyStore.resolveWorkspaceByPath('');
@@ -3449,7 +3449,7 @@ describe('simple-workflow chat mode', () => {
       return calls.length === 1 ? 'Kimi 回答一。' : 'Kimi 回答二。';
     });
 
-    useStore.getState().sendPrompt('第一问');
+    useStore.getState().sendPrompt('请看这个 E:\\docs\\report.pdf 第一问');
     await waitFor(
       () => !useStore.getState().aiStreaming && calls.length === 1,
       'first Kimi CLI chat call',
@@ -3469,6 +3469,190 @@ describe('simple-workflow chat mode', () => {
     expect(calls[1].prompt).toContain('之前的对话');
     expect(calls[1].prompt).toContain('第一问');
     expect(calls[1].prompt).toContain('Kimi 回答一。');
+  });
+
+  it('keeps native Claude session resume for a Kimi base URL when the session has only images/text', async () => {
+    // 图片是 Anthropic `image` block、非 `document` block，第三方上游不会 400。
+    // 因此纯图片/纯文本会话即使跑在 Kimi 网关上也应保留 --resume 续接，享受
+    // 增量续接（第二轮 resume=true），而不是被一刀切降级。回归 Bug 1。
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockImplementation(async (selection) => ({
+      selection,
+      adapter: 'claude-code',
+      modelClass: selection.modelClass,
+      model: 'kimi-for-coding',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code · Kimi',
+      source: 'global',
+      cliCommand: 'claude',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+        ANTHROPIC_MODEL: 'kimi-for-coding',
+      },
+    }));
+    const calls: Array<{
+      prompt: string;
+      opts: { sessionId?: string; resume?: boolean };
+    }> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(async (prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      return calls.length === 1 ? 'Kimi 回答一。' : 'Kimi 回答二。';
+    });
+
+    useStore.getState().sendPrompt('请看这张图 E:\\shots\\frame.jpg 第一问');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 1,
+      'first Kimi image CLI chat call',
+    );
+
+    useStore.getState().sendPrompt('第二问');
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 2,
+      'second Kimi image CLI chat call',
+    );
+
+    // 首轮冷起 native session，续轮走 --resume 增量续接。
+    expect(calls[0].opts.sessionId).toBeTruthy();
+    expect(calls[0].opts.resume).toBe(false);
+    expect(calls[1].opts.sessionId).toBe(calls[0].opts.sessionId);
+    expect(calls[1].opts.resume).toBe(true);
+  });
+
+  it('re-sends full history on a CLI continuation round when native session is disabled', async () => {
+    // 会话含文档 → Kimi 网关禁用 native session（sessionId/resume 皆无）。此时
+    // 模型无状态，续答轮（回答一个 <<UGS_ASK>> select）必须自带完整历史，否则
+    // 只发「问题+回答」两行会让模型忘掉上文、重复提问。回归 Bug 2。
+    window.localStorage.clear();
+    await historyStore.ready();
+    const workspace = await historyStore.resolveWorkspaceByPath('');
+    const record = await historyStore.createSession({
+      workspaceId: workspace.id,
+      isWorkflow: false,
+      messages: [],
+      title: 'Chat',
+    });
+    resetStore(simpleBlueprint('Chat'));
+    const session = {
+      id: record.id,
+      workspaceId: workspace.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      isWorkflow: false,
+      messageCount: 0,
+    };
+    useStore.setState({
+      historyReady: true,
+      activeWorkspaceId: workspace.id,
+      activeSessionId: record.id,
+      workspaces: [workspace],
+      sessions: [session],
+      sessionTree: { [workspace.id]: [session] },
+      locale: 'zh-CN',
+    });
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    gatewayMocks.resolveCliGatewayRoute.mockImplementation(async (selection) => ({
+      selection,
+      adapter: 'claude-code',
+      modelClass: selection.modelClass,
+      model: 'kimi-for-coding',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Claude Code · Kimi',
+      source: 'global',
+      cliCommand: 'claude',
+      env: {
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+        ANTHROPIC_MODEL: 'kimi-for-coding',
+      },
+    }));
+    const calls: Array<{
+      prompt: string;
+      opts: { sessionId?: string; resume?: boolean };
+    }> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(async (prompt, _adapter, opts) => {
+      calls.push({ prompt, opts });
+      if (calls.length === 1) {
+        return [
+          '<<UGS_ASK>>',
+          JSON.stringify({
+            type: 'select',
+            prompt: '这是哪种包围盒？',
+            options: ['Local Light Shadow Cache', '其它'],
+            multi: false,
+          }),
+          '<<UGS_ASK_END>>',
+        ].join('\n');
+      }
+      return '明白了，就按 Local Light Shadow Cache 处理。';
+    });
+
+    useStore.getState().sendPrompt('看这个附件 E:\\docs\\spec.pdf 里的包围盒');
+    await waitFor(
+      () =>
+        useStore
+          .getState()
+          .messages.some(
+            (message) =>
+              message.interaction?.prompt === '这是哪种包围盒？' &&
+              message.interactionStatus === 'pending',
+          ),
+      'CLI interaction widget',
+    );
+
+    const interactionMessage = useStore
+      .getState()
+      .messages.find((message) => message.interaction);
+    useStore.getState().answerInteraction(interactionMessage!.id, {
+      kind: 'select',
+      values: ['Local Light Shadow Cache'],
+    });
+
+    await waitFor(
+      () => !useStore.getState().aiStreaming && calls.length === 2,
+      'CLI continuation call after interaction',
+    );
+
+    // native session 被禁用：两轮都不带 sessionId/resume。
+    expect(calls[0].opts.sessionId).toBeUndefined();
+    expect(calls[1].opts.sessionId).toBeUndefined();
+    // 续答轮既带用户的选择，又带完整原始历史（Bug 2 的核心断言）。
+    expect(calls[1].prompt).toContain('Local Light Shadow Cache');
+    expect(calls[1].prompt).toContain('包围盒');
+    expect(calls[1].prompt).toContain('这是哪种包围盒？');
   });
 
   it('starts a fresh native Claude CLI session when the resume target is missing', async () => {
@@ -3708,13 +3892,13 @@ describe('simple-workflow chat mode', () => {
       return '重试后的回答。';
     });
 
-    useStore.getState().sendPrompt('第一问');
+    useStore.getState().sendPrompt('看这个附件 E:\\docs\\spec.pdf 第一问');
     await waitFor(
       () => !useStore.getState().aiStreaming && calls.length === 2,
       'stateless empty-exit CLI retry call',
     );
 
-    // 非 Anthropic 原生上游不会走 native session：两轮都是无会话全量调用。
+    // 会话含文档 → 非 Anthropic 原生上游不会走 native session：两轮都是无会话全量调用。
     expect(calls[0].opts.sessionId).toBeUndefined();
     expect(calls[0].opts.resume).toBeUndefined();
     expect(calls[1].opts.sessionId).toBeUndefined();

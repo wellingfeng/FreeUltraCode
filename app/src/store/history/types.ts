@@ -273,6 +273,10 @@ export interface SessionMeta extends HistoryMetadata {
   scheduledTask?: ScheduledTaskConfig | null;
   canvasViewport?: CanvasViewport | null;
   runStatus?: 'idle' | 'running' | 'success' | 'error' | 'interrupted';
+  /** True when the last successful run has not been viewed yet. */
+  unreadCompletion?: boolean;
+  /** Unsent text left in the AI input box for this session (persisted draft). */
+  composerDraft?: string;
   runState?: Record<string, IRRunStatus>;
   runOutputs?: Record<string, string>;
   failedNodeId?: string | null;
@@ -346,6 +350,8 @@ export type SessionSummary = Pick<
   messageCount: number;
   /** Derived from meta.runStatus for lightweight history status badges. */
   runStatus?: SessionMeta['runStatus'];
+  /** Derived from meta.unreadCompletion for the "unviewed completion" badge. */
+  unreadCompletion?: boolean;
   /** Derived from meta.favorite for lightweight favorite-tab rendering. */
   favorite?: boolean;
   /** Derived from meta.scheduledTask for lightweight schedule rendering. */

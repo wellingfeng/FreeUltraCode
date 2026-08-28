@@ -12,8 +12,9 @@
  *
  * After the turn completes the run loop parses the block, applies it to the
  * on-disk store (lib/memoryStore.ts), and strips it from the visible message.
- * The write lands on the NEXT turn's frozen system-prompt snapshot — it does
- * NOT mutate the current turn's prompt, preserving the native-CLI prefix cache.
+ * The write lands on the NEXT session's frozen system-prompt snapshot — it does
+ * NOT mutate the current session's prompt, preserving the native-CLI prefix
+ * cache (see lib/memoryStore.ts CONTRACT).
  *
  * This module is pure (no IO, no React, no store). It owns: the sentinels, the
  * op/target types, the tolerant parse/strip helpers, and the instruction text
@@ -37,6 +38,29 @@ export interface MemoryWriteRequest {
 
 export const MEMORY_OPEN = '<<UGS_MEMORY>>';
 export const MEMORY_CLOSE = '<<UGS_MEMORY_END>>';
+
+// Tolerant sentinel matchers, mirroring core/interaction.ts. Models routinely
+// fumble the exact delimiter — dropping a `>` (`<<UGS_MEMORY>`), adding a third
+// (`<<UGS_MEMORY>>>`), or slipping in whitespace (`<< UGS_MEMORY >>`). A strict
+// `indexOf('<<UGS_MEMORY>>')` misses those, so the whole reply (raw protocol
+// JSON and all) leaks into the chat bubble. These regexes accept any positive
+// number of trailing `>` and stray inner whitespace. The open matcher can't
+// collide with the close sentinel because `UGS_MEMORY` there is immediately
+// followed by `_END`, not `>`/whitespace.
+const MEMORY_OPEN_RE = /<<\s*UGS_MEMORY\s*>+/;
+const MEMORY_CLOSE_RE = /<<\s*UGS_MEMORY_END\s*>+/;
+
+/** Locate a sentinel; returns its start index and matched length, or null. */
+function findSentinel(
+  text: string,
+  re: RegExp,
+  from = 0,
+): { index: number; length: number } | null {
+  const scoped = new RegExp(re.source, 'g');
+  scoped.lastIndex = from;
+  const m = scoped.exec(text);
+  return m ? { index: m.index, length: m[0].length } : null;
+}
 
 /** Extract the first balanced top-level JSON object substring, or null. */
 function firstJsonObject(text: string): string | null {
@@ -83,17 +107,17 @@ function normalizeOp(raw: unknown): MemoryOp | null {
  * or an empty array when none are present.
  */
 export function parseMemoryWrites(text: string): MemoryWriteRequest[] {
-  if (!text || !text.includes(MEMORY_OPEN)) return [];
+  if (!text || !findSentinel(text, MEMORY_OPEN_RE)) return [];
   const out: MemoryWriteRequest[] = [];
   let cursor = 0;
   for (;;) {
-    const open = text.indexOf(MEMORY_OPEN, cursor);
-    if (open === -1) break;
-    const afterOpen = text.slice(open + MEMORY_OPEN.length);
-    const close = afterOpen.indexOf(MEMORY_CLOSE);
-    if (close === -1) break;
-    const body = afterOpen.slice(0, close);
-    cursor = open + MEMORY_OPEN.length + close + MEMORY_CLOSE.length;
+    const open = findSentinel(text, MEMORY_OPEN_RE, cursor);
+    if (!open) break;
+    const afterOpen = text.slice(open.index + open.length);
+    const close = findSentinel(afterOpen, MEMORY_CLOSE_RE);
+    if (!close) break;
+    const body = afterOpen.slice(0, close.index);
+    cursor = open.index + open.length + close.index + close.length;
 
     const span = firstJsonObject(body);
     if (!span) continue;
@@ -122,23 +146,23 @@ export function parseMemoryWrites(text: string): MemoryWriteRequest[] {
 
 /** Remove every memory-write block from the text so it isn't shown to the user. */
 export function stripMemoryWrites(text: string): string {
-  if (!text || !text.includes(MEMORY_OPEN)) return text;
+  if (!text || !findSentinel(text, MEMORY_OPEN_RE)) return text;
   let result = '';
   let cursor = 0;
   for (;;) {
-    const open = text.indexOf(MEMORY_OPEN, cursor);
-    if (open === -1) {
+    const open = findSentinel(text, MEMORY_OPEN_RE, cursor);
+    if (!open) {
       result += text.slice(cursor);
       break;
     }
-    result += text.slice(cursor, open);
-    const afterOpen = text.slice(open + MEMORY_OPEN.length);
-    const close = afterOpen.indexOf(MEMORY_CLOSE);
-    if (close === -1) {
+    result += text.slice(cursor, open.index);
+    const afterOpen = text.slice(open.index + open.length);
+    const close = findSentinel(afterOpen, MEMORY_CLOSE_RE);
+    if (!close) {
       // Unterminated block: drop everything from the sentinel onward.
       break;
     }
-    cursor = open + MEMORY_OPEN.length + close + MEMORY_CLOSE.length;
+    cursor = open.index + open.length + close.index + close.length;
   }
   return result.trim();
 }

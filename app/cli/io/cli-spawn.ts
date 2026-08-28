@@ -5,7 +5,7 @@
  * headless CLI run is observably identical to a desktop run.
  *
  * argv (claude):  -p --output-format stream-json --verbose
- *                 [--bare                 (API-key relay/free channel only, when supported)]
+ *                 [--bare                 (explicit UGS-owned route capability only)]
  *                 [--strict-mcp-config]
  *                 [--resume <sid> | --session-id <sid>]
  *                 [--model <m>            (filtered by shouldPassModel)]
@@ -140,19 +140,12 @@ function resolveIdleTimeoutSecs(override?: number): number {
 
 function flagEnabled(value: string | undefined): boolean {
   const v = value?.trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'yes';
-}
-
-function hasEnvValue(env: Record<string, string> | undefined, key: string): boolean {
-  return !!env?.[key]?.trim();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
 function shouldRunClaudeBare(env: Record<string, string> | undefined): boolean {
   if (flagEnabled(process.env.ULTRAGAMESTUDIO_DISABLE_CLAUDE_BARE)) return false;
-  const hasApiKey = hasEnvValue(env, 'ANTHROPIC_API_KEY');
-  const hasGatewayRoute =
-    hasEnvValue(env, 'ANTHROPIC_BASE_URL') || hasEnvValue(env, 'ANTHROPIC_MODEL');
-  return hasApiKey && hasGatewayRoute;
+  return flagEnabled(env?.UGS_CLAUDE_BARE);
 }
 
 function knownProviderModelVariant(baseUrl: string | undefined, model: string | undefined): string | undefined {
@@ -563,7 +556,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (opts.env) {
       for (const [k, v] of Object.entries(opts.env)) {
-        if (k.trim()) env[k] = v;
+        if (k.trim() && k !== 'UGS_CLAUDE_BARE') env[k] = v;
       }
     }
     normalizeSpawnEnv(env);

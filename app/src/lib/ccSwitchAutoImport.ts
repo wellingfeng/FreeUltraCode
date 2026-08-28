@@ -8,7 +8,6 @@ import {
 import { flushSecureStorage } from '@/lib/secureStorage';
 import {
   loadGatewayConfig,
-  modelClassFromModelId,
   saveGatewayConfig,
   setActiveGatewaySelection,
 } from '@/lib/gatewayConfig';
@@ -143,10 +142,13 @@ async function syncGatewayProviders(
     ? lookup.get(providerMetadataSignature(activeDraft))
     : undefined;
   if (active) {
+    // setActiveProviderId() also stamps the global selection via
+    // selectGatewayProvider(); write the same real model id here (not a Claude
+    // tier placeholder) so every modelClass consumer displays the true model.
     setActiveProviderId(active.id);
     setActiveGatewaySelection({
       adapter: providerToGatewayProvider(active).adapter,
-      modelClass: modelClassFromModelId(active.model),
+      modelClass: active.model?.trim() || 'default',
       providerId: active.id,
       channelId: 'default',
     });

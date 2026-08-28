@@ -36,6 +36,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Settings as SettingsIcon,
   SlashSquare,
@@ -106,6 +107,8 @@ import {
   installSkillFromUrl,
   localModelStatus,
   openExternal,
+  runAutosaveNow,
+  runManualCacheCleanup,
   setupComfyui,
   skillInstallTargets,
   type ComfyUiSetupModel,
@@ -150,6 +153,12 @@ import {
   saveCacheCleanupConfig,
   type CacheCleanupConfig,
 } from '@/lib/cacheCleanupConfig';
+import {
+  DEFAULT_AUTOSAVE_CONFIG,
+  loadAutosaveConfig,
+  saveAutosaveConfig,
+  type AutosaveConfig,
+} from '@/lib/autosaveConfig';
 import {
   getManifestModeEnabled,
   setManifestModeEnabled,
@@ -217,6 +226,15 @@ import {
   refreshFreeChannelModels,
   refreshProviderModels,
 } from '@/lib/modelLists';
+import {
+  formatUsd,
+  getModelPricingStatus,
+  lookupModelPrice,
+  refreshModelPricing,
+  subscribeModelPricing,
+  type ModelPrice,
+  type ModelPricingStatus,
+} from '@/lib/modelPricing';
 import {
   createCustomImageProviderId,
   imageProviderBaseUrl,
@@ -1158,6 +1176,83 @@ function GeneralSettings({
     },
     [],
   );
+  const [manualCleanupDays, setManualCleanupDays] = useState(10);
+  const [manualCleanupRunning, setManualCleanupRunning] = useState(false);
+  const [manualCleanupResult, setManualCleanupResult] = useState<{
+    filesRemoved: number;
+    bytesFreed: number;
+  } | null>(null);
+  const [manualCleanupError, setManualCleanupError] = useState<string | null>(null);
+  const runManualCleanup = async () => {
+    if (!isTauri()) {
+      setManualCleanupError(t(locale, 'settings.cacheCleanup.desktopOnly'));
+      return;
+    }
+    setManualCleanupRunning(true);
+    setManualCleanupError(null);
+    setManualCleanupResult(null);
+    try {
+      const result = await runManualCacheCleanup(manualCleanupDays);
+      if (!result) {
+        setManualCleanupError(t(locale, 'settings.cacheCleanup.desktopOnly'));
+        return;
+      }
+      setManualCleanupResult(result);
+    } catch (err) {
+      setManualCleanupError(
+        stripCliErrorPrefix(err instanceof Error ? err.message : String(err)),
+      );
+    } finally {
+      setManualCleanupRunning(false);
+    }
+  };
+  const [autosaveConfig, setAutosaveConfig] = useState<AutosaveConfig>(() => {
+    try {
+      return loadAutosaveConfig();
+    } catch {
+      return { ...DEFAULT_AUTOSAVE_CONFIG };
+    }
+  });
+  const patchAutosaveConfig = useCallback((patch: Partial<AutosaveConfig>) => {
+    setAutosaveConfig((prev) => saveAutosaveConfig({ ...prev, ...patch }));
+  }, []);
+  const [autosaveRunning, setAutosaveRunning] = useState(false);
+  const [autosaveResult, setAutosaveResult] = useState<{
+    filesBackedUp: number;
+    bytesWritten: number;
+    snapshottedWorkspaces: number;
+  } | null>(null);
+  const [autosaveError, setAutosaveError] = useState<string | null>(null);
+  const runAutosave = async () => {
+    if (!isTauri()) {
+      setAutosaveError(t(locale, 'settings.autosave.desktopOnly'));
+      return;
+    }
+    setAutosaveRunning(true);
+    setAutosaveError(null);
+    setAutosaveResult(null);
+    try {
+      const result = await runAutosaveNow();
+      if (!result) {
+        setAutosaveError(t(locale, 'settings.autosave.desktopOnly'));
+        return;
+      }
+      if (result.errors.length > 0) {
+        setAutosaveError(result.errors.join('\n'));
+      }
+      setAutosaveResult({
+        filesBackedUp: result.filesBackedUp,
+        bytesWritten: result.bytesWritten,
+        snapshottedWorkspaces: result.snapshottedWorkspaces,
+      });
+    } catch (err) {
+      setAutosaveError(
+        stripCliErrorPrefix(err instanceof Error ? err.message : String(err)),
+      );
+    } finally {
+      setAutosaveRunning(false);
+    }
+  };
   const [translationSettings, setTranslationSettings] =
     useTranslationSettingsState();
   const translationProviderOptions = useMemo(
@@ -1432,6 +1527,155 @@ function GeneralSettings({
             />
           </SettingRow>
         )}
+        <div className="space-y-2 rounded-lg border border-border bg-panel-2/60 p-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-fg">
+              {t(locale, 'settings.cacheCleanup.manualTitle')}
+            </div>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.cacheCleanup.manualHint')}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <StepperControl
+                value={manualCleanupDays}
+                min={1}
+                max={365}
+                onChange={setManualCleanupDays}
+              />
+              <span className="text-xs text-fg-dim">
+                {t(locale, 'settings.cacheCleanup.manualDaysUnit')}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={manualCleanupRunning}
+              onClick={() => void runManualCleanup()}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                manualCleanupRunning
+                  ? 'cursor-not-allowed border-border bg-panel-2 text-fg-faint'
+                  : 'border-accent bg-accent/15 text-fg hover:bg-accent/25',
+              )}
+            >
+              {manualCleanupRunning ? (
+                <RefreshCw size={13} strokeWidth={2.1} className="animate-spin" />
+              ) : (
+                <Trash2 size={13} strokeWidth={2.1} />
+              )}
+              {manualCleanupRunning
+                ? t(locale, 'settings.cacheCleanup.manualRunning')
+                : t(locale, 'settings.cacheCleanup.manualButton')}
+            </button>
+          </div>
+          {manualCleanupResult && !manualCleanupError && (
+            <p className="text-xs leading-relaxed text-fg">
+              {manualCleanupResult.filesRemoved === 0
+                ? t(locale, 'settings.cacheCleanup.manualDoneEmpty')
+                : t(locale, 'settings.cacheCleanup.manualDone')
+                    .replace('{count}', String(manualCleanupResult.filesRemoved))
+                    .replace('{size}', formatBytes(manualCleanupResult.bytesFreed))}
+            </p>
+          )}
+          {manualCleanupError && (
+            <p className="text-xs leading-relaxed text-[#f78b8b]">{manualCleanupError}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <h4 className="text-xs font-semibold text-fg">
+          {t(locale, 'settings.autosave.title')}
+        </h4>
+        <p className="text-[11px] leading-relaxed text-fg-faint">
+          {t(locale, 'settings.autosave.description')}
+        </p>
+        <SettingRow
+          title={t(locale, 'settings.autosave.enabledLabel')}
+          description={t(locale, 'settings.autosave.enabledHint')}
+        >
+          <SwitchControl
+            checked={autosaveConfig.enabled}
+            onChange={(v) => patchAutosaveConfig({ enabled: v })}
+          />
+        </SettingRow>
+        {autosaveConfig.enabled && (
+          <>
+            <SettingRow
+              title={t(locale, 'settings.autosave.intervalLabel')}
+              description={t(locale, 'settings.autosave.intervalHint')}
+            >
+              <StepperControl
+                value={autosaveConfig.intervalMinutes}
+                min={1}
+                max={1440}
+                onChange={(v) => patchAutosaveConfig({ intervalMinutes: v })}
+              />
+            </SettingRow>
+            <SettingRow
+              title={t(locale, 'settings.autosave.retentionLabel')}
+              description={t(locale, 'settings.autosave.retentionHint')}
+            >
+              <StepperControl
+                value={autosaveConfig.retentionDays}
+                min={1}
+                max={365}
+                onChange={(v) => patchAutosaveConfig({ retentionDays: v })}
+              />
+            </SettingRow>
+          </>
+        )}
+        <div className="space-y-2 rounded-lg border border-border bg-panel-2/60 p-3">
+          <div className="space-y-1">
+            <div className="text-sm font-medium text-fg">
+              {t(locale, 'settings.autosave.manualTitle')}
+            </div>
+            <p className="text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.autosave.manualHint')}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={autosaveRunning}
+              onClick={() => void runAutosave()}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                autosaveRunning
+                  ? 'cursor-not-allowed border-border bg-panel-2 text-fg-faint'
+                  : 'border-accent bg-accent/15 text-fg hover:bg-accent/25',
+              )}
+            >
+              {autosaveRunning ? (
+                <RefreshCw size={13} strokeWidth={2.1} className="animate-spin" />
+              ) : (
+                <Save size={13} strokeWidth={2.1} />
+              )}
+              {autosaveRunning
+                ? t(locale, 'settings.autosave.manualRunning')
+                : t(locale, 'settings.autosave.manualButton')}
+            </button>
+          </div>
+          {autosaveResult && (
+            <p className="text-xs leading-relaxed text-fg">
+              {autosaveResult.filesBackedUp === 0
+                ? t(locale, 'settings.autosave.manualDoneEmpty')
+                : t(locale, 'settings.autosave.manualDone')
+                    .replace('{count}', String(autosaveResult.filesBackedUp))
+                    .replace('{size}', formatBytes(autosaveResult.bytesWritten))
+                    .replace(
+                      '{workspaces}',
+                      String(autosaveResult.snapshottedWorkspaces),
+                    )}
+            </p>
+          )}
+          {autosaveError && (
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-[#f78b8b]">
+              {autosaveError}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="space-y-2 border-t border-border pt-4">
@@ -1792,11 +2036,18 @@ function personalInstructionsEntries(
     upsert(option.selection, option.label, option.hint, { available: true });
   }
 
+  // Stable ordering: always follow the fixed RUNTIME_ADAPTERS order so the
+  // cards never reshuffle between opens. The "current" / "saved" badges remain
+  // purely visual and no longer influence position.
   return Array.from(byKey.values()).sort((a, b) => {
-    const rank = (entry: PersonalizationEntry) =>
-      entry.current ? 0 : entry.saved ? 1 : entry.available ? 2 : 3;
-    const rankDelta = rank(a) - rank(b);
-    if (rankDelta !== 0) return rankDelta;
+    const adapterIndex = (entry: PersonalizationEntry) => {
+      const index = RUNTIME_ADAPTERS.findIndex(
+        (item) => item.id === entry.selection.adapter,
+      );
+      return index === -1 ? RUNTIME_ADAPTERS.length : index;
+    };
+    const indexDelta = adapterIndex(a) - adapterIndex(b);
+    if (indexDelta !== 0) return indexDelta;
     return a.label.localeCompare(b.label);
   });
 }
@@ -1904,6 +2155,20 @@ function personalInstructionsSelectionLabel(selection: GatewaySelection): string
 
 function stripCliErrorPrefix(raw: string): string {
   return raw.replace(/^[A-Z_]+:\s*/u, '').trim();
+}
+
+/** Human-readable byte size for the manual cache-cleanup result line. */
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const rounded = value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1);
+  return `${rounded} ${units[unit]}`;
 }
 
 /** Map a stored provider kind to its runtime adapter id. */
@@ -2528,6 +2793,33 @@ function ModelsSettings({
     refresh();
   };
 
+  const handleClone = (id: string) => {
+    const source = providers.find((p) => p.id === id);
+    if (!source) return;
+    const baseName = source.name.trim() || runtimeAdapterLabel(
+      providerKindToAdapter(source.kind),
+    );
+    const copySuffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((p) => p.name.trim()));
+    let candidate = `${baseName}${copySuffix}`;
+    if (existing.has(candidate)) {
+      let i = 2;
+      while (existing.has(`${baseName}${copySuffix} ${i}`)) i += 1;
+      candidate = `${baseName}${copySuffix} ${i}`;
+    }
+    addProvider({
+      kind: source.kind,
+      name: candidate,
+      apiKey: source.apiKey,
+      baseUrl: source.baseUrl,
+      transport: source.transport,
+      model: source.model,
+      models: source.models ? [...source.models] : undefined,
+    });
+    void flushSecureStorage().catch(() => undefined);
+    refresh();
+  };
+
   const handleEditorDelete = (id: string) => {
     if (!window.confirm(t(locale, 'settings.models.confirmDelete'))) return;
     deleteProvider(id);
@@ -2851,6 +3143,7 @@ function ModelsSettings({
                   dotClassName={dotClassName}
                   runtime={runtime}
                   onDelete={() => handleDelete(provider.id)}
+                  onClone={() => handleClone(provider.id)}
                   onChange={refresh}
                   locale={locale}
                 />
@@ -2896,6 +3189,37 @@ function ModelsSettings({
   );
 }
 
+/**
+ * 订阅价格目录的加载状态与当前选中模型的价格。
+ * 价格由应用启动时的联网请求填充，加载完成会自动重渲染。
+ */
+function useModelPricing(model: string): {
+  status: ModelPricingStatus;
+  price: ModelPrice | null;
+} {
+  const [snapshot, setSnapshot] = useState(() => ({
+    status: getModelPricingStatus(),
+    price: lookupModelPrice(model),
+  }));
+
+  useEffect(() => {
+    const update = () =>
+      setSnapshot({
+        status: getModelPricingStatus(),
+        price: lookupModelPrice(model),
+      });
+    update();
+    return subscribeModelPricing(update);
+  }, [model]);
+
+  return snapshot;
+}
+
+/** 所有渠道卡片统一使用的背景色调（对应 global.css 里的 --channel-card-tint）。 */
+const CHANNEL_CARD_TINT = 'var(--channel-card-tint)';
+/** 免费渠道卡片背景色调（绿色，区分收费渠道的蓝色）。 */
+const CHANNEL_CARD_TINT_FREE = 'var(--channel-card-tint-free)';
+
 function DefaultChannelRow({
   provider,
   providers,
@@ -2903,6 +3227,7 @@ function DefaultChannelRow({
   dotClassName,
   runtime,
   onDelete,
+  onClone,
   onChange,
   locale,
 }: {
@@ -2912,6 +3237,7 @@ function DefaultChannelRow({
   dotClassName: string;
   runtime: ReturnType<typeof getProviderRuntimeInfo>;
   onDelete?: () => void;
+  onClone?: () => void;
   onChange: () => void;
   locale: Locale;
 }) {
@@ -2924,17 +3250,12 @@ function DefaultChannelRow({
   const [nameError, setNameError] = useState<string | null>(null);
   const [baseUrlError, setBaseUrlError] = useState<string | null>(null);
   const [duplicateError, setDuplicateError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveAttemptRef = useRef(0);
   const [modelRefresh, setModelRefresh] = useState<{
     loading: boolean;
     error: string | null;
   }>({ loading: false, error: null });
-
-  // 就地编辑的「输入即保存」支持：字段改动先合并进 pendingPatchRef，由防抖
-  // 定时器统一提交（默认 600ms）。blur/回车会立即冲刷；组件卸载（Esc 关闭
-  // 设置、切换 tab、关闭窗口）时把未提交的修改兜底写盘，避免「界面上改了、
-  // 磁盘上没存」的丢失。
-  const pendingPatchRef = useRef<Partial<ProviderDraft>>({});
-  const commitTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     setBaseUrlValue(provider.baseUrl);
@@ -2945,6 +3266,7 @@ function DefaultChannelRow({
     setNameError(null);
     setBaseUrlError(null);
     setDuplicateError(null);
+    setSaveError(null);
   }, [
     provider.id,
     provider.name,
@@ -2952,44 +3274,6 @@ function DefaultChannelRow({
     provider.apiKey,
     provider.model,
   ]);
-
-  // 组件卸载兜底：把尚未提交的就地编辑直接持久化（不走 setState）。
-  // 只监听真正卸载（依赖固定为空），避免其它渠道的 refresh 触发依赖变化时
-  // 把输入到一半的 key 提前提交；latestRef 保证卸载时读到最新 props。
-  const latestRef = useRef({ provider, providers });
-  latestRef.current = { provider, providers };
-  useEffect(() => {
-    return () => {
-      if (commitTimerRef.current !== null) {
-        window.clearTimeout(commitTimerRef.current);
-        commitTimerRef.current = null;
-      }
-      const patch = pendingPatchRef.current;
-      if (Object.keys(patch).length === 0) return;
-      pendingPatchRef.current = {};
-      const { provider: latestProvider, providers: latestProviders } =
-        latestRef.current;
-      const next = trimProviderDraft({ ...latestProvider, ...patch });
-      if (!next.name || !isProviderBaseUrlValid(next.baseUrl)) return;
-      const duplicate = latestProviders.some(
-        (candidate) =>
-          candidate.id !== latestProvider.id &&
-          providerMetadataSignature(candidate) === providerMetadataSignature(next),
-      );
-      if (duplicate) return;
-      if (!providerDraftChanged(next, providerDraft(latestProvider))) return;
-      updateProvider(latestProvider.id, {
-        name: next.name,
-        apiKey: next.apiKey,
-        baseUrl: next.baseUrl,
-        model: next.model,
-        models: next.models,
-        transport: next.transport,
-      });
-      void flushSecureStorage();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const draftProvider: Provider = {
     ...provider,
@@ -3003,10 +3287,13 @@ function DefaultChannelRow({
   });
   const modelOptions = providerModelOptions(draftProvider);
   const modelCacheKey = providerModelCacheKey(draftProvider);
+  const modelPricing = useModelPricing(modelValue.trim());
   const KeyIcon = showKey ? EyeOff : Eye;
+  const cardTint = CHANNEL_CARD_TINT;
 
-  /** 校验并把补丁写入存储；成功后返回 true。不含 state 同步（供防抖/卸载路径复用）。 */
+  /** 校验并把补丁写入存储；成功后返回 true。 */
   const persistProviderPatch = (nextProvider: Provider): boolean => {
+    setSaveError(null);
     const next = trimProviderDraft(nextProvider);
     if (!next.name) {
       setNameError(t(locale, 'settings.models.validationNameRequired'));
@@ -3037,7 +3324,12 @@ function DefaultChannelRow({
     });
     // Make sure any API key change reaches the OS keychain before the dialog
     // closes or the app is exited; the write is fire-and-forget by default.
-    void flushSecureStorage();
+    const saveAttempt = ++saveAttemptRef.current;
+    void flushSecureStorage().catch(() => {
+      if (saveAttempt === saveAttemptRef.current) {
+        setSaveError(t(locale, 'settings.models.saveError'));
+      }
+    });
     return true;
   };
 
@@ -3056,36 +3348,13 @@ function DefaultChannelRow({
     setBaseUrlValue(next.baseUrl);
     setKeyValue(next.apiKey);
     setModelValue(next.model ?? '');
-    pendingPatchRef.current = {};
     onChange();
     return true;
   };
 
-  /** 就地编辑的防抖保存：改动先合并进 pendingPatchRef，600ms 无新输入后统一提交。 */
-  const scheduleSave = (patch: Partial<ProviderDraft>): void => {
-    pendingPatchRef.current = { ...pendingPatchRef.current, ...patch };
-    if (commitTimerRef.current !== null) {
-      window.clearTimeout(commitTimerRef.current);
-    }
-    commitTimerRef.current = window.setTimeout(() => {
-      commitTimerRef.current = null;
-      const pending = pendingPatchRef.current;
-      if (Object.keys(pending).length === 0) return;
-      pendingPatchRef.current = {};
-      commitProvider(pending);
-    }, 600);
-  };
-
-  /** 立即冲刷未提交的就地编辑（输入框失焦 / 回车时调用）。 */
-  const flushPendingSave = (): void => {
-    if (commitTimerRef.current !== null) {
-      window.clearTimeout(commitTimerRef.current);
-      commitTimerRef.current = null;
-    }
-    const pending = pendingPatchRef.current;
-    if (Object.keys(pending).length === 0) return;
-    pendingPatchRef.current = {};
-    commitProvider(pending);
+  /** 输入即提交到内存、本地配置和安全存储队列。 */
+  const saveImmediately = (patch: Partial<ProviderDraft>): void => {
+    commitProvider(patch);
   };
 
   const commitName = () => {
@@ -3143,7 +3412,10 @@ function DefaultChannelRow({
   };
 
   return (
-    <div className="relative space-y-3 rounded-lg border border-border bg-bg-alt p-4 transition-colors">
+    <div
+      className="relative space-y-3 rounded-lg border border-border bg-bg-alt p-4 transition-colors"
+      style={{ backgroundColor: cardTint }}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <GroupDot className={dotClassName} />
@@ -3213,6 +3485,17 @@ function DefaultChannelRow({
         </span>
         <span className="min-w-0 flex-1" />
         <div className="flex items-center gap-1.5">
+          {onClone && (
+            <button
+              type="button"
+              title={t(locale, 'settings.models.clone')}
+              aria-label={t(locale, 'settings.models.clone')}
+              onClick={onClone}
+              className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+            >
+              <Copy size={13} strokeWidth={2} />
+            </button>
+          )}
           {onDelete && (
             <button
               type="button"
@@ -3239,9 +3522,8 @@ function DefaultChannelRow({
               setBaseUrlValue(event.target.value);
               setBaseUrlError(null);
               setDuplicateError(null);
-              scheduleSave({ baseUrl: event.target.value });
+              saveImmediately({ baseUrl: event.target.value });
             }}
-            onBlur={flushPendingSave}
             onKeyDown={(event) => {
               if (event.key === 'Enter') event.currentTarget.blur();
             }}
@@ -3270,9 +3552,8 @@ function DefaultChannelRow({
               value={keyValue}
               onChange={(event) => {
                 setKeyValue(event.target.value);
-                scheduleSave({ apiKey: event.target.value });
+                saveImmediately({ apiKey: event.target.value });
               }}
-              onBlur={flushPendingSave}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') event.currentTarget.blur();
               }}
@@ -3298,7 +3579,7 @@ function DefaultChannelRow({
                   type="button"
                   onClick={() => {
                     setKeyValue('');
-                    scheduleSave({ apiKey: '' });
+                    saveImmediately({ apiKey: '' });
                   }}
                   title={t(locale, 'settings.models.clear')}
                   className="flex h-6 w-6 items-center justify-center rounded text-fg-faint transition-colors hover:text-rose-300"
@@ -3329,9 +3610,61 @@ function DefaultChannelRow({
           }
           onRefresh={() => void refreshModels()}
         />
+        {modelPricing.status === 'loading' ? (
+          <div className="flex items-center gap-2 lg:col-span-2 text-[11px] text-fg-faint">
+            <span className="font-medium text-fg-dim">
+              {locale === 'zh-CN' ? '价格' : 'Price'}
+            </span>
+            <span>
+              {locale === 'zh-CN' ? '价格获取中…' : 'Loading price…'}
+            </span>
+          </div>
+        ) : modelPricing.status === 'error' ? (
+          <div className="flex items-center gap-2 lg:col-span-2 text-[11px] text-fg-faint">
+            <span className="font-medium text-fg-dim">
+              {locale === 'zh-CN' ? '价格' : 'Price'}
+            </span>
+            <span className="text-rose-300/90">
+              {locale === 'zh-CN' ? '价格获取失败' : 'Price unavailable'}
+            </span>
+            <button
+              type="button"
+              onClick={() => void refreshModelPricing()}
+              className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-dim transition-colors hover:border-accent hover:text-accent"
+            >
+              {locale === 'zh-CN' ? '重试' : 'Retry'}
+            </button>
+          </div>
+        ) : modelPricing.price ? (
+          <div
+            className="flex items-center gap-2 lg:col-span-2 text-[11px] text-fg-faint"
+            title={
+              locale === 'zh-CN'
+                ? '价格来自 OpenRouter 公开目录，以美元计价，仅供参考。'
+                : 'Price from the OpenRouter public catalog, in USD, for reference only.'
+            }
+          >
+            <span className="font-medium text-fg-dim">
+              {locale === 'zh-CN' ? '价格' : 'Price'}
+            </span>
+            <span className="font-mono">
+              {locale === 'zh-CN'
+                ? `输入 $${formatUsd(modelPricing.price.inputUsd)} · 输出 $${formatUsd(modelPricing.price.outputUsd)}`
+                : `in $${formatUsd(modelPricing.price.inputUsd)} · out $${formatUsd(modelPricing.price.outputUsd)}`}
+            </span>
+            <span className="text-fg-faint/70">
+              / {locale === 'zh-CN' ? '每百万 token' : 'per 1M tokens'}
+            </span>
+          </div>
+        ) : null}
         {duplicateError && (
           <p className="text-[11px] leading-relaxed text-rose-300 lg:col-span-2">
             {duplicateError}
+          </p>
+        )}
+        {saveError && (
+          <p className="text-[11px] leading-relaxed text-rose-300 lg:col-span-2">
+            {saveError}
           </p>
         )}
       </div>
@@ -3429,6 +3762,251 @@ function StatusBadge({ state, label }: { state: BadgeState; label: string }) {
       <span className={cn('h-1.5 w-1.5 rounded-full', styles.dot)} />
       {label}
     </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 生成渠道共享 UI：搜索框 / JSON 备份工具栏 / 来源徽章 / 价格脚注。
+// 编程渠道的「模型」面板具备这些能力，生成渠道面板此前缺失。这里抽出公共
+// 部分，让 image / music / video / speech / 3D / animation / worldModel /
+// rigging / UI / mesh 等各渠道面板复用，避免逐面板重复接线。
+// ─────────────────────────────────────────────────────────────────────────────
+
+type GenerationSettingsStatus = { tone: 'ok' | 'err'; msg: string } | null;
+
+/** 按 label / category / note / models 做大小写不敏感的子串过滤。 */
+function generationProviderMatches(
+  provider: {
+    label: string;
+    category?: string;
+    note?: string;
+    models?: string[];
+  },
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [
+    provider.label,
+    provider.category ?? '',
+    provider.note ?? '',
+    ...(provider.models ?? []),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(q);
+}
+
+function GenerationChannelSearchInput({
+  query,
+  onQueryChange,
+  locale,
+}: {
+  query: string;
+  onQueryChange: (next: string) => void;
+  locale: Locale;
+}) {
+  return (
+    <div className="relative w-full sm:w-64">
+      <Search
+        size={13}
+        strokeWidth={2.2}
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint"
+      />
+      <input
+        type="text"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        placeholder={t(locale, 'settings.models.searchPlaceholder')}
+        aria-label={t(locale, 'settings.models.searchPlaceholder')}
+        autoComplete="off"
+        spellCheck={false}
+        className="h-8 w-full rounded-md border border-border bg-panel pl-8 pr-8 text-xs text-fg outline-none transition-colors placeholder:text-fg-faint focus:border-accent"
+      />
+      {query && (
+        <button
+          type="button"
+          title={t(locale, 'settings.models.searchClear')}
+          aria-label={t(locale, 'settings.models.searchClear')}
+          onClick={() => onQueryChange('')}
+          className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-faint transition-colors hover:text-fg"
+        >
+          <X size={13} strokeWidth={2.2} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function GenerationChannelStatusMessage({
+  status,
+}: {
+  status: GenerationSettingsStatus;
+}) {
+  if (!status) return null;
+  return (
+    <p
+      className={cn(
+        'text-[11px] leading-relaxed',
+        status.tone === 'ok' ? 'text-emerald-300' : 'text-rose-300',
+      )}
+    >
+      {status.msg}
+    </p>
+  );
+}
+
+/**
+ * 导出 / 导入 JSON 工具栏 + 结果提示。导出序列化当前设置；导入解析文件后
+ * 交给 `applyImport` 落盘并返回导入计数。自持隐藏 file input 与状态。
+ */
+function GenerationChannelJsonBackup({
+  locale,
+  title,
+  filename,
+  serialize,
+  applyImport,
+}: {
+  locale: Locale;
+  title: string;
+  filename: string;
+  serialize: () => unknown;
+  applyImport: (raw: Record<string, unknown>) => {
+    imported: number;
+    updated: number;
+    skipped: number;
+  };
+}) {
+  const [status, setStatus] = useState<GenerationSettingsStatus>(null);
+  const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleExport = async () => {
+    setStatus(null);
+    try {
+      const saved = await exportJsonFile(serialize(), filename, title);
+      if (!saved) return;
+      setStatus({ tone: 'ok', msg: t(locale, 'settings.channels.exportSuccess') });
+    } catch (err) {
+      setStatus({
+        tone: 'err',
+        msg: `${t(locale, 'settings.channels.exportError')}: ${describeExportError(err, locale)}`,
+      });
+    }
+  };
+
+  const handleImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    setStatus(null);
+    try {
+      const raw = await readJsonFile(file);
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        setStatus({
+          tone: 'err',
+          msg: `${t(locale, 'settings.channels.importError')}: ${
+            locale === 'zh-CN' ? '不是有效的配置 JSON。' : 'not a valid settings JSON.'
+          }`,
+        });
+        return;
+      }
+      const result = applyImport(raw as Record<string, unknown>);
+      setStatus({
+        tone: 'ok',
+        msg: formatStatusMessage(t(locale, 'settings.channels.importSuccess'), {
+          n: result.imported,
+          m: result.updated,
+          k: result.skipped,
+        }),
+      });
+    } catch (err) {
+      setStatus({
+        tone: 'err',
+        msg: `${t(locale, 'settings.channels.importError')}: ${describeError(err)}`,
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void handleExport()}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        >
+          <DownloadCloud size={13} strokeWidth={2.2} />
+          {t(locale, 'settings.channels.exportJson')}
+        </button>
+        <button
+          type="button"
+          onClick={() => jsonImportInputRef.current?.click()}
+          className="inline-flex items-center gap-1.5 rounded border border-border bg-panel px-2.5 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg"
+        >
+          <UploadCloud size={13} strokeWidth={2.2} />
+          {t(locale, 'settings.channels.importJson')}
+        </button>
+        <input
+          ref={jsonImportInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(event) => void handleImport(event)}
+        />
+      </div>
+      <GenerationChannelStatusMessage status={status} />
+    </div>
+  );
+}
+
+/** 自定义渠道来源徽章（内置渠道不显示，与编程渠道的「路由」标签对应）。 */
+function GenerationProviderSourceBadge({
+  custom,
+  locale,
+}: {
+  custom: boolean;
+  locale: Locale;
+}) {
+  if (!custom) return null;
+  return (
+    <span className="inline-flex shrink-0 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] font-medium text-accent">
+      {locale === 'zh-CN' ? '自定义' : 'Custom'}
+    </span>
+  );
+}
+
+/** 模型价格脚注：命中 OpenRouter 公开目录才展示，未命中不占位。 */
+function GenerationProviderPrice({
+  model,
+  locale,
+}: {
+  model: string;
+  locale: Locale;
+}) {
+  const modelPricing = useModelPricing(model.trim());
+  const price = modelPricing.price;
+  if (!price) return null;
+  return (
+    <div
+      className="flex items-center gap-2 text-[11px] text-fg-faint"
+      title={
+        locale === 'zh-CN'
+          ? '价格来自 OpenRouter 公开目录，以美元计价，仅供参考。'
+          : 'Price from the OpenRouter public catalog, in USD, for reference only.'
+      }
+    >
+      <span className="font-medium text-fg-dim">
+        {locale === 'zh-CN' ? '价格' : 'Price'}
+      </span>
+      <span className="font-mono">
+        {locale === 'zh-CN'
+          ? `输入 $${formatUsd(price.inputUsd)} · 输出 $${formatUsd(price.outputUsd)}`
+          : `in $${formatUsd(price.inputUsd)} · out $${formatUsd(price.outputUsd)}`}
+      </span>
+      <span className="text-fg-faint/70">
+        / {locale === 'zh-CN' ? '每百万 token' : 'per 1M tokens'}
+      </span>
+    </div>
   );
 }
 
@@ -4259,6 +4837,13 @@ function ImageGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   const addCustomProvider = (draft: CustomGenerationProviderDraft) => {
     const id = uniqueCustomId(
@@ -4329,15 +4914,103 @@ function ImageGenerationSettingsPanel({
     setSettings(loadImageGenerationSettings(settingsProfile));
   };
 
+  const cloneProvider = (provider: ImageProviderDefinition) => {
+    const baseName = provider.label.trim() || '自定义渠道';
+    const suffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((item) => item.label.trim()));
+    let candidate = `${baseName}${suffix}`;
+    let i = 2;
+    while (existing.has(candidate)) candidate = `${baseName}${suffix} ${i++}`;
+    const newId = uniqueCustomId(
+      createCustomImageProviderId(candidate),
+      settings.customProviders.map((item) => item.id),
+    );
+    const clone: CustomImageProviderDefinition = {
+      id: newId,
+      label: candidate,
+      category: provider.category,
+      apiKind: provider.apiKind,
+      defaultModel: provider.defaultModel,
+      models: [...provider.models],
+      needsKey: provider.needsKey,
+      needsAccountId: provider.needsAccountId,
+      local: provider.local,
+      defaultBaseUrl: provider.defaultBaseUrl ?? '',
+      supportsBaseUrl: true,
+      endpointPlaceholder: provider.endpointPlaceholder,
+      credentialUrl: provider.credentialUrl,
+      keyLabel: provider.keyLabel,
+      keyPlaceholder: provider.keyPlaceholder,
+      accountIdLabel: provider.accountIdLabel,
+      accountIdPlaceholder: provider.accountIdPlaceholder,
+      note: provider.note,
+    };
+    const next: ImageGenerationSettings = {
+      ...settings,
+      customProviders: [...settings.customProviders, clone],
+      providerKeys: { ...settings.providerKeys },
+      providerAccountIds: { ...settings.providerAccountIds },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    if (settings.providerKeys[provider.id])
+      next.providerKeys[newId] = settings.providerKeys[provider.id];
+    if (settings.providerAccountIds[provider.id])
+      next.providerAccountIds[newId] = settings.providerAccountIds[provider.id];
+    if (settings.providerBaseUrls[provider.id])
+      next.providerBaseUrls[newId] = settings.providerBaseUrls[provider.id];
+    if (settings.providerModels[provider.id])
+      next.providerModels[newId] = settings.providerModels[provider.id];
+    if (settings.providerModelLists[provider.id])
+      next.providerModelLists[newId] = [...settings.providerModelLists[provider.id]!];
+    saveImageGenerationSettings(next, settingsProfile);
+    setSettings(loadImageGenerationSettings(settingsProfile));
+  };
+
+  const renameProvider = (provider: ImageProviderDefinition, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const next: ImageGenerationSettings = provider.custom
+      ? {
+          ...settings,
+          customProviders: settings.customProviders.map((item) =>
+            item.id === provider.id ? { ...item, label: trimmed } : item,
+          ),
+        }
+      : {
+          ...settings,
+          providerLabels: { ...settings.providerLabels, [provider.id]: trimmed },
+        };
+    saveImageGenerationSettings(next, settingsProfile);
+    setSettings(loadImageGenerationSettings(settingsProfile));
+  };
+
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.imageGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.imageGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.imageGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.imageGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.imageGeneration.title')}
+          filename="ultragamestudio-image-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveImageGenerationSettings(
+              raw as unknown as ImageGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadImageGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -4385,6 +5058,12 @@ function ImageGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -4407,8 +5086,13 @@ function ImageGenerationSettingsPanel({
             </button>
           </div>
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <ImageProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -4421,6 +5105,8 @@ function ImageGenerationSettingsPanel({
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
               }
+              onClone={() => cloneProvider(provider)}
+              onRename={(label) => renameProvider(provider, label)}
             />
           ))}
         </div>
@@ -4499,14 +5185,20 @@ function ImageProviderSettingsRow({
   locale,
   onChange,
   onDelete,
+  onClone,
+  onRename,
 }: {
   provider: ImageProviderDefinition;
   settings: ImageGenerationSettings;
   locale: Locale;
   onChange: (settings: ImageGenerationSettings) => void;
   onDelete?: () => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(provider.label);
   const [modelRefresh, setModelRefresh] = useState<{
     loading: boolean;
     error: string | null;
@@ -4676,11 +5368,55 @@ function ImageProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(event) => setLabelValue(event.target.value)}
+                onBlur={() => {
+                  setEditingLabel(false);
+                  onRename?.(labelValue);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelValue(provider.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                aria-label={t(locale, 'settings.models.providerName')}
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-semibold text-fg outline-none transition-colors focus:border-accent"
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelValue(provider.label);
+                  setEditingLabel(true);
+                }}
+                title={t(locale, 'settings.models.editTitle')}
+                className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-semibold text-fg transition-colors hover:bg-panel hover:text-accent"
+              >
+                <span className="truncate">{provider.label}</span>
+                <Pencil
+                  size={12}
+                  strokeWidth={2.2}
+                  className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            )}
             <span
               className={cn(
                 'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
@@ -4689,6 +5425,7 @@ function ImageProviderSettingsRow({
             >
               {imageProviderCategoryLabel(provider.category, locale)}
             </span>
+            <GenerationProviderSourceBadge custom={!!provider.custom} locale={locale} />
             <StatusBadge
               state={ready ? 'direct' : 'unavailable'}
               label={imageProviderStatusLabel(provider, settings, locale)}
@@ -4734,6 +5471,17 @@ function ImageProviderSettingsRow({
                     ? 'settings.freeChannels.manageKey'
                     : 'settings.freeChannels.getKey',
             )}
+          </button>
+        )}
+        {onClone && (
+          <button
+            type="button"
+            onClick={onClone}
+            title={t(locale, 'settings.models.clone')}
+            aria-label={t(locale, 'settings.models.clone')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+          >
+            <Copy size={13} strokeWidth={2.2} />
           </button>
         )}
         {onDelete && (
@@ -4852,6 +5600,8 @@ function ImageProviderSettingsRow({
           />
         </div>
 
+        <GenerationProviderPrice model={model} locale={locale} />
+
         {isComfyChannel && (
           <div className="lg:col-span-2 space-y-2 rounded-md border border-accent/30 bg-accent/5 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4934,6 +5684,13 @@ function MusicGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   const addCustomProvider = (draft: CustomGenerationProviderDraft) => {
     const id = uniqueCustomId(
@@ -4996,15 +5753,100 @@ function MusicGenerationSettingsPanel({
     setSettings(loadMusicGenerationSettings(settingsProfile));
   };
 
+  const cloneProvider = (provider: MusicProviderDefinition) => {
+    const baseName = provider.label.trim() || '自定义渠道';
+    const suffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((item) => item.label.trim()));
+    let candidate = `${baseName}${suffix}`;
+    let i = 2;
+    while (existing.has(candidate)) candidate = `${baseName}${suffix} ${i++}`;
+    const newId = uniqueCustomId(
+      createCustomMusicProviderId(candidate),
+      settings.customProviders.map((item) => item.id),
+    );
+    const clone: CustomMusicProviderDefinition = {
+      id: newId,
+      label: candidate,
+      category: provider.category,
+      apiKind: provider.apiKind,
+      defaultModel: provider.defaultModel,
+      models: [...provider.models],
+      needsKey: provider.needsKey,
+      local: provider.local,
+      defaultBaseUrl: provider.defaultBaseUrl,
+      supportsBaseUrl: true,
+      endpointPlaceholder: provider.endpointPlaceholder,
+      credentialUrl: provider.credentialUrl,
+      keyLabel: provider.keyLabel,
+      keyPlaceholder: provider.keyPlaceholder,
+      note: provider.note,
+    };
+    const next: MusicGenerationSettings = {
+      ...settings,
+      customProviders: [...settings.customProviders, clone],
+      providerKeys: { ...settings.providerKeys },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    const effectiveKey =
+      settings.providerKeys[provider.keyProviderId ?? provider.id]?.trim() ||
+      settings.providerKeys[provider.id]?.trim() ||
+      '';
+    if (effectiveKey) next.providerKeys[newId] = effectiveKey;
+    if (settings.providerBaseUrls[provider.id])
+      next.providerBaseUrls[newId] = settings.providerBaseUrls[provider.id];
+    if (settings.providerModels[provider.id])
+      next.providerModels[newId] = settings.providerModels[provider.id];
+    if (settings.providerModelLists[provider.id])
+      next.providerModelLists[newId] = [...settings.providerModelLists[provider.id]!];
+    saveMusicGenerationSettings(next, settingsProfile);
+    setSettings(loadMusicGenerationSettings(settingsProfile));
+  };
+
+  const renameProvider = (provider: MusicProviderDefinition, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const next: MusicGenerationSettings = provider.custom
+      ? {
+          ...settings,
+          customProviders: settings.customProviders.map((item) =>
+            item.id === provider.id ? { ...item, label: trimmed } : item,
+          ),
+        }
+      : {
+          ...settings,
+          providerLabels: { ...settings.providerLabels, [provider.id]: trimmed },
+        };
+    saveMusicGenerationSettings(next, settingsProfile);
+    setSettings(loadMusicGenerationSettings(settingsProfile));
+  };
+
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.musicGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.musicGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.musicGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.musicGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.musicGeneration.title')}
+          filename="ultragamestudio-music-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveMusicGenerationSettings(
+              raw as unknown as MusicGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadMusicGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -5052,6 +5894,12 @@ function MusicGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -5074,8 +5922,13 @@ function MusicGenerationSettingsPanel({
             </button>
           </div>
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <MusicProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -5088,6 +5941,8 @@ function MusicGenerationSettingsPanel({
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
               }
+              onClone={() => cloneProvider(provider)}
+              onRename={(label) => renameProvider(provider, label)}
             />
           ))}
         </div>
@@ -5163,14 +6018,20 @@ function MusicProviderSettingsRow({
   locale,
   onChange,
   onDelete,
+  onClone,
+  onRename,
 }: {
   provider: MusicProviderDefinition;
   settings: MusicGenerationSettings;
   locale: Locale;
   onChange: (settings: MusicGenerationSettings) => void;
   onDelete?: () => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(provider.label);
   const [modelRefresh, setModelRefresh] = useState<{
     loading: boolean;
     error: string | null;
@@ -5285,11 +6146,55 @@ function MusicProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(event) => setLabelValue(event.target.value)}
+                onBlur={() => {
+                  setEditingLabel(false);
+                  onRename?.(labelValue);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelValue(provider.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                aria-label={t(locale, 'settings.models.providerName')}
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-semibold text-fg outline-none transition-colors focus:border-accent"
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelValue(provider.label);
+                  setEditingLabel(true);
+                }}
+                title={t(locale, 'settings.models.editTitle')}
+                className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-semibold text-fg transition-colors hover:bg-panel hover:text-accent"
+              >
+                <span className="truncate">{provider.label}</span>
+                <Pencil
+                  size={12}
+                  strokeWidth={2.2}
+                  className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            )}
             <span
               className={cn(
                 'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
@@ -5298,6 +6203,7 @@ function MusicProviderSettingsRow({
             >
               {musicProviderCategoryLabel(provider.category, locale)}
             </span>
+            <GenerationProviderSourceBadge custom={!!provider.custom} locale={locale} />
             <StatusBadge
               state={ready ? 'direct' : 'unavailable'}
               label={musicProviderStatusLabel(provider, settings, locale)}
@@ -5322,6 +6228,17 @@ function MusicProviderSettingsRow({
                     ? 'settings.freeChannels.manageKey'
                     : 'settings.freeChannels.getKey',
                 )}
+          </button>
+        )}
+        {onClone && (
+          <button
+            type="button"
+            onClick={onClone}
+            title={t(locale, 'settings.models.clone')}
+            aria-label={t(locale, 'settings.models.clone')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+          >
+            <Copy size={13} strokeWidth={2.2} />
           </button>
         )}
         {onDelete && (
@@ -5419,6 +6336,8 @@ function MusicProviderSettingsRow({
             onRefresh={() => void refreshModels()}
           />
         </div>
+
+        <GenerationProviderPrice model={model} locale={locale} />
       </div>
     </div>
   );
@@ -5461,6 +6380,13 @@ function VideoGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   const addCustomProvider = (draft: CustomGenerationProviderDraft) => {
     const id = uniqueCustomId(
@@ -5521,15 +6447,100 @@ function VideoGenerationSettingsPanel({
     setSettings(loadVideoGenerationSettings(settingsProfile));
   };
 
+  const cloneProvider = (provider: VideoProviderDefinition) => {
+    const baseName = provider.label.trim() || '自定义渠道';
+    const suffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((item) => item.label.trim()));
+    let candidate = `${baseName}${suffix}`;
+    let i = 2;
+    while (existing.has(candidate)) candidate = `${baseName}${suffix} ${i++}`;
+    const newId = uniqueCustomId(
+      createCustomVideoProviderId(candidate),
+      settings.customProviders.map((item) => item.id),
+    );
+    const clone: CustomVideoProviderDefinition = {
+      id: newId,
+      label: candidate,
+      category: provider.category,
+      apiKind: provider.apiKind,
+      defaultModel: provider.defaultModel,
+      models: [...provider.models],
+      needsKey: provider.needsKey,
+      local: provider.local,
+      defaultBaseUrl: provider.defaultBaseUrl,
+      supportsBaseUrl: true,
+      endpointPlaceholder: provider.endpointPlaceholder,
+      credentialUrl: provider.credentialUrl,
+      keyLabel: provider.keyLabel,
+      keyPlaceholder: provider.keyPlaceholder,
+      note: provider.note,
+    };
+    const next: VideoGenerationSettings = {
+      ...settings,
+      customProviders: [...settings.customProviders, clone],
+      providerKeys: { ...settings.providerKeys },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+    };
+    const effectiveKey =
+      settings.providerKeys[provider.keyProviderId ?? provider.id]?.trim() ||
+      settings.providerKeys[provider.id]?.trim() ||
+      '';
+    if (effectiveKey) next.providerKeys[newId] = effectiveKey;
+    if (settings.providerBaseUrls[provider.id])
+      next.providerBaseUrls[newId] = settings.providerBaseUrls[provider.id];
+    if (settings.providerModels[provider.id])
+      next.providerModels[newId] = settings.providerModels[provider.id];
+    if (settings.providerModelLists[provider.id])
+      next.providerModelLists[newId] = [...settings.providerModelLists[provider.id]!];
+    saveVideoGenerationSettings(next, settingsProfile);
+    setSettings(loadVideoGenerationSettings(settingsProfile));
+  };
+
+  const renameProvider = (provider: VideoProviderDefinition, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const next: VideoGenerationSettings = provider.custom
+      ? {
+          ...settings,
+          customProviders: settings.customProviders.map((item) =>
+            item.id === provider.id ? { ...item, label: trimmed } : item,
+          ),
+        }
+      : {
+          ...settings,
+          providerLabels: { ...settings.providerLabels, [provider.id]: trimmed },
+        };
+    saveVideoGenerationSettings(next, settingsProfile);
+    setSettings(loadVideoGenerationSettings(settingsProfile));
+  };
+
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.videoGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.videoGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.videoGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.videoGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.videoGeneration.title')}
+          filename="ultragamestudio-video-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveVideoGenerationSettings(
+              raw as unknown as VideoGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadVideoGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -5577,6 +6588,12 @@ function VideoGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -5599,8 +6616,13 @@ function VideoGenerationSettingsPanel({
             </button>
           </div>
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <VideoProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -5613,6 +6635,8 @@ function VideoGenerationSettingsPanel({
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
               }
+              onClone={() => cloneProvider(provider)}
+              onRename={(label) => renameProvider(provider, label)}
             />
           ))}
         </div>
@@ -5671,16 +6695,39 @@ function AnimationGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.animationGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.animationGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.animationGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.animationGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.animationGeneration.title')}
+          filename="ultragamestudio-animation-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveAnimationGenerationSettings(
+              raw as unknown as AnimationGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadAnimationGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -5741,6 +6788,12 @@ function AnimationGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -5753,8 +6806,13 @@ function AnimationGenerationSettingsPanel({
           </div>
           <StatusBadge state="default" label={String(activeProviders.length)} />
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <AnimationProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -5864,7 +6922,10 @@ function AnimationProviderSettingsRow({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-panel p-3">
+    <div
+      className="rounded-lg border border-border bg-panel p-3"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -5938,6 +6999,8 @@ function AnimationProviderSettingsRow({
           />
         </label>
 
+        <GenerationProviderPrice model={model} locale={locale} />
+
         {provider.apiKind === 'library-link' && (
           <div className="rounded-md border border-border-soft bg-bg px-2.5 py-2 text-[11px] leading-relaxed text-fg-faint">
             {t(locale, 'settings.animationGeneration.noKeyRequired')} · {animationProviderBaseUrl(provider.id, settings)}
@@ -5990,16 +7053,39 @@ function WorldModelGenerationSettingsPanel({
           ? t(locale, 'settings.worldModelGeneration.needsConfig')
           : t(locale, 'settings.worldModelGeneration.previewOnly')),
   }));
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? providers.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : providers;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.worldModelGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.worldModelGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.worldModelGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.worldModelGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.worldModelGeneration.title')}
+          filename="ultragamestudio-world-model.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveWorldModelGenerationSettings(
+              raw as unknown as WorldModelGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadWorldModelGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -6018,9 +7104,20 @@ function WorldModelGenerationSettingsPanel({
         </div>
       </SettingRow>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section className="rounded-lg border border-border bg-bg-alt p-4">
+        {showNoMatch && (
+          <p className="mb-3 rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {providers.map((provider) => (
+          {visibleProviders.map((provider) => (
             <WorldModelProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -6085,7 +7182,10 @@ function WorldModelProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-2 rounded-lg border border-border bg-panel p-3">
+    <div
+      className="space-y-2 rounded-lg border border-border bg-panel p-3"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-sm font-medium text-fg">
@@ -6159,6 +7259,8 @@ function WorldModelProviderSettingsRow({
         />
       </label>
 
+      <GenerationProviderPrice model={model} locale={locale} />
+
       {effectiveBaseUrl && (
         <p className="truncate text-[11px] text-fg-faint" title={effectiveBaseUrl}>
           {effectiveBaseUrl}
@@ -6230,14 +7332,20 @@ function VideoProviderSettingsRow({
   locale,
   onChange,
   onDelete,
+  onClone,
+  onRename,
 }: {
   provider: VideoProviderDefinition;
   settings: VideoGenerationSettings;
   locale: Locale;
   onChange: (settings: VideoGenerationSettings) => void;
   onDelete?: () => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(provider.label);
   const [modelRefresh, setModelRefresh] = useState<{
     loading: boolean;
     error: string | null;
@@ -6352,11 +7460,55 @@ function VideoProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(event) => setLabelValue(event.target.value)}
+                onBlur={() => {
+                  setEditingLabel(false);
+                  onRename?.(labelValue);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelValue(provider.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                aria-label={t(locale, 'settings.models.providerName')}
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-semibold text-fg outline-none transition-colors focus:border-accent"
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelValue(provider.label);
+                  setEditingLabel(true);
+                }}
+                title={t(locale, 'settings.models.editTitle')}
+                className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-semibold text-fg transition-colors hover:bg-panel hover:text-accent"
+              >
+                <span className="truncate">{provider.label}</span>
+                <Pencil
+                  size={12}
+                  strokeWidth={2.2}
+                  className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            )}
             <span
               className={cn(
                 'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
@@ -6365,6 +7517,7 @@ function VideoProviderSettingsRow({
             >
               {videoProviderCategoryLabel(provider.category, locale)}
             </span>
+            <GenerationProviderSourceBadge custom={!!provider.custom} locale={locale} />
             <StatusBadge
               state={ready ? 'direct' : 'unavailable'}
               label={videoProviderStatusLabel(provider, settings, locale)}
@@ -6389,6 +7542,17 @@ function VideoProviderSettingsRow({
                     ? 'settings.freeChannels.manageKey'
                     : 'settings.freeChannels.getKey',
                 )}
+          </button>
+        )}
+        {onClone && (
+          <button
+            type="button"
+            onClick={onClone}
+            title={t(locale, 'settings.models.clone')}
+            aria-label={t(locale, 'settings.models.clone')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+          >
+            <Copy size={13} strokeWidth={2.2} />
           </button>
         )}
         {onDelete && (
@@ -6488,6 +7652,8 @@ function VideoProviderSettingsRow({
             onRefresh={() => void refreshModels()}
           />
         </div>
+
+        <GenerationProviderPrice model={model} locale={locale} />
       </div>
     </div>
   );
@@ -6530,6 +7696,13 @@ function SpeechGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   const addCustomProvider = (draft: CustomGenerationProviderDraft) => {
     const id = uniqueCustomId(
@@ -6600,15 +7773,111 @@ function SpeechGenerationSettingsPanel({
     setSettings(loadSpeechGenerationSettings(settingsProfile));
   };
 
+  const cloneProvider = (provider: SpeechProviderDefinition) => {
+    const baseName = provider.label.trim() || '自定义渠道';
+    const suffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((item) => item.label.trim()));
+    let candidate = `${baseName}${suffix}`;
+    let i = 2;
+    while (existing.has(candidate)) candidate = `${baseName}${suffix} ${i++}`;
+    const newId = uniqueCustomId(
+      createCustomSpeechProviderId(candidate),
+      settings.customProviders.map((item) => item.id),
+    );
+    const clone: CustomSpeechProviderDefinition = {
+      id: newId,
+      label: candidate,
+      category: provider.category,
+      apiKind: provider.apiKind,
+      defaultModel: provider.defaultModel,
+      models: [...provider.models],
+      defaultVoice: provider.defaultVoice,
+      voices: [...provider.voices],
+      needsKey: provider.needsKey,
+      needsAccountId: provider.needsAccountId,
+      local: provider.local,
+      defaultBaseUrl: provider.defaultBaseUrl,
+      supportsBaseUrl: true,
+      endpointPlaceholder: provider.endpointPlaceholder,
+      credentialUrl: provider.credentialUrl,
+      keyLabel: provider.keyLabel,
+      keyPlaceholder: provider.keyPlaceholder,
+      accountIdLabel: provider.accountIdLabel,
+      accountIdPlaceholder: provider.accountIdPlaceholder,
+      note: provider.note,
+    };
+    const next: SpeechGenerationSettings = {
+      ...settings,
+      customProviders: [...settings.customProviders, clone],
+      providerKeys: { ...settings.providerKeys },
+      providerAccountIds: { ...settings.providerAccountIds },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+      providerModelLists: { ...settings.providerModelLists },
+      providerVoices: { ...settings.providerVoices },
+    };
+    const effectiveKey =
+      settings.providerKeys[provider.keyProviderId ?? provider.id]?.trim() ||
+      settings.providerKeys[provider.id]?.trim() ||
+      '';
+    if (effectiveKey) next.providerKeys[newId] = effectiveKey;
+    if (settings.providerAccountIds[provider.id])
+      next.providerAccountIds[newId] = settings.providerAccountIds[provider.id];
+    if (settings.providerBaseUrls[provider.id])
+      next.providerBaseUrls[newId] = settings.providerBaseUrls[provider.id];
+    if (settings.providerModels[provider.id])
+      next.providerModels[newId] = settings.providerModels[provider.id];
+    if (settings.providerModelLists[provider.id])
+      next.providerModelLists[newId] = [...settings.providerModelLists[provider.id]!];
+    if (settings.providerVoices[provider.id])
+      next.providerVoices[newId] = settings.providerVoices[provider.id];
+    saveSpeechGenerationSettings(next, settingsProfile);
+    setSettings(loadSpeechGenerationSettings(settingsProfile));
+  };
+
+  const renameProvider = (provider: SpeechProviderDefinition, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const next: SpeechGenerationSettings = provider.custom
+      ? {
+          ...settings,
+          customProviders: settings.customProviders.map((item) =>
+            item.id === provider.id ? { ...item, label: trimmed } : item,
+          ),
+        }
+      : {
+          ...settings,
+          providerLabels: { ...settings.providerLabels, [provider.id]: trimmed },
+        };
+    saveSpeechGenerationSettings(next, settingsProfile);
+    setSettings(loadSpeechGenerationSettings(settingsProfile));
+  };
+
   return (
     <div className="space-y-5">
-      <div>
-        <h3 className="text-lg font-semibold text-fg">
-          {t(locale, 'settings.speechGeneration.title')}
-        </h3>
-        <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-          {t(locale, 'settings.speechGeneration.description')}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-lg font-semibold text-fg">
+            {t(locale, 'settings.speechGeneration.title')}
+          </h3>
+          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+            {t(locale, 'settings.speechGeneration.description')}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.speechGeneration.title')}
+          filename="ultragamestudio-speech-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveSpeechGenerationSettings(
+              raw as unknown as SpeechGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadSpeechGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </div>
 
       <SettingRow
@@ -6656,6 +7925,12 @@ function SpeechGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -6678,8 +7953,13 @@ function SpeechGenerationSettingsPanel({
             </button>
           </div>
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <SpeechProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -6692,6 +7972,8 @@ function SpeechGenerationSettingsPanel({
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
               }
+              onClone={() => cloneProvider(provider)}
+              onRename={(label) => renameProvider(provider, label)}
             />
           ))}
         </div>
@@ -6767,14 +8049,20 @@ function SpeechProviderSettingsRow({
   locale,
   onChange,
   onDelete,
+  onClone,
+  onRename,
 }: {
   provider: SpeechProviderDefinition;
   settings: SpeechGenerationSettings;
   locale: Locale;
   onChange: (settings: SpeechGenerationSettings) => void;
   onDelete?: () => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(provider.label);
   const [modelRefresh, setModelRefresh] = useState<{
     loading: boolean;
     error: string | null;
@@ -6916,11 +8204,55 @@ function SpeechProviderSettingsRow({
   };
   // __SPEECH_ROW_RENDER__
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(event) => setLabelValue(event.target.value)}
+                onBlur={() => {
+                  setEditingLabel(false);
+                  onRename?.(labelValue);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelValue(provider.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                aria-label={t(locale, 'settings.models.providerName')}
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-semibold text-fg outline-none transition-colors focus:border-accent"
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelValue(provider.label);
+                  setEditingLabel(true);
+                }}
+                title={t(locale, 'settings.models.editTitle')}
+                className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-semibold text-fg transition-colors hover:bg-panel hover:text-accent"
+              >
+                <span className="truncate">{provider.label}</span>
+                <Pencil
+                  size={12}
+                  strokeWidth={2.2}
+                  className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            )}
             <span
               className={cn(
                 'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
@@ -6929,6 +8261,7 @@ function SpeechProviderSettingsRow({
             >
               {speechProviderCategoryLabel(provider.category, locale)}
             </span>
+            <GenerationProviderSourceBadge custom={!!provider.custom} locale={locale} />
             <StatusBadge
               state={ready ? 'direct' : 'unavailable'}
               label={speechProviderStatusLabel(provider, settings, locale)}
@@ -6953,6 +8286,17 @@ function SpeechProviderSettingsRow({
                     ? 'settings.freeChannels.manageKey'
                     : 'settings.freeChannels.getKey',
                 )}
+          </button>
+        )}
+        {onClone && (
+          <button
+            type="button"
+            onClick={onClone}
+            title={t(locale, 'settings.models.clone')}
+            aria-label={t(locale, 'settings.models.clone')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+          >
+            <Copy size={13} strokeWidth={2.2} />
           </button>
         )}
         {onDelete && (
@@ -7094,6 +8438,8 @@ function SpeechProviderSettingsRow({
             onRefresh={() => void refreshModels()}
           />
         </div>
+
+        <GenerationProviderPrice model={model} locale={locale} />
       </div>
     </div>
   );
@@ -7120,14 +8466,46 @@ export function SpriteGenerationSettingsPanel({
   return (
     <div className="space-y-5">
       {!embedded && (
-        <div>
-          <h3 className="text-lg font-semibold text-fg">
-            {t(locale, 'settings.spriteGeneration.title')}
-          </h3>
-          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-            {t(locale, 'settings.spriteGeneration.description')}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-fg">
+              {t(locale, 'settings.spriteGeneration.title')}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.spriteGeneration.description')}
+            </p>
+          </div>
+          <GenerationChannelJsonBackup
+            locale={locale}
+            title={t(locale, 'settings.spriteGeneration.title')}
+            filename="ultragamestudio-sprite.json"
+            serialize={() => settings}
+            applyImport={(raw) => {
+              saveSpriteGenerationSettings(
+                raw as unknown as SpriteGenerationSettings,
+                settingsProfile,
+              );
+              setSettings(loadSpriteGenerationSettings(settingsProfile));
+              return { imported: 1, updated: 0, skipped: 0 };
+            }}
+          />
         </div>
+      )}
+      {embedded && (
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.spriteGeneration.title')}
+          filename="ultragamestudio-sprite.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveSpriteGenerationSettings(
+              raw as unknown as SpriteGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadSpriteGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       )}
 
       <div className="grid gap-3 rounded-lg border border-border bg-bg-alt p-4 md:grid-cols-2">
@@ -7448,6 +8826,13 @@ function UiDesignChannelSettingsPanel({
   const activeChannels = UI_DESIGN_CHANNELS.filter(
     (channel) => channel.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleChannels = channelQuery.trim()
+    ? activeChannels.filter((channel) =>
+        generationProviderMatches(channel, channelQuery),
+      )
+    : activeChannels;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleChannels.length === 0;
 
   const setDefaultChannel = (channelId: UiDesignChannelId) => {
     const channel = uiDesignChannelById(channelId);
@@ -7457,15 +8842,28 @@ function UiDesignChannelSettingsPanel({
 
   return (
     <div className="space-y-5">
-      <header className="space-y-1">
-        <h3 className="text-lg font-semibold text-fg">
-          {locale === 'zh-CN' ? 'UI 渠道' : 'UI channels'}
-        </h3>
-        <p className="text-xs leading-relaxed text-fg-faint">
-          {locale === 'zh-CN'
-            ? '配置游戏 UI 设计任务使用的全局默认设计工具或协作平台。/ui-mode-start 使用这里的设置。'
-            : 'Configure the global default design tool or collaboration channel used by UI design tasks. /ui-mode-start uses these settings.'}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-lg font-semibold text-fg">
+            {locale === 'zh-CN' ? 'UI 渠道' : 'UI channels'}
+          </h3>
+          <p className="text-xs leading-relaxed text-fg-faint">
+            {locale === 'zh-CN'
+              ? '配置游戏 UI 设计任务使用的全局默认设计工具或协作平台。/ui-mode-start 使用这里的设置。'
+              : 'Configure the global default design tool or collaboration channel used by UI design tasks. /ui-mode-start uses these settings.'}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={locale === 'zh-CN' ? 'UI 渠道' : 'UI channels'}
+          filename="ultragamestudio-ui-design.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveUiDesignChannelSettings(raw as unknown as UiDesignChannelSettings, settingsProfile);
+            setSettings(loadUiDesignChannelSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </header>
 
       <SettingRow
@@ -7531,6 +8929,12 @@ function UiDesignChannelSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -7550,8 +8954,13 @@ function UiDesignChannelSettingsPanel({
           <StatusBadge state="default" label={String(activeChannels.length)} />
         </div>
 
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeChannels.map((channel) => (
+          {visibleChannels.map((channel) => (
             <UiDesignChannelCard
               key={channel.id}
               channel={channel}
@@ -7651,7 +9060,10 @@ function UiDesignChannelCard({
   };
 
   return (
-    <article className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <article
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -7918,22 +9330,75 @@ function MeshLibrarySettingsPanel({
     });
   };
 
+  const cloneCustomLibrary = (id: MeshLibraryId) => {
+    const source = settings.customLibraries.find((library) => library.id === id);
+    if (!source) return;
+    const baseName = `${source.label}${locale === 'zh-CN' ? ' 副本' : ' copy'}`;
+    let newId = createCustomMeshLibraryId(baseName);
+    const used = new Set(libraries.map((library) => library.id));
+    let suffix = 2;
+    while (used.has(newId)) {
+      newId = `${createCustomMeshLibraryId(baseName)}-${suffix}` as typeof newId;
+      suffix += 1;
+    }
+    const cloned: CustomMeshLibraryDefinition = {
+      ...source,
+      id: newId,
+      label: baseName,
+    };
+    const apiKeys = { ...settings.apiKeys };
+    if (settings.apiKeys[id]) apiKeys[newId] = settings.apiKeys[id];
+    const wasEnabled = settings.enabledIds.includes(id);
+    persist({
+      ...settings,
+      customLibraries: [...settings.customLibraries, cloned],
+      enabledIds: wasEnabled
+        ? Array.from(new Set([...settings.enabledIds, newId]))
+        : settings.enabledIds,
+      apiKeys,
+    });
+  };
+
+  const renameCustomLibrary = (id: MeshLibraryId, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    persist({
+      ...settings,
+      customLibraries: settings.customLibraries.map((library) =>
+        library.id === id ? { ...library, label: trimmed } : library,
+      ),
+    });
+  };
+
   return (
     <div className="space-y-5">
-      <header className="space-y-1">
-        <h3 className="text-lg font-semibold text-fg">
-          {locale === 'zh-CN' ? '在线模型库' : 'Online model libraries'}
-        </h3>
-        <p className="text-xs leading-relaxed text-fg-faint">
-          {locale === 'zh-CN'
-            ? '配置 /mesh-search 使用的全局在线 3D 模型库。真正可搜索或可下载的库会出现在“已启用”里。'
-            : 'Configure the global online 3D model libraries used by /mesh-search. Libraries that can actually search or download appear under Enabled.'}
-        </p>
-        <p className="text-[11px] text-fg-faint">
-          {locale === 'zh-CN'
-            ? `可用 ${usableCount} 个 · 已开启 ${enabledCount} 个 · 仓库共 ${libraries.length} 个`
-            : `${usableCount} usable · ${enabledCount} enabled · ${libraries.length} in registry`}
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <h3 className="text-lg font-semibold text-fg">
+            {locale === 'zh-CN' ? '在线模型库' : 'Online model libraries'}
+          </h3>
+          <p className="text-xs leading-relaxed text-fg-faint">
+            {locale === 'zh-CN'
+              ? '配置 /mesh-search 使用的全局在线 3D 模型库。真正可搜索或可下载的库会出现在“已启用”里。'
+              : 'Configure the global online 3D model libraries used by /mesh-search. Libraries that can actually search or download appear under Enabled.'}
+          </p>
+          <p className="text-[11px] text-fg-faint">
+            {locale === 'zh-CN'
+              ? `可用 ${usableCount} 个 · 已开启 ${enabledCount} 个 · 仓库共 ${libraries.length} 个`
+              : `${usableCount} usable · ${enabledCount} enabled · ${libraries.length} in registry`}
+          </p>
+        </div>
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={locale === 'zh-CN' ? '在线模型库' : 'Online model libraries'}
+          filename="ultragamestudio-mesh-library.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveMeshLibrarySettings(raw as unknown as MeshLibraryAccountSettings, settingsProfile);
+            setSettings(loadMeshLibrarySettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       </header>
 
       <div
@@ -7984,6 +9449,8 @@ function MeshLibrarySettingsPanel({
           onKeyChange={setKey}
           onAddLibrary={() => setCustomDialogOpen(true)}
           onDeleteCustomLibrary={deleteCustomLibrary}
+          onCloneCustomLibrary={cloneCustomLibrary}
+          onRenameCustomLibrary={renameCustomLibrary}
           onBrowseRepository={() => setInnerTab('repository')}
         />
       ) : (
@@ -7997,6 +9464,8 @@ function MeshLibrarySettingsPanel({
           onKeyChange={setKey}
           onAddLibrary={() => setCustomDialogOpen(true)}
           onDeleteCustomLibrary={deleteCustomLibrary}
+          onCloneCustomLibrary={cloneCustomLibrary}
+          onRenameCustomLibrary={renameCustomLibrary}
         />
       )}
 
@@ -8051,6 +9520,8 @@ function MeshLibraryCard({
   locale,
   onToggle,
   onKeyChange,
+  onClone,
+  onRename,
   onDelete,
 }: {
   library: MeshLibraryDefinition;
@@ -8058,8 +9529,12 @@ function MeshLibraryCard({
   locale: Locale;
   onToggle: (enabled: boolean) => void;
   onKeyChange: (value: string) => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
   onDelete?: () => void;
 }) {
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(library.label);
   const enabled = settings.enabledIds.includes(library.id);
   const ready = meshLibraryReady(library.id, settings);
   const usability = meshLibraryUsability(library.id, settings);
@@ -8078,14 +9553,71 @@ function MeshLibraryCard({
           : 'Deep-link search';
 
   return (
-    <section className="flex flex-col gap-2.5 rounded-lg border border-border bg-bg-alt p-3">
+    <section
+      className="flex flex-col gap-2.5 rounded-lg border border-border bg-bg-alt p-3"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-semibold text-fg">{library.label}</span>
-            <span className="shrink-0 rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
-              {meshLibraryCategoryLabel(library.category, locale)}
-            </span>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                autoFocus
+                onChange={(event) => setLabelValue(event.target.value)}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    onRename?.(labelValue);
+                    setEditingLabel(false);
+                  } else if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setLabelValue(library.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                onBlur={() => {
+                  onRename?.(labelValue);
+                  setEditingLabel(false);
+                }}
+                className="w-full min-w-0 rounded border border-accent bg-bg px-1.5 py-0.5 text-sm font-semibold text-fg outline-none"
+              />
+            ) : (
+              <>
+                {onRename ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLabelValue(library.label);
+                      setEditingLabel(true);
+                    }}
+                    title={locale === 'zh-CN' ? '重命名' : 'Rename'}
+                    className="group inline-flex min-w-0 items-center gap-1 rounded text-left"
+                  >
+                    <span className="truncate text-sm font-semibold text-fg">
+                      {library.label}
+                    </span>
+                    <Pencil
+                      size={12}
+                      className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                    />
+                  </button>
+                ) : (
+                  <span className="truncate text-sm font-semibold text-fg">
+                    {library.label}
+                  </span>
+                )}
+                <GenerationProviderSourceBadge
+                  custom={!!library.custom}
+                  locale={locale}
+                />
+                <span className="shrink-0 rounded border border-border-soft bg-panel px-1.5 py-0.5 text-[10px] text-fg-faint">
+                  {meshLibraryCategoryLabel(library.category, locale)}
+                </span>
+              </>
+            )}
           </div>
           <span className="mt-1 block max-h-12 overflow-hidden text-xs leading-snug text-fg-faint">
             {library.note}
@@ -8101,6 +9633,17 @@ function MeshLibraryCard({
           >
             <ExternalLink size={13} />
           </button>
+          {onClone ? (
+            <button
+              type="button"
+              onClick={onClone}
+              title={t(locale, 'settings.models.clone')}
+              aria-label={t(locale, 'settings.models.clone')}
+              className="flex h-7 w-7 items-center justify-center rounded border border-border-soft bg-panel text-fg-faint hover:border-accent hover:text-fg"
+            >
+              <Copy size={13} />
+            </button>
+          ) : null}
           {onDelete ? (
             <button
               type="button"
@@ -8347,6 +9890,8 @@ function MeshLibraryEnabledTab({
   onKeyChange,
   onAddLibrary,
   onDeleteCustomLibrary,
+  onCloneCustomLibrary,
+  onRenameCustomLibrary,
   onBrowseRepository,
 }: {
   usableLibraries: MeshLibraryDefinition[];
@@ -8357,6 +9902,8 @@ function MeshLibraryEnabledTab({
   onKeyChange: (id: MeshLibraryId, value: string) => void;
   onAddLibrary: () => void;
   onDeleteCustomLibrary: (id: MeshLibraryId) => void;
+  onCloneCustomLibrary: (id: MeshLibraryId) => void;
+  onRenameCustomLibrary: (id: MeshLibraryId, label: string) => void;
   onBrowseRepository: () => void;
 }) {
   if (usableLibraries.length === 0 && pendingLibraries.length === 0) {
@@ -8406,6 +9953,14 @@ function MeshLibraryEnabledTab({
               locale={locale}
               onToggle={(enabled) => onToggle(library.id, enabled)}
               onKeyChange={(value) => onKeyChange(library.id, value)}
+              onClone={
+                library.custom ? () => onCloneCustomLibrary(library.id) : undefined
+              }
+              onRename={
+                library.custom
+                  ? (label) => onRenameCustomLibrary(library.id, label)
+                  : undefined
+              }
               onDelete={
                 library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
               }
@@ -8430,6 +9985,14 @@ function MeshLibraryEnabledTab({
                 locale={locale}
                 onToggle={(enabled) => onToggle(library.id, enabled)}
                 onKeyChange={(value) => onKeyChange(library.id, value)}
+                onClone={
+                  library.custom ? () => onCloneCustomLibrary(library.id) : undefined
+                }
+                onRename={
+                  library.custom
+                    ? (label) => onRenameCustomLibrary(library.id, label)
+                    : undefined
+                }
                 onDelete={
                   library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
                 }
@@ -8452,6 +10015,8 @@ function MeshLibraryRepositoryTab({
   onKeyChange,
   onAddLibrary,
   onDeleteCustomLibrary,
+  onCloneCustomLibrary,
+  onRenameCustomLibrary,
 }: {
   libraries: MeshLibraryDefinition[];
   settings: MeshLibraryAccountSettings;
@@ -8462,6 +10027,8 @@ function MeshLibraryRepositoryTab({
   onKeyChange: (id: MeshLibraryId, value: string) => void;
   onAddLibrary: () => void;
   onDeleteCustomLibrary: (id: MeshLibraryId) => void;
+  onCloneCustomLibrary: (id: MeshLibraryId) => void;
+  onRenameCustomLibrary: (id: MeshLibraryId, label: string) => void;
 }) {
   return (
     <div className="grid gap-3">
@@ -8508,6 +10075,14 @@ function MeshLibraryRepositoryTab({
               locale={locale}
               onToggle={(enabled) => onToggle(library.id, enabled)}
               onKeyChange={(value) => onKeyChange(library.id, value)}
+              onClone={
+                library.custom ? () => onCloneCustomLibrary(library.id) : undefined
+              }
+              onRename={
+                library.custom
+                  ? (label) => onRenameCustomLibrary(library.id, label)
+                  : undefined
+              }
               onDelete={
                 library.custom ? () => onDeleteCustomLibrary(library.id) : undefined
               }
@@ -8558,6 +10133,13 @@ export function ThreeDGenerationSettingsPanel({
   const activeProviders = providers.filter(
     (provider) => provider.category === category,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   const addCustomProvider = (draft: CustomGenerationProviderDraft) => {
     const id = uniqueCustomId(
@@ -8614,17 +10196,115 @@ export function ThreeDGenerationSettingsPanel({
     setSettings(loadThreeDGenerationSettings(settingsProfile));
   };
 
+  const cloneProvider = (provider: ThreeDProviderDefinition) => {
+    const baseName = provider.label.trim() || '自定义渠道';
+    const suffix = locale === 'zh-CN' ? ' 副本' : ' copy';
+    const existing = new Set(providers.map((item) => item.label.trim()));
+    let candidate = `${baseName}${suffix}`;
+    let i = 2;
+    while (existing.has(candidate)) candidate = `${baseName}${suffix} ${i++}`;
+    const newId = uniqueCustomId(
+      createCustomThreeDProviderId(candidate),
+      settings.customProviders.map((item) => item.id),
+    );
+    const clone: CustomThreeDProviderDefinition = {
+      id: newId,
+      label: candidate,
+      category: provider.category,
+      apiKind: provider.apiKind,
+      defaultModel: provider.defaultModel,
+      models: [...provider.models],
+      needsKey: provider.needsKey,
+      local: provider.local,
+      defaultBaseUrl: provider.defaultBaseUrl,
+      supportsBaseUrl: true,
+      endpointPlaceholder: provider.endpointPlaceholder,
+      credentialUrl: provider.credentialUrl,
+      keyLabel: provider.keyLabel,
+      keyPlaceholder: provider.keyPlaceholder,
+      note: provider.note,
+    };
+    const next: ThreeDGenerationSettings = {
+      ...settings,
+      customProviders: [...settings.customProviders, clone],
+      providerKeys: { ...settings.providerKeys },
+      providerBaseUrls: { ...settings.providerBaseUrls },
+      providerModels: { ...settings.providerModels },
+    };
+    const effectiveKey =
+      settings.providerKeys[provider.keyProviderId ?? provider.id]?.trim() ||
+      settings.providerKeys[provider.id]?.trim() ||
+      '';
+    if (effectiveKey) next.providerKeys[newId] = effectiveKey;
+    if (settings.providerBaseUrls[provider.id])
+      next.providerBaseUrls[newId] = settings.providerBaseUrls[provider.id];
+    if (settings.providerModels[provider.id])
+      next.providerModels[newId] = settings.providerModels[provider.id];
+    saveThreeDGenerationSettings(next, settingsProfile);
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
+  };
+
+  const renameProvider = (provider: ThreeDProviderDefinition, label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed) return;
+    const next: ThreeDGenerationSettings = provider.custom
+      ? {
+          ...settings,
+          customProviders: settings.customProviders.map((item) =>
+            item.id === provider.id ? { ...item, label: trimmed } : item,
+          ),
+        }
+      : {
+          ...settings,
+          providerLabels: { ...settings.providerLabels, [provider.id]: trimmed },
+        };
+    saveThreeDGenerationSettings(next, settingsProfile);
+    setSettings(loadThreeDGenerationSettings(settingsProfile));
+  };
+
   return (
     <div className="space-y-5">
       {!embedded && (
-        <div>
-          <h3 className="text-lg font-semibold text-fg">
-            {t(locale, 'settings.threeDGeneration.title')}
-          </h3>
-          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-            {t(locale, 'settings.threeDGeneration.description')}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-fg">
+              {t(locale, 'settings.threeDGeneration.title')}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.threeDGeneration.description')}
+            </p>
+          </div>
+          <GenerationChannelJsonBackup
+            locale={locale}
+            title={t(locale, 'settings.threeDGeneration.title')}
+            filename="ultragamestudio-3d-generation.json"
+            serialize={() => settings}
+            applyImport={(raw) => {
+              saveThreeDGenerationSettings(
+                raw as unknown as ThreeDGenerationSettings,
+                settingsProfile,
+              );
+              setSettings(loadThreeDGenerationSettings(settingsProfile));
+              return { imported: 1, updated: 0, skipped: 0 };
+            }}
+          />
         </div>
+      )}
+      {embedded && (
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.threeDGeneration.title')}
+          filename="ultragamestudio-3d-generation.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveThreeDGenerationSettings(
+              raw as unknown as ThreeDGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadThreeDGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       )}
 
       <SettingRow
@@ -8672,6 +10352,12 @@ export function ThreeDGenerationSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -8694,8 +10380,13 @@ export function ThreeDGenerationSettingsPanel({
             </button>
           </div>
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <ThreeDProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -8708,6 +10399,8 @@ export function ThreeDGenerationSettingsPanel({
               onDelete={
                 provider.custom ? () => deleteCustomProvider(provider.id) : undefined
               }
+              onClone={() => cloneProvider(provider)}
+              onRename={(label) => renameProvider(provider, label)}
             />
           ))}
         </div>
@@ -8783,14 +10476,20 @@ function ThreeDProviderSettingsRow({
   locale,
   onChange,
   onDelete,
+  onClone,
+  onRename,
 }: {
   provider: ThreeDProviderDefinition;
   settings: ThreeDGenerationSettings;
   locale: Locale;
   onChange: (settings: ThreeDGenerationSettings) => void;
   onDelete?: () => void;
+  onClone?: () => void;
+  onRename?: (label: string) => void;
 }) {
   const [showKey, setShowKey] = useState(false);
+  const [editingLabel, setEditingLabel] = useState(false);
+  const [labelValue, setLabelValue] = useState(provider.label);
   const keyProviderId = provider.keyProviderId ?? provider.id;
   const keyValue = settings.providerKeys[keyProviderId] ?? '';
   const baseUrl = settings.providerBaseUrls[provider.id] ?? '';
@@ -8836,11 +10535,55 @@ function ThreeDProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            {editingLabel ? (
+              <input
+                type="text"
+                value={labelValue}
+                onChange={(event) => setLabelValue(event.target.value)}
+                onBlur={() => {
+                  setEditingLabel(false);
+                  onRename?.(labelValue);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') event.currentTarget.blur();
+                  if (event.key === 'Escape') {
+                    setLabelValue(provider.label);
+                    setEditingLabel(false);
+                  }
+                }}
+                aria-label={t(locale, 'settings.models.providerName')}
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                className="h-7 min-w-0 max-w-[14rem] rounded-md border border-border bg-panel px-2 text-sm font-semibold text-fg outline-none transition-colors focus:border-accent"
+              />
+            ) : onRename ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setLabelValue(provider.label);
+                  setEditingLabel(true);
+                }}
+                title={t(locale, 'settings.models.editTitle')}
+                className="group inline-flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-left text-sm font-semibold text-fg transition-colors hover:bg-panel hover:text-accent"
+              >
+                <span className="truncate">{provider.label}</span>
+                <Pencil
+                  size={12}
+                  strokeWidth={2.2}
+                  className="shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-fg">{provider.label}</span>
+            )}
             <span
               className={cn(
                 'inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium',
@@ -8849,6 +10592,7 @@ function ThreeDProviderSettingsRow({
             >
               {threeDProviderCategoryLabel(provider.category, locale)}
             </span>
+            <GenerationProviderSourceBadge custom={!!provider.custom} locale={locale} />
             <StatusBadge
               state={ready ? 'direct' : 'unavailable'}
               label={threeDProviderStatusLabel(provider, settings, locale)}
@@ -8873,6 +10617,17 @@ function ThreeDProviderSettingsRow({
                     ? 'settings.freeChannels.manageKey'
                     : 'settings.freeChannels.getKey',
             )}
+          </button>
+        )}
+        {onClone && (
+          <button
+            type="button"
+            onClick={onClone}
+            title={t(locale, 'settings.models.clone')}
+            aria-label={t(locale, 'settings.models.clone')}
+            className="inline-flex h-7 w-7 items-center justify-center rounded border border-border bg-panel text-fg-faint transition-colors hover:border-accent/60 hover:text-accent"
+          >
+            <Copy size={13} strokeWidth={2.2} />
           </button>
         )}
         {onDelete && (
@@ -8972,6 +10727,8 @@ function ThreeDProviderSettingsRow({
             ))}
           </select>
         </label>
+
+        <GenerationProviderPrice model={model} locale={locale} />
       </div>
     </div>
   );
@@ -9018,18 +10775,57 @@ export function RiggingSettingsPanel({
   const activeProviders = riggingProviders.filter(
     (provider) => riggingChannelForCategory(provider.category) === channel,
   );
+  const [channelQuery, setChannelQuery] = useState('');
+  const visibleProviders = channelQuery.trim()
+    ? activeProviders.filter((provider) =>
+        generationProviderMatches(provider, channelQuery),
+      )
+    : activeProviders;
+  const showNoMatch = channelQuery.trim().length > 0 && visibleProviders.length === 0;
 
   return (
     <div className="space-y-5">
       {!embedded && (
-        <div>
-          <h3 className="text-lg font-semibold text-fg">
-            {t(locale, 'settings.rigging.title')}
-          </h3>
-          <p className="mt-1 text-xs leading-relaxed text-fg-faint">
-            {t(locale, 'settings.rigging.description')}
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-fg">
+              {t(locale, 'settings.rigging.title')}
+            </h3>
+            <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+              {t(locale, 'settings.rigging.description')}
+            </p>
+          </div>
+          <GenerationChannelJsonBackup
+            locale={locale}
+            title={t(locale, 'settings.rigging.title')}
+            filename="ultragamestudio-rigging.json"
+            serialize={() => settings}
+            applyImport={(raw) => {
+              saveThreeDGenerationSettings(
+                raw as unknown as ThreeDGenerationSettings,
+                settingsProfile,
+              );
+              setSettings(loadThreeDGenerationSettings(settingsProfile));
+              return { imported: 1, updated: 0, skipped: 0 };
+            }}
+          />
         </div>
+      )}
+      {embedded && (
+        <GenerationChannelJsonBackup
+          locale={locale}
+          title={t(locale, 'settings.rigging.title')}
+          filename="ultragamestudio-rigging.json"
+          serialize={() => settings}
+          applyImport={(raw) => {
+            saveThreeDGenerationSettings(
+              raw as unknown as ThreeDGenerationSettings,
+              settingsProfile,
+            );
+            setSettings(loadThreeDGenerationSettings(settingsProfile));
+            return { imported: 1, updated: 0, skipped: 0 };
+          }}
+        />
       )}
 
       <SettingRow
@@ -9084,6 +10880,12 @@ export function RiggingSettingsPanel({
         </div>
       </div>
 
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+
       <section role="tabpanel" className="rounded-lg border border-border bg-bg-alt p-4">
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
@@ -9096,8 +10898,13 @@ export function RiggingSettingsPanel({
           </div>
           <StatusBadge state="default" label={String(activeProviders.length)} />
         </div>
+        {showNoMatch && (
+          <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+            {t(locale, 'settings.models.searchEmptyTitle')}
+          </p>
+        )}
         <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-          {activeProviders.map((provider) => (
+          {visibleProviders.map((provider) => (
             <RiggingProviderSettingsRow
               key={provider.id}
               provider={provider}
@@ -9243,7 +11050,10 @@ function RiggingProviderSettingsRow({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT }}
+    >
       <div className="flex flex-wrap items-start gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -9376,6 +11186,8 @@ function RiggingProviderSettingsRow({
             ))}
           </select>
         </label>
+
+        <GenerationProviderPrice model={model} locale={locale} />
 
         {provider.supportsCommand && (
           <label className="block space-y-1 md:col-span-2">
@@ -9976,6 +11788,27 @@ function FreeChannelsSettings({ locale }: { locale: Locale }) {
   );
   const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
   const refresh = () => setRevision((n) => n + 1);
+  // 免费渠道列表搜索：按名称 / 说明 / 传输协议 / 默认模型 / 回退模型过滤。
+  const [channelQuery, setChannelQuery] = useState('');
+  const channelQueryTrimmed = channelQuery.trim().toLowerCase();
+  const visibleChannels = channelQueryTrimmed
+    ? FREE_CHANNELS.filter((channel) => {
+        const haystack = [
+          channel.id,
+          channel.label,
+          channel.note ?? '',
+          channel.transport,
+          channel.upstreamBaseUrl,
+          channel.defaultModel,
+          ...(channel.fallbackModels ?? []),
+        ]
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(channelQueryTrimmed);
+      })
+    : FREE_CHANNELS;
+  const showNoMatch =
+    channelQueryTrimmed.length > 0 && visibleChannels.length === 0;
   useEffect(() => {
     let disposed = false;
     void importFreeChannelKeysFromAutoConfig().then((ids) => {
@@ -10079,8 +11912,18 @@ function FreeChannelsSettings({ locale }: { locale: Locale }) {
           {status.msg}
         </p>
       )}
+      <GenerationChannelSearchInput
+        query={channelQuery}
+        onQueryChange={setChannelQuery}
+        locale={locale}
+      />
+      {showNoMatch && (
+        <p className="rounded-lg border border-border bg-bg-alt px-4 py-6 text-center text-xs text-fg-faint">
+          {t(locale, 'settings.models.searchEmptyTitle')}
+        </p>
+      )}
       <div className={SETTINGS_PROVIDER_GRID_CLASS}>
-        {FREE_CHANNELS.map((channel) => (
+        {visibleChannels.map((channel) => (
           <FreeChannelRow
             key={channel.id}
             channel={channel}
@@ -10358,7 +12201,10 @@ function FreeChannelRow({
   const canRefreshModels = canRefreshFreeChannelModels(channel);
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-bg-alt p-4">
+    <div
+      className="space-y-3 rounded-lg border border-border bg-bg-alt p-4"
+      style={{ backgroundColor: CHANNEL_CARD_TINT_FREE }}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-fg">{channel.label}</span>
         <span

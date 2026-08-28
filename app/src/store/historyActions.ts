@@ -37,7 +37,7 @@ import {
   emptyRunProgress,
   canvasViewportForSession,
   composerPatchForSession,
-  composerDraftPatchForSession,
+  composerDraftPatchForSessionFromRecord,
   defaultSessionComposer,
   workspaceFoldersFromMetadata,
   saveComposerSoon,
@@ -335,7 +335,7 @@ async function activateWorkspacePath(path: string): Promise<void> {
       ...runProgress,
       canvasViewport: activeRecordIsSimpleChat ? canvasViewport : null,
       mode: 'design',
-      ...composerDraftPatchForSession(s, sessionKey),
+      ...composerDraftPatchForSessionFromRecord(s, sessionKey, activeRecord?.meta),
     };
   });
   if (!isLatestHistoryNavigation(navigationVersion)) return;
@@ -467,7 +467,11 @@ async function initHistoryFromDisk(): Promise<void> {
         ...runProgress,
         canvasViewport: activeRecordIsSimpleChat ? canvasViewport : null,
         mode: 'design',
-        ...composerDraftPatchForSession(s, sessionKey),
+        ...composerDraftPatchForSessionFromRecord(
+          s,
+          sessionKey,
+          activeRecord?.meta,
+        ),
       };
     });
     void maybeRunCcSwitchAutoImportOnFirstRun();

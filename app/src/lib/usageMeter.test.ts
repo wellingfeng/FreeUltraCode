@@ -113,7 +113,7 @@ describe('usage meter', () => {
     });
 
     recordModelUsageForRoute(
-      { providerName: 'KuroAI', model: 'gpt-5.5' },
+      { providerName: 'RelayAI', model: 'gpt-5.5' },
       report!,
       { estimated: false, context: { workspaceId: 'w1', sessionId: 's1' } },
     );

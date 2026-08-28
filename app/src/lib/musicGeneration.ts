@@ -64,7 +64,7 @@ type MusicProviderApiKind =
   | 'generic-online-music'
   | 'generic-local-music';
 
-export type CustomMusicProviderApiKind = 'generic-online-music' | 'generic-local-music';
+export type CustomMusicProviderApiKind = MusicProviderApiKind;
 
 export interface MusicProviderDefinition {
   id: MusicProviderId;
@@ -112,6 +112,8 @@ export interface MusicGenerationSettings {
   providerBaseUrls: Partial<Record<MusicProviderId, string>>;
   providerModels: Partial<Record<MusicProviderId, string>>;
   providerModelLists: Partial<Record<MusicProviderId, string[]>>;
+  /** 内置渠道显示名覆盖，用于卡片内联重命名内置渠道。 */
+  providerLabels: Partial<Record<MusicProviderId, string>>;
 }
 
 export interface MusicGenerationResult {
@@ -725,6 +727,7 @@ export const DEFAULT_MUSIC_GENERATION_SETTINGS: MusicGenerationSettings = {
   providerBaseUrls: {},
   providerModels: {},
   providerModelLists: {},
+  providerLabels: {},
 };
 
 function isKnownMusicProviderId(
@@ -771,6 +774,14 @@ function normalizeMusicModels(value: unknown, fallback: string): string[] {
   return out.length > 0 ? out : ['custom-music-model'];
 }
 
+const MUSIC_PROVIDER_API_KINDS = new Set<string>(
+  MUSIC_PROVIDERS.map((provider) => provider.apiKind),
+);
+
+function isMusicProviderApiKind(value: unknown): value is MusicProviderApiKind {
+  return typeof value === 'string' && MUSIC_PROVIDER_API_KINDS.has(value);
+}
+
 function normalizeCustomMusicProvider(
   value: unknown,
   index: number,
@@ -791,8 +802,9 @@ function normalizeCustomMusicProvider(
     suffix += 1;
   }
   usedIds.add(id);
-  const apiKind: CustomMusicProviderApiKind =
-    source.apiKind === 'generic-local-music' ? 'generic-local-music' : 'generic-online-music';
+  const apiKind: CustomMusicProviderApiKind = isMusicProviderApiKind(source.apiKind)
+    ? source.apiKind
+    : 'generic-online-music';
   const defaultModel =
     typeof source.defaultModel === 'string' && source.defaultModel.trim()
       ? source.defaultModel.trim()
@@ -849,8 +861,11 @@ function normalizeCustomMusicProviders(value: unknown): CustomMusicProviderDefin
 export function musicProviders(
   settings = loadMusicGenerationSettings(),
 ): MusicProviderDefinition[] {
+  const labels = settings.providerLabels ?? {};
   return [
-    ...MUSIC_PROVIDERS,
+    ...MUSIC_PROVIDERS.map((provider) =>
+      labels[provider.id] ? { ...provider, label: labels[provider.id]! } : provider,
+    ),
     ...settings.customProviders.map(
       (provider): MusicProviderDefinition => ({ ...provider, custom: true }),
     ),
@@ -919,6 +934,7 @@ export function normalizeMusicGenerationSettings(
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
     providerModelLists: cleanModelListRecord(source.providerModelLists, validKey),
+    providerLabels: cleanRecord(source.providerLabels, validKey),
   };
 }
 
@@ -1115,31 +1131,31 @@ async function generateWithProvider(
 ): Promise<string[]> {
   switch (musicProviderById(providerId, settings).apiKind) {
     case 'elevenlabs-music':
-      return generateElevenLabsMusic(prompt, model, settings, targetDurationSeconds, signal);
+      return generateElevenLabsMusic(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'google-lyria':
-      return generateGoogleLyria(prompt, model, settings, signal);
+      return generateGoogleLyria(providerId, prompt, model, settings, signal);
     case 'minimax-music':
       return generateMiniMaxMusic(providerId, prompt, model, settings, signal);
     case 'stability-stable-audio':
-      return generateStabilityStableAudio(prompt, model, settings, targetDurationSeconds, signal);
+      return generateStabilityStableAudio(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'beatoven-maestro':
-      return generateBeatovenMaestro(prompt, model, settings, targetDurationSeconds, signal);
+      return generateBeatovenMaestro(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'mureka-music':
       return generateMurekaMusic(providerId, prompt, model, settings, signal);
     case 'tempolor-music':
       return generateTemPolorMusic(providerId, prompt, model, settings, signal);
     case 'mubert':
-      return generateMubert(prompt, model, settings, targetDurationSeconds, signal);
+      return generateMubert(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'sunoapi-music':
-      return generateSunoApiMusic(prompt, model, settings, signal);
+      return generateSunoApiMusic(providerId, prompt, model, settings, signal);
     case 'kie-suno-music':
-      return generateKieSunoMusic(prompt, model, settings, signal);
+      return generateKieSunoMusic(providerId, prompt, model, settings, signal);
     case 'suno-relay-music':
-      return generateSunoRelayMusic(prompt, model, settings, signal);
+      return generateSunoRelayMusic(providerId, prompt, model, settings, signal);
     case 'sonauto-music':
       return generateSonautoMusic(providerId, prompt, model, settings, signal);
     case 'ali-fun-music':
-      return generateAliFunMusic(prompt, model, settings, signal);
+      return generateAliFunMusic(providerId, prompt, model, settings, signal);
     case 'fal-music':
       return generateFalMusic(providerId, prompt, model, settings, targetDurationSeconds, signal);
     case 'huggingface-inference':
@@ -1152,15 +1168,16 @@ async function generateWithProvider(
 }
 
 async function generateElevenLabsMusic(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['elevenlabs-music']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('ElevenLabs API key is missing.');
-  const response = await tauriFetch(`${musicProviderBaseUrl('elevenlabs-music', settings)}/music`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl(providerId, settings)}/music`, {
     method: 'POST',
     headers: {
       'xi-api-key': apiKey,
@@ -1178,14 +1195,15 @@ async function generateElevenLabsMusic(
 }
 
 async function generateGoogleLyria(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['google-lyria']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Google API key is missing.');
-  const baseUrl = musicProviderBaseUrl('google-lyria', settings);
+  const baseUrl = musicProviderBaseUrl(providerId, settings);
   const response = await tauriFetch(
     `${baseUrl}/models/${encodeURIComponent(model)}:generateContent`,
     {
@@ -1248,13 +1266,14 @@ async function generateMiniMaxMusic(
 }
 
 async function generateStabilityStableAudio(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['stability-stable-audio']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Stability AI API key is missing.');
   const form = new FormData();
   form.set('prompt', prompt);
@@ -1263,7 +1282,7 @@ async function generateStabilityStableAudio(
   const endpoint = model.includes('2')
     ? '/audio/stable-audio-2/text-to-audio'
     : '/audio/stable-audio/text-to-audio';
-  const response = await tauriFetch(`${musicProviderBaseUrl('stability-stable-audio', settings)}${endpoint}`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl(providerId, settings)}${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -1276,15 +1295,16 @@ async function generateStabilityStableAudio(
 }
 
 async function generateBeatovenMaestro(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['beatoven-maestro']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Beatoven API token is missing.');
-  const baseUrl = musicProviderBaseUrl('beatoven-maestro', settings);
+  const baseUrl = musicProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1427,15 +1447,16 @@ async function generateTemPolorMusic(
 }
 
 async function generateMubert(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   targetDurationSeconds: number,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const pat = settings.providerKeys.mubert?.trim();
+  const pat = musicProviderKey(providerId, settings);
   if (!pat) throw new Error('Mubert personal access token is missing.');
-  const response = await tauriFetch(`${musicProviderBaseUrl('mubert', settings)}/RecordTrackTTM`, {
+  const response = await tauriFetch(`${musicProviderBaseUrl(providerId, settings)}/RecordTrackTTM`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1453,14 +1474,15 @@ async function generateMubert(
 }
 
 async function generateSunoApiMusic(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['sunoapi-music']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('SunoAPI.org API key is missing.');
-  const baseUrl = musicProviderBaseUrl('sunoapi-music', settings);
+  const baseUrl = musicProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1501,14 +1523,15 @@ async function generateSunoApiMusic(
 }
 
 async function generateKieSunoMusic(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['kie-suno-music']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Kie.ai API key is missing.');
-  const baseUrl = musicProviderBaseUrl('kie-suno-music', settings);
+  const baseUrl = musicProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1549,14 +1572,15 @@ async function generateKieSunoMusic(
 }
 
 async function generateSunoRelayMusic(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['suno-relay-music']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Suno relay API key is missing.');
-  const baseUrl = musicProviderBaseUrl('suno-relay-music', settings);
+  const baseUrl = musicProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: apiKey.toLowerCase().startsWith('bearer ') ? apiKey : `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1662,12 +1686,13 @@ async function generateSonautoMusic(
 }
 
 async function generateAliFunMusic(
+  providerId: MusicProviderId,
   prompt: string,
   model: string,
   settings: MusicGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = settings.providerKeys['ali-fun-music']?.trim();
+  const apiKey = musicProviderKey(providerId, settings);
   if (!apiKey) throw new Error('DashScope API key is missing.');
   const input: Record<string, unknown> = { gender: 'female' };
   // 多行文本视为歌词走 lyrics，单行描述走 prompt 由模型自动写词。
@@ -1677,7 +1702,7 @@ async function generateAliFunMusic(
     input.prompt = prompt;
   }
   const response = await tauriFetch(
-    `${musicProviderBaseUrl('ali-fun-music', settings)}/services/audio/music/generation`,
+    `${musicProviderBaseUrl(providerId, settings)}/services/audio/music/generation`,
     {
       method: 'POST',
       headers: {

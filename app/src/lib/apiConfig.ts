@@ -31,7 +31,6 @@ import {
 } from '@/lib/secureStorage';
 import {
   loadGatewayConfig,
-  modelClassFromModelId,
   saveGatewayConfig,
   setActiveGatewaySelection,
 } from '@/lib/gatewayConfig';
@@ -730,12 +729,15 @@ function removeGatewayProvider(providerId: string): void {
 function selectGatewayProvider(provider: Provider): void {
   const adapter = providerAdapter(provider);
   const model = provider.model?.trim();
+  // Persist the provider's real model id (e.g. kimi-k3), NOT a Claude tier
+  // placeholder: every UI surface (new-session dropdown, run log, route label)
+  // renders modelClass verbatim, while the runtime resolves the actual model
+  // from the channel config and the Rust launcher filters non-Claude ids out
+  // of the `--model` flag (should_pass_model) — so a real id displays correctly
+  // and still cannot leak into the CLI flag.
   setActiveGatewaySelection({
     adapter,
-    modelClass:
-      adapter === 'claude-code'
-        ? modelClassFromModelId(model)
-        : model || 'default',
+    modelClass: model || 'default',
     providerId: provider.id,
     channelId: 'default',
   });

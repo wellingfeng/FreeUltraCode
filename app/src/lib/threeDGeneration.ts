@@ -59,7 +59,7 @@ type ThreeDProviderApiKind =
   | 'generic-3d-api'
   | 'generic-local-3d';
 
-export type CustomThreeDProviderApiKind = 'generic-3d-api' | 'generic-local-3d';
+export type CustomThreeDProviderApiKind = ThreeDProviderApiKind;
 
 type ThreeDRiggingProviderApiKind =
   | 'fal-meshy-rigging'
@@ -114,6 +114,8 @@ export interface ThreeDGenerationSettings {
   providerKeys: Partial<Record<ThreeDProviderId, string>>;
   providerBaseUrls: Partial<Record<ThreeDProviderId, string>>;
   providerModels: Partial<Record<ThreeDProviderId, string>>;
+  /** 内置渠道显示名覆盖，用于卡片内联重命名内置渠道。 */
+  providerLabels: Partial<Record<ThreeDProviderId, string>>;
   rigging: ThreeDAutoRiggingSettings;
 }
 
@@ -1115,6 +1117,7 @@ export const DEFAULT_THREE_D_GENERATION_SETTINGS: ThreeDGenerationSettings = {
   providerKeys: {},
   providerBaseUrls: {},
   providerModels: {},
+  providerLabels: {},
   rigging: DEFAULT_THREE_D_AUTO_RIGGING_SETTINGS,
 };
 
@@ -1159,6 +1162,14 @@ function normalizeThreeDModels(value: unknown, fallback: string): string[] {
   return out.length > 0 ? out : ['custom-3d-model'];
 }
 
+const THREE_D_PROVIDER_API_KINDS = new Set<string>(
+  THREE_D_PROVIDERS.map((provider) => provider.apiKind),
+);
+
+function isThreeDProviderApiKind(value: unknown): value is ThreeDProviderApiKind {
+  return typeof value === 'string' && THREE_D_PROVIDER_API_KINDS.has(value);
+}
+
 function normalizeCustomThreeDProvider(
   value: unknown,
   index: number,
@@ -1179,8 +1190,9 @@ function normalizeCustomThreeDProvider(
     suffix += 1;
   }
   usedIds.add(id);
-  const apiKind: CustomThreeDProviderApiKind =
-    source.apiKind === 'generic-local-3d' ? 'generic-local-3d' : 'generic-3d-api';
+  const apiKind: CustomThreeDProviderApiKind = isThreeDProviderApiKind(source.apiKind)
+    ? source.apiKind
+    : 'generic-3d-api';
   const defaultModel =
     typeof source.defaultModel === 'string' && source.defaultModel.trim()
       ? source.defaultModel.trim()
@@ -1239,8 +1251,11 @@ function normalizeCustomThreeDProviders(value: unknown): CustomThreeDProviderDef
 export function threeDProviders(
   settings = loadThreeDGenerationSettings(),
 ): ThreeDProviderDefinition[] {
+  const labels = settings.providerLabels ?? {};
   return [
-    ...THREE_D_PROVIDERS,
+    ...THREE_D_PROVIDERS.map((provider) =>
+      labels[provider.id] ? { ...provider, label: labels[provider.id]! } : provider,
+    ),
     ...settings.customProviders.map(
       (provider): ThreeDProviderDefinition => ({ ...provider, custom: true }),
     ),
@@ -1292,6 +1307,7 @@ export function normalizeThreeDGenerationSettings(
     providerKeys: cleanRecord(source.providerKeys, validKey),
     providerBaseUrls: cleanRecord(source.providerBaseUrls, validKey),
     providerModels: cleanRecord(source.providerModels, validKey),
+    providerLabels: cleanRecord(source.providerLabels, validKey),
     rigging: normalizeThreeDAutoRiggingSettings(source.rigging),
   };
 }
@@ -1648,9 +1664,9 @@ async function generateWithProvider(
 ): Promise<string[]> {
   switch (threeDProviderById(providerId, settings).apiKind) {
     case 'meshy':
-      return generateMeshy(prompt, model, settings, signal);
+      return generateMeshy(providerId, prompt, model, settings, signal);
     case 'tripo':
-      return generateTripo(prompt, model, settings, signal);
+      return generateTripo(providerId, prompt, model, settings, signal);
     case '3d-ai-studio':
       return generate3DAiStudio(providerId, prompt, model, settings, signal);
     case 'fal-3d':
@@ -1843,14 +1859,15 @@ function staticRiggingAssessment(reason: string): ThreeDRiggingAssessment {
 }
 
 async function generateMeshy(
+  providerId: ThreeDProviderId,
   prompt: string,
   model: string,
   settings: ThreeDGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = threeDProviderKey('meshy', settings);
+  const apiKey = threeDProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Meshy API key is missing.');
-  const baseUrl = threeDProviderBaseUrl('meshy', settings);
+  const baseUrl = threeDProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
@@ -1916,14 +1933,15 @@ async function generateMeshy(
 }
 
 async function generateTripo(
+  providerId: ThreeDProviderId,
   prompt: string,
   model: string,
   settings: ThreeDGenerationSettings,
   signal?: AbortSignal,
 ): Promise<string[]> {
-  const apiKey = threeDProviderKey('tripo', settings);
+  const apiKey = threeDProviderKey(providerId, settings);
   if (!apiKey) throw new Error('Tripo API key is missing.');
-  const baseUrl = threeDProviderBaseUrl('tripo', settings);
+  const baseUrl = threeDProviderBaseUrl(providerId, settings);
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',

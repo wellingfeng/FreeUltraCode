@@ -16,9 +16,7 @@ import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import rehypeHighlight from 'rehype-highlight';
 import 'katex/dist/katex.min.css';
-import { HL_LANGUAGES, HL_ALIASES } from './lib/highlight';
 import { repairMarkdown, repairFences } from './lib/repairMarkdown';
 import { normalizeMath } from './lib/normalizeMath';
 import { protectWindowsPaths } from './lib/protectWindowsPaths';
@@ -77,6 +75,48 @@ function markdownUrlTransform(url: string, key: string): string | null | undefin
 }
 
 /**
+ * rehypeGroupSections：当 markdown 顶层用 `---`（thematic break）明确分段时，
+ * 把每两个 `---` 之间（以及首尾）的顶层块包进一个 `<section class="ai-para-group">`，
+ * 并消费掉 `---` 本身。CSS 借此给每个逻辑段落一个浅色块背景，替代细分割线，
+ * 让段落边界一眼可辨。没有 `---` 时（单段回答）保持原样，不额外加背景。
+ */
+function rehypeGroupSections() {
+  return (tree: { children: unknown[] }) => {
+    const children = tree.children as Array<{
+      type?: string;
+      tagName?: string;
+    }>;
+    const hasBreak = children.some(
+      (n) => n && n.type === 'element' && n.tagName === 'hr',
+    );
+    if (!hasBreak) return;
+
+    const groups: unknown[] = [];
+    let current: unknown[] = [];
+    const flush = () => {
+      if (current.length) {
+        groups.push({
+          type: 'element',
+          tagName: 'section',
+          properties: { className: ['ai-para-group'] },
+          children: current,
+        });
+        current = [];
+      }
+    };
+    for (const node of children) {
+      if (node && node.type === 'element' && node.tagName === 'hr') {
+        flush();
+      } else {
+        current.push(node);
+      }
+    }
+    flush();
+    tree.children = groups;
+  };
+}
+
+/**
  * Renders one answer chunk of markdown with GFM (tables, strikethrough, task
  * lists), single-newline line breaks (remark-breaks), and syntax-highlighted
  * fenced code. Component overrides:
@@ -123,23 +163,8 @@ function MarkdownImpl({
     [src],
   );
   const rehypePlugins = useMemo<PluggableList>(
-    () =>
-      streaming
-        ? [rehypeKatex]
-        : [
-            [
-              rehypeHighlight,
-              // `detect: false` (default): an info-less fence (bare ``` with no
-              // language tag) must render as plain text. `hljs.highlightAuto`'s
-              // heuristics are unreliable on prose/ASCII-art blocks — it has
-              // mislabeled diagram fences as `python`/`yaml`, which then shows
-              // a wrong language badge in CodeBlock's header. Explicit fence
-              // tags (```ts, ```mermaid, ...) are unaffected by this flag.
-              { languages: HL_LANGUAGES, aliases: HL_ALIASES },
-            ],
-            rehypeKatex,
-          ],
-    [streaming],
+    () => [rehypeGroupSections, rehypeKatex],
+    [],
   );
   const fileChipBudget = useFileChipBudget();
 
@@ -310,9 +335,7 @@ function MarkdownImpl({
   };
 
   return {
-    pre: ({ node, children }) => (
-      <CodeBlock node={node as never}>{children}</CodeBlock>
-    ),
+    pre: ({ node }) => <CodeBlock node={node as never} />,
     code: ({ className, children, ...props }) => {
       // Block code lives inside a <pre> (handled above). rehype-highlight tags
       // it with `language-*`/`hljs`; an indented or info-less fence has neither,

@@ -33,6 +33,7 @@ import { legacyXmlToolsToSentinels } from '@/components/ai/lib/legacyXmlTool';
 import { scanFileRefs } from '@/components/ai/lib/fileScan';
 import {
   displayFileRefPath,
+  isDocumentFileRef,
   isImageFileRef,
 } from '@/components/ai/lib/filePath';
 import {
@@ -262,7 +263,13 @@ import {
   shouldUseAssetCapabilityBlockForPrompt,
 } from '@/lib/anthropic';
 import { runtimeAdapterLabel, type RuntimeAdapterId } from '@/lib/adapters';
-import { renderMemorySnapshot, applyMemoryWrites } from '@/lib/memoryStore';
+import {
+  applyMemoryWrites,
+  getMemoryUsage,
+  renderFrozenMemorySnapshot,
+  renderMemorySnapshotCompact,
+} from '@/lib/memoryStore';
+import { runConsolidatingReview } from '@/lib/memoryConsolidate';
 import { renderKnowledgeBaseContextForPrompt } from '@/lib/knowledgeBase';
 import {
   MEMORY_WRITE_INSTRUCTION,
@@ -285,10 +292,10 @@ import {
   type GenRequest,
 } from '@/core/generationProtocol';
 import {
-  searchSessions,
   formatRecallHits,
   type SessionReader,
 } from '@/lib/sessionSearch';
+import { searchSessionsIndexed } from '@/lib/sessionIndex';
 import {
   loadMemoryConfig,
   getLastReviewAt,
@@ -297,8 +304,7 @@ import {
 import {
   shouldRunReview,
   buildReviewTranscript,
-  buildReviewUserPrompt,
-  REVIEW_SYSTEM,
+  formatReviewMemoryContext,
 } from '@/core/memoryReview';
 import {
   INTERACTION_PROTOCOL,
@@ -383,6 +389,7 @@ import {
   isAutoTitlePlaceholder,
   titleFromText,
 } from './history/store';
+import { scheduleComposerDraftPersist } from './composerDraftPersistence';
 import { generateSessionTitle } from './sessionTitleNaming';
 import {
   type SessionMeta,
@@ -754,6 +761,50 @@ export function composerDraftPatchForSession(
     state.composerDrafts[currentKey] === state.composerDraft
       ? state.composerDrafts
       : { ...state.composerDrafts, [currentKey]: state.composerDraft };
+  return {
+    composerDrafts,
+    composerDraft: composerDraftForSession(composerDrafts, sessionKey),
+  };
+}
+
+/**
+ * Seed the in-memory draft cache with a session record's persisted
+ * `meta.composerDraft` when activating a session, then apply the normal
+ * per-session draft flush/load.
+ *
+ * An in-memory entry always wins over the persisted value (it is fresher), so
+ * only sessions with no in-memory draft get restored from disk. The one
+ * exception to the flush rule: when the target session is the same as the
+ * currently-active session and the in-memory `composerDraft` is still the empty
+ * default (nothing typed this run), the flush must NOT clobber the freshly
+ * restored persisted draft with `''` — otherwise a restart would always wipe
+ * the draft it just loaded.
+ */
+export function composerDraftPatchForSessionFromRecord(
+  state: ComposerDraftState,
+  sessionKey: WorkflowSessionKey,
+  meta: SessionMeta | undefined,
+): Pick<StoreState, 'composerDraft' | 'composerDrafts'> {
+  const currentKey = workflowSessionKeyId(activeWorkflowSessionKey(state));
+  const key = workflowSessionKeyId(sessionKey);
+  const persisted = meta?.composerDraft;
+
+  // 1. Restore the persisted draft for the target session when no fresher
+  //    in-memory entry exists.
+  let composerDrafts = state.composerDrafts;
+  if (persisted && composerDrafts[key] === undefined) {
+    composerDrafts = { ...composerDrafts, [key]: persisted };
+  }
+
+  // 2. Flush the current session's in-memory draft into the cache, mirroring
+  //    composerDraftPatchForSession. Skip only the degenerate same-session case
+  //    where the "draft" is the empty default and would erase the restore above.
+  const flushValue = state.composerDraft;
+  const skipFlush = currentKey === key && !flushValue;
+  if (!skipFlush && composerDrafts[currentKey] !== flushValue) {
+    composerDrafts = { ...composerDrafts, [currentKey]: flushValue };
+  }
+
   return {
     composerDrafts,
     composerDraft: composerDraftForSession(composerDrafts, sessionKey),
@@ -2061,6 +2112,7 @@ export function sessionFromSummary(summary: SessionSummary): Session {
     preview: summary.preview,
     messageCount: summary.messageCount,
     ...(runStatus ? { runStatus } : {}),
+    ...(summary.unreadCompletion === true ? { unreadCompletion: true } : {}),
     ...(summary.favorite === true ? { favorite: true } : {}),
     ...(scheduledTask ? { scheduledTask } : {}),
   };
@@ -2110,6 +2162,7 @@ export function summaryFromRecord(record: SessionRecord): SessionSummary {
     preview: last ? last.slice(0, 80) : undefined,
     messageCount: record.messages.length,
     ...(runStatus ? { runStatus } : {}),
+    ...(record.meta?.unreadCompletion === true ? { unreadCompletion: true } : {}),
     ...(record.meta?.favorite === true ? { favorite: true } : {}),
     ...(scheduledTask ? { scheduledTask } : {}),
   };
@@ -2272,6 +2325,24 @@ function scheduleCanvasViewportPersist(
   );
 }
 
+function sessionWithRunStatus(
+  session: Session,
+  runStatus: SessionRunStatus | undefined,
+  unreadCompletion: boolean,
+): Session | null {
+  const runStatusChanged = session.runStatus !== runStatus;
+  const unreadChanged = (session.unreadCompletion === true) !== unreadCompletion;
+  if (!runStatusChanged && !unreadChanged) return null;
+  const next: Session = { ...session };
+  if (runStatusChanged) {
+    if (runStatus) next.runStatus = runStatus;
+    else delete next.runStatus;
+  }
+  if (unreadCompletion) next.unreadCompletion = true;
+  else delete next.unreadCompletion;
+  return next;
+}
+
 function updateSessionRunStatus(
   state: StoreState,
   sessionKey: WorkflowSessionKey,
@@ -2288,12 +2359,18 @@ function updateSessionRunStatus(
     }
     return true;
   };
+  // A run that completes while the user is already looking at its session needs
+  // no "unviewed" badge; anything else completing in the background does.
+  const isActive = sameSessionKey(activeWorkflowSessionKey(state), sessionKey);
+  const unreadCompletion = runStatus === 'success' && !isActive;
 
   let sessionsChanged = false;
   const nextSessions = state.sessions.map((session) => {
-    if (!matchesSession(session) || session.runStatus === runStatus) return session;
+    if (!matchesSession(session)) return session;
+    const next = sessionWithRunStatus(session, runStatus, unreadCompletion);
+    if (!next) return session;
     sessionsChanged = true;
-    return runStatus ? { ...session, runStatus } : { ...session, runStatus: undefined };
+    return next;
   });
 
   let sessionTreeChanged = false;
@@ -2302,11 +2379,11 @@ function updateSessionRunStatus(
     const current = state.sessionTree[sessionKey.workspaceId];
     if (current) {
       const mapped = current.map((session) => {
-        if (!matchesSession(session) || session.runStatus === runStatus) return session;
+        if (!matchesSession(session)) return session;
+        const next = sessionWithRunStatus(session, runStatus, unreadCompletion);
+        if (!next) return session;
         sessionTreeChanged = true;
-        return runStatus
-          ? { ...session, runStatus }
-          : { ...session, runStatus: undefined };
+        return next;
       });
       if (sessionTreeChanged) {
         nextSessionTree = {
@@ -2332,6 +2409,15 @@ function syncSessionRunStatus(
   useStore.setState((state) => updateSessionRunStatus(state, sessionKey, runStatus) ?? state);
 }
 
+function sessionRunUnreadCompletion(
+  sessionKey: WorkflowSessionKey,
+  status: IRRunStatus | undefined,
+): boolean {
+  const state = useStore.getState();
+  const isActive = sameSessionKey(activeWorkflowSessionKey(state), sessionKey);
+  return status === 'success' && !isActive;
+}
+
 export function syncAndPersistSessionRunStatus(
   sessionKey: WorkflowSessionKey,
   status: IRRunStatus | undefined,
@@ -2344,7 +2430,80 @@ export function syncAndPersistSessionRunStatus(
   );
   void historyStore
     .updateSession(sessionKey.workspaceId, sessionKey.sessionId, {
-      meta: { runStatus: status ?? 'idle' },
+      meta: {
+        runStatus: status ?? 'idle',
+        unreadCompletion: sessionRunUnreadCompletion(sessionKey, status),
+      },
+    })
+    .catch(() => {});
+}
+
+/**
+ * Clear a session's "unviewed completion" flag (in-memory + persisted) once the
+ * user actually opens it. Idempotent — safe to call on every activation.
+ */
+function markSessionCompletionViewed(sessionKey: WorkflowSessionKey): void {
+  if (!sessionKey.sessionId) return;
+
+  useStore.setState((state) => {
+    const clearUnread = (session: Session): Session | null => {
+      if (session.id !== sessionKey.sessionId) return null;
+      if (
+        sessionKey.workspaceId !== null &&
+        session.workspaceId !== undefined &&
+        session.workspaceId !== sessionKey.workspaceId
+      ) {
+        return null;
+      }
+      if (session.unreadCompletion !== true) return null;
+      const next = { ...session };
+      delete next.unreadCompletion;
+      return next;
+    };
+
+    let sessionsChanged = false;
+    let sessionTreeChanged = false;
+    let nextSessions = state.sessions;
+    let nextSessionTree = state.sessionTree;
+
+    const mappedSessions = state.sessions.map((session) => {
+      const next = clearUnread(session);
+      if (!next) return session;
+      sessionsChanged = true;
+      return next;
+    });
+    if (sessionsChanged) nextSessions = mappedSessions;
+
+    if (
+      sessionKey.workspaceId !== null &&
+      state.sessionTree[sessionKey.workspaceId]
+    ) {
+      const mapped = state.sessionTree[sessionKey.workspaceId].map((session) => {
+        const next = clearUnread(session);
+        if (!next) return session;
+        sessionTreeChanged = true;
+        return next;
+      });
+      if (sessionTreeChanged) {
+        nextSessionTree = {
+          ...state.sessionTree,
+          [sessionKey.workspaceId]: mapped,
+        };
+      }
+    }
+
+    if (!sessionsChanged && !sessionTreeChanged) return state;
+    return {
+      sessions: nextSessions,
+      sessionTree: nextSessionTree,
+    };
+  });
+
+  if (!sessionKey.workspaceId) return;
+  void historyStore
+    .updateSession(sessionKey.workspaceId, sessionKey.sessionId, {
+      meta: { unreadCompletion: false },
+      preserveUpdatedAt: true,
     })
     .catch(() => {});
 }
@@ -3563,6 +3722,10 @@ async function activateHistorySession(
   const navigationVersion = beginHistoryNavigation();
   const state = useStore.getState();
   const targetWorkspaceId = workspaceId ?? state.activeWorkspaceId ?? undefined;
+  markSessionCompletionViewed({
+    workspaceId: targetWorkspaceId ?? null,
+    sessionId,
+  });
   if (!state.historyReady || !targetWorkspaceId) {
     useStore.setState((s) => {
       if (!isLatestHistoryNavigation(navigationVersion)) return s;
@@ -3642,6 +3805,11 @@ async function activateHistorySession(
   if (!isLatestHistoryNavigation(navigationVersion)) return;
   if (!record) return;
   const session = sessionFromRecord(record);
+  // The persisted record may still carry `unreadCompletion` because the async
+  // clear in markSessionCompletionViewed has not flushed yet. Opening the
+  // session IS the act of viewing it, so never promote a stale unread flag back
+  // into the sidebar list (it would otherwise only clear after the next click).
+  delete session.unreadCompletion;
 
   // If we're switching BACK to the session whose run is still executing, rebuild
   // the view from the live in-memory channel (not the persisted snapshot, which
@@ -3699,10 +3867,14 @@ async function activateHistorySession(
       return s;
     }
     activated = true;
-    const draftPatch = composerDraftPatchForSession(s, {
-      workspaceId: targetWorkspaceId,
-      sessionId: session.id,
-    });
+    const draftPatch = composerDraftPatchForSessionFromRecord(
+      s,
+      {
+        workspaceId: targetWorkspaceId,
+        sessionId: session.id,
+      },
+      record.meta,
+    );
     const workspace = s.workspaces.find((ws) => ws.id === targetWorkspaceId);
     const fallbackComposer = defaultSessionComposer(
       workspace?.path,
@@ -5971,14 +6143,27 @@ ${previousReply.slice(0, 4000)}
         const simpleAssetCapabilityBlock = shouldUseAssetCapabilityBlockForPrompt(turnText)
           ? assetCapabilityBlock
           : '';
-        // Frozen memory snapshot: read ONCE here at the start of the turn and
-        // baked into the system prompt. Mid-session memory writes only touch
-        // disk; they refresh on the next turn's snapshot so the native-CLI
-        // prefix cache stays stable. See lib/memoryStore.ts CONTRACT.
+        // Frozen memory snapshot: read ONCE at the start of a session and cached
+        // by session id (renderFrozenMemorySnapshot). Mid-session writes only
+        // touch disk; the live system prompt stays byte-identical across turns so
+        // the native-CLI prefix cache stays warm. See lib/memoryStore.ts CONTRACT.
         const workspaceMemoryId = ch.workspaceId || undefined;
         const memoryConfig = loadMemoryConfig();
+        const snapshotFreezeKey = ch.sessionId ?? workspaceMemoryId ?? 'global';
         const memorySnapshot = memoryConfig.snapshotEnabled
-          ? await renderMemorySnapshot(workspaceMemoryId).catch(() => '')
+          ? await renderFrozenMemorySnapshot(
+              workspaceMemoryId,
+              snapshotFreezeKey,
+            ).catch(() => '')
+          : '';
+        // argv-capped adapters (dsh / zcode) can't afford the full snapshot, but
+        // dropping memory entirely made them "write-only". Inject a hard-bounded
+        // compact snapshot instead so memory still reaches those models.
+        const memorySnapshotCompact = memoryConfig.snapshotEnabled
+          ? await renderMemorySnapshotCompact(
+              workspaceMemoryId,
+              memoryConfig.compactSnapshotCharLimit,
+            ).catch(() => '')
           : '';
         const knowledgeContext = state.composer.knowledgeBaseMode
           ? await renderKnowledgeBaseContextForPrompt({
@@ -6039,6 +6224,7 @@ ${previousReply.slice(0, 4000)}
           SIMPLE_CHAT_SYSTEM,
           languageAdaptationPrompt(state.locale),
           personalBlock,
+          memorySnapshotCompact,
           memoryConfig.writeEnabled ? MEMORY_WRITE_INSTRUCTION : '',
           ch.workspaceId && memoryConfig.recallEnabled ? RECALL_INSTRUCTION : '',
           // dsh 也必须知道「应用内置生成渠道已就绪」以及「素材自动生成协议」，
@@ -6082,9 +6268,21 @@ ${previousReply.slice(0, 4000)}
           historyBeforeThisTurn,
         );
         const priorMessages = chatPromptHistoryMessages(historyBeforeThisTurn);
-        const chatTranscript = (messages: Message[]): string =>
+        // A `document` content block anywhere in the conversation (prior history
+        // or this turn's own message) forces the resume-disabling downgrade on
+        // third-party gateways. Images don't count. Computed once per turn.
+        const sessionHasDocument =
+          chatSessionReferencesDocument(priorMessages) ||
+          chatSessionReferencesDocument([userMsg]);
+        // `max` 默认截断到最近 SIMPLE_CHAT_HISTORY_TURNS 条以控制 token；传
+        // Infinity 用于"切回模型时补发离开期间对话"的场景——那段 transcript 是
+        // 对端模型能看到该区间的唯一来源，截断会永久丢内容。
+        const chatTranscript = (
+          messages: Message[],
+          max: number = SIMPLE_CHAT_HISTORY_TURNS,
+        ): string =>
           messages
-            .slice(-SIMPLE_CHAT_HISTORY_TURNS)
+            .slice(-max)
             .map((m) => {
               const text = transcriptText(m);
               return text ? `${m.role === 'user' ? '用户' : '助手'}：${text}` : '';
@@ -6147,15 +6345,26 @@ ${previousReply.slice(0, 4000)}
               setActive(withAiTiming(routedBody(routeLine, '⟳ 生成中…')));
               nativeSession = replayFavoriteSimpleChat
                 ? null
-                : chatNativeSessionFor(ch, cli);
+                : chatNativeSessionFor(ch, cli, sessionHasDocument);
               const nativeResume = nativeSession?.started === true;
+              // coveredMessageCount 的写入端（回合成功路径）与读取端必须使用同一个
+              // 过滤器 chatPromptHistoryMessages：它排除 localOnly 中断通知、⟳ 占位
+              // 等消息。旧实现写入端用了宽松过滤（只排除 system/空文本），每积累一条
+              // localOnly 消息边界就前移一位；slice(coveredMessageCount) 作用在严格
+              // 过滤后的数组上，切走模型再切回时会把"未看过片段"里最早的消息悄悄丢掉。
               const coveredMessageCount = Math.min(
                 nativeSession?.coveredMessageCount ?? 0,
                 priorMessages.length,
               );
+              // 切回模型时只有这段 unseenTranscript 是对端模型能看到"离开期间对话"的
+              // 唯一来源（--resume 只重放该模型自己 session 的历史），因此这里不做
+              // SIMPLE_CHAT_HISTORY_TURNS 截断，保证切换期间的对话完整送达。
               const unseenTranscript =
                 nativeSession && nativeResume
-                  ? chatTranscript(priorMessages.slice(coveredMessageCount))
+                  ? chatTranscript(
+                      priorMessages.slice(coveredMessageCount),
+                      Number.POSITIVE_INFINITY,
+                    )
                   : '';
               const basePromptBody =
                 nativeSession && nativeResume
@@ -6167,10 +6376,16 @@ ${previousReply.slice(0, 4000)}
                       ? `${interruptedContinuationDirective}\n\n用户补充：${turnText}`
                       : turnText
                   : chatPrompt;
-              // On a continuation round the native session already carries the
-              // prior context, so send only the user's answer; otherwise send
-              // the full prompt body.
-              const promptBody = continuation || basePromptBody;
+              // On a continuation round, a live native session already carries
+              // the prior context via --resume, so send only the user's answer.
+              // Without a native session (e.g. third-party gateways where resume
+              // is disabled) the model is stateless, so we MUST re-send the full
+              // prompt body or the continuation loses all history.
+              const promptBody = continuation
+                ? nativeSession
+                  ? continuation
+                  : `${basePromptBody}\n\n${continuation}`
+                : basePromptBody;
               let live = '';
               const callNativeCli = async (
                 body: string,
@@ -6236,7 +6451,7 @@ ${previousReply.slice(0, 4000)}
                     isCliEmptyExitError(err))
                 ) {
                   forgetChatNativeSession(nativeSession);
-                  nativeSession = chatNativeSessionFor(ch, cli);
+                  nativeSession = chatNativeSessionFor(ch, cli, sessionHasDocument);
                   const fallbackPromptBody = continuation
                     ? `${chatPrompt}\n\n${continuation}`
                     : chatPrompt;
@@ -6268,9 +6483,18 @@ ${previousReply.slice(0, 4000)}
               }
               // Preserve any tool-call sentinels the CLI streamed this round so
               // the session-files list keeps the files this turn read/edited.
-              latestCliLive = legacyXmlToolsToSentinels(live, {
-                streamingTail: true,
-              });
+              // Also strip the protocol blocks (memory/recall/gen) from this
+              // buffer: finalChatBodyWithStreamedTools can resurrect `live` over
+              // the stripped `finalProse` when the stream captured more text than
+              // the CLI's terminal result, which would re-inject the raw
+              // <<UGS_MEMORY>>/<<UGS_RECALL>>/<<UGS_GEN>> JSON into the bubble.
+              latestCliLive = stripGenRequests(
+                stripRecall(
+                  stripMemoryWrites(
+                    legacyXmlToolsToSentinels(live, { streamingTail: true }),
+                  ),
+                ),
+              );
               if (hasToolSentinel(latestCliLive)) {
                 const { patches } = extractToolSentinels(latestCliLive);
                 for (const patch of patches.filter(isPersistentToolPatch)) {
@@ -6285,15 +6509,51 @@ ${previousReply.slice(0, 4000)}
               const userContent = continuation
                 ? `${chatPrompt}\n\n${continuation}`
                 : chatPrompt;
-              const returned = await completeDirectWithSpeed({
-                system: chatSystem,
-                userContent,
-                onDelta: (chunk) => {
-                  full += chunk;
-                  setActive(withAiTiming(routedBody(routeLine, liveProse(full, false) || '⟳ 生成中…')));
-                },
-              });
-              answer = full || returned;
+              // Direct-HTTP path has no Rust-side heartbeat: when the upstream
+              // holds thinking for minutes before the first text token (typical
+              // for reasoning models behind gateways), the bubble would sit on
+              // the static "⟳ 生成中…" placeholder and read as hung. Emit a
+              // live "仍在等待模型返回…（已 Xs）" line whenever onDelta goes
+              // quiet for >HEARTBEAT_GRACE_MS; cleared the moment real text
+              // streams in or the call finishes.
+              const HEARTBEAT_GRACE_MS = 5_000;
+              const HEARTBEAT_TICK_MS = 1_000;
+              let lastDeltaAt = Date.now();
+              let heartbeatActive = false;
+              const directHeartbeat = globalThis.setInterval(() => {
+                if (!activeId || !aiEditActive(ch)) return;
+                const silenceMs = Date.now() - lastDeltaAt;
+                if (silenceMs < HEARTBEAT_GRACE_MS) return;
+                if (full.trim()) {
+                  // Real tokens are streaming; onDelta owns the bubble now.
+                  if (heartbeatActive) heartbeatActive = false;
+                  return;
+                }
+                heartbeatActive = true;
+                setActive(
+                  withAiTiming(
+                    routedBody(
+                      routeLine,
+                      `⟳ 生成中…\n\n⏳ 仍在等待模型返回（已 ${formatDuration(silenceMs)}）`,
+                    ),
+                  ),
+                );
+              }, HEARTBEAT_TICK_MS);
+              try {
+                const returned = await completeDirectWithSpeed({
+                  system: chatSystem,
+                  userContent,
+                  onDelta: (chunk) => {
+                    lastDeltaAt = Date.now();
+                    heartbeatActive = false;
+                    full += chunk;
+                    setActive(withAiTiming(routedBody(routeLine, liveProse(full, false) || '⟳ 生成中…')));
+                  },
+                });
+                answer = full || returned;
+              } finally {
+                globalThis.clearInterval(directHeartbeat);
+              }
             }
             // History recall: if the model asked to search past conversations,
             // run the search, strip the block, feed the formatted hits back as
@@ -6324,7 +6584,7 @@ ${previousReply.slice(0, 4000)}
                     .getSession(wid, sid)
                     .then((rec) => (rec ? { messages: rec.messages } : null)),
               };
-              const hits = await searchSessions(
+              const hits = await searchSessionsIndexed(
                 reader,
                 recallWorkspaceId,
                 recall.query,
@@ -6444,19 +6704,24 @@ ${previousReply.slice(0, 4000)}
           // JSON never shows, even when generation wasn't authorized this turn
           // (no matching mode) or the round budget ran out before executing it.
           finalAnswer = stripGenRequests(finalAnswer);
-          // Long-term memory: parse any <<UGS_MEMORY>> block(s) the model
-          // emitted this turn, strip them from the visible prose, and apply
-          // them to disk in the background. The write lands on the NEXT turn's
-          // frozen snapshot — it does not touch this turn's prompt/cache.
+          // Long-term memory: strip every <<UGS_MEMORY>> block from the visible
+          // prose UNCONDITIONALLY. Hiding protocol JSON must never depend on the
+          // write switch — otherwise disabling "写入记忆" leaks the raw block
+          // into the chat bubble (stripRecall / stripGenRequests above always run
+          // for exactly this reason). Only the disk write is gated on
+          // writeEnabled. The write lands on the NEXT session's frozen snapshot —
+          // it does not touch this turn's prompt/cache. When eviction is enabled,
+          // an overflowing write drops the oldest entries instead of silently
+          // failing (the result is fire-and-forget, so the model would otherwise
+          // never see the error).
           const memoryWrites = memoryConfig.writeEnabled
             ? parseMemoryWrites(finalAnswer)
             : [];
+          finalAnswer = stripMemoryWrites(finalAnswer);
           if (memoryWrites.length) {
-            finalAnswer = stripMemoryWrites(finalAnswer);
-            void applyMemoryWrites(memoryWrites, workspaceMemoryId).catch(() => {});
-          } else if (memoryConfig.writeEnabled) {
-            // Strip any block we won't apply so protocol JSON never shows.
-            finalAnswer = stripMemoryWrites(finalAnswer);
+            void applyMemoryWrites(memoryWrites, workspaceMemoryId, {
+              evictOnOverflow: memoryConfig.evictOnOverflow,
+            }).catch(() => {});
           }
           // Background self-review (stage 5): when enabled and rate-limit/signal
           // gates pass, fork a cheap fire-and-forget model call that replays the
@@ -6480,14 +6745,36 @@ ${previousReply.slice(0, 4000)}
               void (async () => {
                 try {
                   const transcript = buildReviewTranscript(transcriptMsgs);
-                  const out = await completeDirectWithSpeed({
-                    system: REVIEW_SYSTEM,
-                    userContent: buildReviewUserPrompt(transcript),
+                  // Feed the review the live inventory of both stores so a full
+                  // store is consolidated (merge/drop) instead of every add
+                  // being rejected at the char limit. Mirrors Hermes' "current
+                  // entries on overflow" affordance in its memory tool.
+                  const [userUsage, memUsage] = await Promise.all([
+                    getMemoryUsage('user'),
+                    getMemoryUsage('memory', workspaceMemoryId),
+                  ]);
+                  const contexts = [
+                    formatReviewMemoryContext({
+                      label: '用户画像（全局）',
+                      entries: userUsage.entries.map((e) => e.text),
+                      used: userUsage.used,
+                      limit: userUsage.limit,
+                    }),
+                    formatReviewMemoryContext({
+                      label: '助手笔记（本项目）',
+                      entries: memUsage.entries.map((e) => e.text),
+                      used: memUsage.used,
+                      limit: memUsage.limit,
+                    }),
+                  ];
+                  await runConsolidatingReview({
+                    invokeModel: (system, userContent) =>
+                      completeDirectWithSpeed({ system, userContent }),
+                    transcript,
+                    contexts,
+                    workspaceId: workspaceMemoryId,
+                    evictOnOverflow: memoryConfig.evictOnOverflow,
                   });
-                  const proposals = parseMemoryWrites(out);
-                  if (proposals.length) {
-                    await applyMemoryWrites(proposals, workspaceMemoryId);
-                  }
                 } catch {
                   /* review is best-effort; never disturb the chat turn */
                 }
@@ -6518,8 +6805,12 @@ ${previousReply.slice(0, 4000)}
           );
           if (useCli && !replayFavoriteSimpleChat && nativeSession) {
             nativeSession.started = true;
-            nativeSession.coveredMessageCount = ch.messages.filter(
-              (m) => m.role !== 'system' && m.text.trim(),
+            // 必须与读取端（priorMessages = chatPromptHistoryMessages）使用同一
+            // 过滤器。旧的宽松过滤会把 localOnly 中断通知等 claude 从未见过的
+            // 消息也计入 coveredMessageCount，边界每多一条就前移一位；切回该
+            // 模型时 slice(coveredMessageCount) 会丢掉未看过片段里最早的消息。
+            nativeSession.coveredMessageCount = chatPromptHistoryMessages(
+              ch.messages,
             ).length;
           }
           // Record the input on the node (keeps the graph a single node).
@@ -6786,7 +7077,12 @@ ${previousReply.slice(0, 4000)}
   answerInteraction: (messageId, answer) => {
     const mark = (m: Message): Message =>
       m.id === messageId && m.interactionStatus === 'pending'
-        ? { ...m, interactionAnswer: answer, interactionStatus: 'answered' }
+        ? {
+            ...m,
+            interactionAnswer: answer,
+            interactionStatus: 'answered',
+            interactionDraft: undefined,
+          }
         : m;
     const resolver = pendingInteractionResolvers.get(messageId);
     const ch = resolver?.runKey ? getRunChannelByKey(resolver.runKey) : null;
@@ -6826,7 +7122,7 @@ ${previousReply.slice(0, 4000)}
   dismissInteraction: (messageId) => {
     const mark = (m: Message): Message =>
       m.id === messageId && m.interactionStatus === 'pending'
-        ? { ...m, interactionStatus: 'cancelled' }
+        ? { ...m, interactionStatus: 'cancelled', interactionDraft: undefined }
         : m;
     const resolver = pendingInteractionResolvers.get(messageId);
     const ch = resolver?.runKey ? getRunChannelByKey(resolver.runKey) : null;
@@ -6848,6 +7144,39 @@ ${previousReply.slice(0, 4000)}
       syncWaitingInputSessions();
       dismissWaitingInputNotificationIfSettled(resolver.sessionKey);
       resolver.resolve(null);
+    }
+  },
+
+  // Persist the widget's in-progress draft so a session switch doesn't wipe
+  // what the user already typed/selected. Mirrors answerInteraction's routing
+  // (run channel / AI-edit channel / plain chat) so the draft lands on the
+  // same message copy the widget reads from.
+  setInteractionDraft: (messageId, draft) => {
+    const normalized =
+      draft.values?.length || draft.text
+        ? {
+            ...(draft.values?.length ? { values: draft.values } : {}),
+            ...(draft.text ? { text: draft.text } : {}),
+          }
+        : undefined;
+    const mark = (m: Message): Message =>
+      m.id === messageId && m.interactionStatus === 'pending'
+        ? { ...m, interactionDraft: normalized }
+        : m;
+    const resolver = pendingInteractionResolvers.get(messageId);
+    const ch = resolver?.runKey ? getRunChannelByKey(resolver.runKey) : null;
+    const aiCh = resolver?.aiEditKey
+      ? getAiEditChannelByKey(resolver.aiEditKey)
+      : null;
+    if (ch) {
+      ch.messages = ch.messages.map(mark);
+      channelCommitMessages(ch, true);
+    } else if (aiCh) {
+      aiCh.messages = aiCh.messages.map(mark);
+      aiEditCommitMessages(aiCh, true);
+    } else {
+      set((s) => ({ messages: s.messages.map(mark) }));
+      void persistCurrentMessages();
     }
   },
 
@@ -6876,7 +7205,7 @@ ${previousReply.slice(0, 4000)}
 
   ensureSessionStartupWorkspace: () => ensureSessionStartupWorkspaceSlice(),
 
-  setComposerDraft: (text) =>
+  setComposerDraft: (text) => {
     set((state) => {
       const currentKey = workflowSessionKeyId(activeWorkflowSessionKey(state));
       const composerDrafts =
@@ -6890,7 +7219,14 @@ ${previousReply.slice(0, 4000)}
         return state;
       }
       return { composerDraft: text, composerDrafts };
-    }),
+    });
+    const state = get();
+    scheduleComposerDraftPersist(
+      state.activeWorkspaceId,
+      state.activeSessionId,
+      text,
+    );
+  },
 
   appendComposerDraft: (text) => {
     const addition = text.trim();
@@ -6914,6 +7250,12 @@ ${previousReply.slice(0, 4000)}
           state.composerFocusVersion + next.focusVersionDelta,
       };
     });
+    const state = get();
+    scheduleComposerDraftPersist(
+      state.activeWorkspaceId,
+      state.activeSessionId,
+      state.composerDraft,
+    );
   },
 
   setWorkspace: (path) => setWorkspaceSlice(path),
@@ -7304,19 +7646,40 @@ function chatNativeSessionKey(
   ].join('::');
 }
 
+/**
+ * True when any message in the conversation references a document file
+ * (PDF/Office), which claude CLI turns into a `document` content block that
+ * third-party Anthropic-compatible upstreams reject. Image refs (jpg/png/…) are
+ * `image` blocks and are safe, so a pure image/text session returns false and
+ * keeps its `--resume` continuity. See {@link chatNativeSessionFor}.
+ */
+function chatSessionReferencesDocument(messages: Message[]): boolean {
+  for (const message of messages) {
+    if (message.localOnly) continue;
+    const text = transcriptText(message);
+    if (!text) continue;
+    for (const part of scanFileRefs(text)) {
+      if (typeof part !== 'string' && isDocumentFileRef(part)) return true;
+    }
+  }
+  return false;
+}
+
 function chatNativeSessionFor(
   ch: Pick<AiEditChannel, 'sessionKey' | 'sessionId'>,
   route: Awaited<ReturnType<typeof resolveCliGatewayRoute>>,
+  sessionHasDocument: boolean,
 ): ChatNativeSession | null {
   if (!ch.sessionId) return null;
   if (route.transport !== 'cli' || route.adapter !== 'claude-code') return null;
   // 非 Anthropic 原生上游（Kimi 等）不认识 Claude 的 `document` content
   // block（PDF/Office 附件）。claude CLI `--resume` 会从本地 session 存储
-  // 重放完整历史（可能含 document 块），这些上游直接 400（"Input tag
-  // 'document' ... does not match any of the expected tags"）。因此只有目标
-  // 端点明确是 Anthropic 原生 API 时才启用 native session 续接；否则降级为
-  // 每轮纯文本全量模式（chatPrompt）。
-  if (!routeTargetsAnthropicNativeApi(route)) return null;
+  // 重放完整历史，若历史里含 document 块，这些上游直接 400（"Input tag
+  // 'document' ... does not match any of the expected tags"）。图片是 `image`
+  // block、不受此限。因此仅当会话「确实引用了文档文件」且目标端点又不是
+  // Anthropic 原生 API 时才禁用 native session、降级为每轮纯文本全量模式
+  // （chatPrompt）；纯图片/纯文本会话继续正常走 --resume 续接。
+  if (sessionHasDocument && !routeTargetsAnthropicNativeApi(route)) return null;
   const key = chatNativeSessionKey(ch, route);
   const existing = chatNativeSessions.get(key);
   if (existing) return existing;
@@ -8379,6 +8742,25 @@ function orderedFinalBodyFromLiveTools(
     (part) => 'text' in part || isPersistentToolPatch(part.patch),
   );
   if (!persistentParts.some((part) => 'patch' in part)) return null;
+  // Moon Add: dsh 多 turn 会话里 stdout 只给最后一个 turn 的最终答案，而
+  // live 缓冲里有完整正文（含中间 turn 的「结论先行」正文）。当 live 正文
+  // 严格包含 finalProse 且更长时，以 live 的完整正文+工具顺序为准，避免
+  // finalProse 之外的正文被整体丢弃（旧逻辑会回退到只剩 finalProse）。
+  const liveText = Array.from(split.text).filter(isNonWhitespace).join('');
+  const finalText = Array.from(finalProse).filter(isNonWhitespace).join('');
+  if (
+    finalText.length > 0 &&
+    liveText.includes(finalText) &&
+    liveText.length > finalText.length
+  ) {
+    return stripCliProgressMarkers(
+      persistentParts
+        .map((part) =>
+          'text' in part ? part.text : encodeToolPatch(part.patch),
+        )
+        .join(''),
+    );
+  }
 
   const answerRange = findTextRangeIgnoringWhitespace(split.text, finalProse);
   if (!answerRange) return null;

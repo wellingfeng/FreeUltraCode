@@ -55,6 +55,16 @@ export interface ScheduledTaskConfig {
 /** Lifecycle of an interactive message (a node asking the user to choose/type). */
 export type InteractionStatus = 'pending' | 'answered' | 'cancelled';
 
+/**
+ * In-progress answer state for an interaction widget. `values` covers select
+ * toggles (including custom-added options), `text` covers the free-text input
+ * (select's custom-input box and the input widget's field).
+ */
+export interface InteractionDraft {
+  values?: string[];
+  text?: string;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
@@ -75,6 +85,13 @@ export interface Message {
   interactionAnswer?: InteractionAnswer;
   /** Widget lifecycle; gates rendering (pending = active, else read-only). */
   interactionStatus?: InteractionStatus;
+  /**
+   * UI-only draft of the in-progress answer (typed text / toggled options).
+   * Persisted on the message so switching sessions and back doesn't wipe what
+   * the user already typed into the widget. Cleared when the interaction is
+   * answered or dismissed.
+   */
+  interactionDraft?: InteractionDraft;
   /** App-owned interactive actions rendered through the same AI return widget. */
   appAction?: MessageAppAction;
   /**
@@ -142,6 +159,12 @@ export interface Session {
   messageCount?: number;
   /** Last terminal workflow run status, used by the history status indicator. */
   runStatus?: SessionRunStatus;
+  /**
+   * True when `runStatus === 'success'` and the user has not opened the session
+   * since that completion. Drives the "已完成（未查看）" brighter-green badge in
+   * the history rail; cleared once the session is selected.
+   */
+  unreadCompletion?: boolean;
   /** True when a workflow session is pinned into the Sidebar favorites tab. */
   favorite?: boolean;
   /** Optional alarm-style schedule for favorite sessions. */

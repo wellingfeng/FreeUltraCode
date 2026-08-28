@@ -440,6 +440,7 @@ function sessionSummary(record: SessionRecord): SessionSummary {
     messageCount: record.messages.length,
     ...(record.workflow?.meta?.simple ? { simple: true } : {}),
     ...(runStatus ? { runStatus } : {}),
+    ...(record.meta?.unreadCompletion === true ? { unreadCompletion: true } : {}),
     ...(record.meta?.favorite === true ? { favorite: true } : {}),
     ...(record.meta?.scheduledTask
       ? { scheduledTask: record.meta.scheduledTask }

@@ -148,7 +148,12 @@ function sessionLiveRank(
   if (liveStatus === 'running') return 0;
   if (liveStatus === 'waiting') return 0;
   if (liveStatus === 'aiEditing') return 0;
-  return 1;
+  // A completed-but-not-yet-viewed session needs attention, so it floats above
+  // plain idle sessions but stays below anything still actively live.
+  if (session.runStatus === 'success' && session.unreadCompletion === true) {
+    return 1;
+  }
+  return 2;
 }
 
 /**
@@ -176,7 +181,7 @@ function sortHistorySessions(
     const bLiveRank = sessionLiveRank(b, workspaceId, liveState);
     const liveDiff = aLiveRank - bLiveRank;
     if (liveDiff !== 0) return liveDiff;
-    if (aLiveRank > 0) {
+    if (aLiveRank > 1) {
       const draftDiff =
         sessionDraftRank(a, workspaceId, draftKeys) -
         sessionDraftRank(b, workspaceId, draftKeys);
@@ -249,12 +254,13 @@ function historyStatusLabel(
   if (status === 'thinking') return t(locale, 'sidebar.thinking');
   if (status === 'unrun') return t(locale, 'sidebar.unrun');
   if (status === 'draft') return t(locale, 'sidebar.hasDraft');
+  if (status === 'successUnread') return t(locale, 'sidebar.completedUnread');
   if (status === 'success') return t(locale, 'sidebar.completed');
   return t(locale, 'sidebar.failed');
 }
 
 function historyStatusTone(
-  session: Pick<Session, 'isWorkflow' | 'simple' | 'runStatus'>,
+  session: Pick<Session, 'isWorkflow' | 'simple' | 'runStatus' | 'unreadCompletion'>,
   liveStatus: ReturnType<typeof sessionLiveStatus>,
   hasDraft = false,
 ): StatusTone | null {
@@ -264,7 +270,9 @@ function historyStatusTone(
   // An unsent composer draft outranks the static run-result dot so the user can
   // spot sessions still holding text they have not sent.
   if (hasDraft) return 'draft';
-  if (session.runStatus === 'success') return 'success';
+  if (session.runStatus === 'success') {
+    return session.unreadCompletion === true ? 'successUnread' : 'success';
+  }
   if (
     session.runStatus === 'error' ||
     session.runStatus === 'interrupted'

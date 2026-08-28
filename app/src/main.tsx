@@ -10,6 +10,7 @@ import { installQuitFlushHandler } from "@/lib/quitFlush";
 import { initializeGenerationSettingsStore } from "@/lib/generationSettingsStore";
 import { initializeGatewayConfigStore } from "@/lib/gatewayConfig";
 import { initializeApiConfigStore } from "@/lib/apiConfig";
+import { refreshModelPricing } from "@/lib/modelPricing";
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
@@ -43,6 +44,9 @@ async function bootstrap(): Promise<void> {
       <App />
     </StrictMode>,
   );
+
+  // 启动时联网刷新一次模型价格目录（OpenRouter 公开接口），不阻塞渲染。
+  void refreshModelPricing();
 }
 
 void bootstrap();

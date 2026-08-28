@@ -39,6 +39,7 @@ describe('MemorySettings', () => {
     expect(container.textContent).toContain('长期记忆');
     expect(container.textContent).toContain('称呼小王');
     expect(container.textContent).toContain('引擎=Unity');
+    expect(container.textContent).toContain('更新于');
   });
 
   it('does not show another workspace memory', async () => {
@@ -78,6 +79,6 @@ describe('MemorySettings', () => {
     });
     await flush();
 
-    expect(await loadMemory('user')).toContain('偏好简体中文');
+    expect((await loadMemory('user')).map((e) => e.text)).toContain('偏好简体中文');
   });
 });

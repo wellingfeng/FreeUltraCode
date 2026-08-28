@@ -22,7 +22,7 @@ export default function InlineCode({
   const ref = text ? parseFileRef(text, { allowSpaces: true }) : null;
 
   const plainCode = (
-    <code className="ai-inline-code rounded border border-border bg-panel-2 px-1 py-px font-mono text-[12.5px] text-accent-2">
+    <code className="ai-inline-code rounded bg-[color-mix(in_oklab,var(--code-bg)_55%,transparent)] px-1.5 py-0.5 font-mono text-[12.5px] text-accent-2">
       {children}
     </code>
   );

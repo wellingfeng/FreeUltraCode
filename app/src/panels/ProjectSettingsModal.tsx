@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ArrowRightLeft,
   BookOpen,
   Box,
   Boxes,
@@ -130,6 +131,7 @@ import type { WorkspaceRecord, WorkspaceSummary } from '@/store/history/types';
 import { useStore } from '@/store/useStore';
 import { PluginStorePanel } from '@/panels/PluginStorePanel';
 import KnowledgeBaseSettings from '@/panels/settings/KnowledgeBaseSettings';
+import CapabilityTranslateDialog from '@/components/CapabilityTranslateDialog';
 import { type Locale } from '@/lib/i18n';
 
 /**
@@ -151,6 +153,7 @@ const PROJECT_SETTINGS_EN: Record<string, string> = {
   '安装中': 'Installing',
   '安装中...': 'Installing…',
   '绑定渠道': 'Rigging channel',
+  '翻译到其他 agents': 'Translate to other agents',
   '蓝图': 'Blueprint',
   '抓帧/性能': 'Capture / performance',
   '保存': 'Save',
@@ -611,6 +614,7 @@ function InstalledSkillCard({
   description,
   path,
   locale,
+  onTranslate,
 }: {
   name: string;
   scope: 'project' | 'global';
@@ -618,6 +622,7 @@ function InstalledSkillCard({
   description: string;
   path: string;
   locale: Locale;
+  onTranslate?: () => void;
 }) {
   const translated = useTranslatedSkillDescription(
     `skill-card:${scope}:${name}`,
@@ -657,11 +662,24 @@ function InstalledSkillCard({
           {translated}
         </p>
       ) : null}
-      <div
-        className="mt-auto truncate font-mono text-[10px] text-fg-faint"
-        title={path}
-      >
-        {path}
+      <div className="mt-auto flex items-center justify-between gap-2">
+        <div
+          className="min-w-0 truncate font-mono text-[10px] text-fg-faint"
+          title={path}
+        >
+          {path}
+        </div>
+        {tauriAvailable() && onTranslate ? (
+          <button
+            type="button"
+            onClick={onTranslate}
+            title={tr('翻译到其他 agents', locale)}
+            className="inline-flex shrink-0 items-center gap-1 rounded border border-border bg-panel-2 px-1.5 py-0.5 text-[10px] text-fg-dim hover:border-accent hover:text-fg"
+          >
+            <ArrowRightLeft size={11} />
+            {tr('翻译到其他 agents', locale)}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -1649,6 +1667,12 @@ export default function ProjectSettingsModal({
   const [onlineMcpQuery, setOnlineMcpQuery] = useState('');
   const [onlineMcpLoading, setOnlineMcpLoading] = useState(false);
   const [onlineMcpError, setOnlineMcpError] = useState<string | null>(null);
+  const [translateDialog, setTranslateDialog] = useState<
+    | { kind: 'mcp' }
+    | { kind: 'lsp' }
+    | { kind: 'skill'; name: string; slug: string; sourcePath: string }
+    | null
+  >(null);
   const [languageScan, setLanguageScan] = useState<ProjectLanguageScan>(() =>
     fallbackLanguageScanForEngine(projectSettingsFromMetadata(workspace.metadata).engine),
   );
@@ -4246,6 +4270,15 @@ export default function ProjectSettingsModal({
                     <Plus size={13} />
                     {locale === 'zh-CN' ? '新增自定义' : 'Add custom'}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setTranslateDialog({ kind: 'mcp' })}
+                    disabled={settings.mcp.servers.filter((s) => s.enabled).length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-fg hover:border-accent disabled:opacity-50"
+                  >
+                    <ArrowRightLeft size={13} />
+                    {locale === 'zh-CN' ? '一键翻译到其他 agents' : 'Translate to other agents'}
+                  </button>
                 </div>
               </div>
 
@@ -4526,14 +4559,30 @@ export default function ProjectSettingsModal({
 
           {lspSubTab === 'installed' && (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={applyRecommendedLsp}
-                disabled={recommendedLspIds.size === 0 || saving}
-                className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
-              >
-                {locale === 'zh-CN' ? '应用推荐 LSP' : 'Apply recommended LSP'}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={applyRecommendedLsp}
+                  disabled={recommendedLspIds.size === 0 || saving}
+                  className="rounded-md border border-border bg-bg-alt px-3 py-1.5 text-xs text-fg-dim hover:border-accent hover:text-fg disabled:opacity-50"
+                >
+                  {locale === 'zh-CN' ? '应用推荐 LSP' : 'Apply recommended LSP'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTranslateDialog({ kind: 'lsp' })}
+                  disabled={
+                    !settings.lsp.enabled ||
+                    settings.lsp.servers.filter((s) => s.enabled).length === 0
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs text-fg hover:border-accent disabled:opacity-50"
+                >
+                  <ArrowRightLeft size={13} />
+                  {locale === 'zh-CN'
+                    ? '一键翻译到其他 agents'
+                    : 'Translate to other agents'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -5100,6 +5149,14 @@ export default function ProjectSettingsModal({
                                   description={skillDescriptionFor(skill)}
                                   path={joinSkillPath(root.path, skill)}
                                   locale={locale}
+                                  onTranslate={() =>
+                                    setTranslateDialog({
+                                      kind: 'skill',
+                                      name: skill,
+                                      slug: skill,
+                                      sourcePath: joinSkillPath(root.path, skill),
+                                    })
+                                  }
                                 />
                               ))}
                             </div>
@@ -5184,6 +5241,14 @@ export default function ProjectSettingsModal({
                               description={skillDescriptionFor(skill)}
                               path={joinSkillPath(target.path, skill)}
                               locale={locale}
+                              onTranslate={() =>
+                                setTranslateDialog({
+                                  kind: 'skill',
+                                  name: skill,
+                                  slug: skill,
+                                  sourcePath: joinSkillPath(target.path, skill),
+                                })
+                              }
                             />
                           ))}
                         </div>
@@ -5254,6 +5319,43 @@ export default function ProjectSettingsModal({
     );
   })();
 
+  const translateDialogNode = translateDialog ? (
+    <CapabilityTranslateDialog
+      kind={translateDialog.kind}
+      title={translateDialog.kind === 'skill' ? translateDialog.name : null}
+      projectRoot={workspacePath || null}
+      locale={locale}
+      onClose={() => setTranslateDialog(null)}
+      buildRequest={(targets, overwrite) => {
+        if (translateDialog.kind === 'skill') {
+          return {
+            kind: 'skill',
+            projectRoot: workspacePath || null,
+            targets,
+            overwrite,
+            name: translateDialog.name,
+            slug: translateDialog.slug,
+            sourcePath: translateDialog.sourcePath,
+          };
+        }
+        if (translateDialog.kind === 'mcp') {
+          return {
+            kind: 'mcp',
+            projectRoot: workspacePath || null,
+            targets,
+            servers: settings.mcp.servers.filter((server) => server.enabled),
+          };
+        }
+        return {
+          kind: 'lsp',
+          projectRoot: workspacePath || null,
+          targets,
+          servers: settings.lsp.servers.filter((server) => server.enabled),
+        };
+      }}
+    />
+  ) : null;
+
   // Embedded mode: render only the requested tab's content inline so the global
   // Settings modal can host MCP / LSP / Skills without duplicating any of the
   // project-scoped state, handlers, or scan/save lifecycle defined above. The
@@ -5266,7 +5368,12 @@ export default function ProjectSettingsModal({
         </div>
       );
     }
-    return <div className="w-full">{content}</div>;
+    return (
+      <div className="w-full">
+        {content}
+        {translateDialogNode}
+      </div>
+    );
   }
 
   return (
@@ -5400,6 +5507,7 @@ export default function ProjectSettingsModal({
           onSaved={handleRemoteSaved}
         />
       ) : null}
+      {translateDialogNode}
     </div>
   );
 }

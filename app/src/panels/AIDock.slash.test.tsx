@@ -1625,17 +1625,17 @@ describe("AIDock slash suggestions", () => {
     upsertProviders(
       [
         {
-          id: "p_kuro_codex",
+          id: "p_relay_codex",
           kind: "codex",
-          name: "KuroAI",
+          name: "RelayAI",
           apiKey: "sk-test",
-          baseUrl: "https://ai-gateway.kurogames.com",
+          baseUrl: "https://relay.example",
           transport: "cli",
           model: "gpt-5.6-sol",
           models: ["gpt-5.5"],
         },
       ],
-      { makeActiveId: "p_kuro_codex" },
+      { makeActiveId: "p_relay_codex" },
     );
     const workflow = defaultBlueprint("Pinned model");
     useStore.setState({
@@ -1648,7 +1648,7 @@ describe("AIDock slash suggestions", () => {
             defaults: {
               adapter: "codex",
               modelClass: "gpt-5.5",
-              providerId: "p_kuro_codex",
+              providerId: "p_relay_codex",
               channelId: "default",
             },
           },

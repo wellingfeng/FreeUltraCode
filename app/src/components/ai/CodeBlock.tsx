@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { Copy } from 'lucide-react';
 import RawCodeBlock from './RawCodeBlock';
 import MermaidBlock from './MermaidBlock';
@@ -7,6 +7,11 @@ import ComfyGraphBlock from './ComfyGraphBlock';
 import WorldModelBlock from './WorldModelBlock';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
+import {
+  hasBoxDrawing,
+  isAsciiTableSep,
+  isAsciiTableRow,
+} from './lib/asciiArt';
 
 /**
  * Recursively collect the plain text of a hast node (rehype-highlight wraps the
@@ -49,10 +54,8 @@ function languageOf(preNode: HastNode | undefined): string | null {
  * (highlight.js marks added/removed lines with `.hljs-addition`/`.hljs-deletion`).
  */
 export default function CodeBlock({
-  children,
   node,
 }: {
-  children?: ReactNode;
   node?: HastNode;
 }) {
   const raw = useMemo(() => nodeText(node).replace(/\n$/, ''), [node]);
@@ -60,8 +63,8 @@ export default function CodeBlock({
   const normalizedLang = lang?.toLowerCase() ?? null;
 
   // Defensive: react-markdown normally supplies `node`, but if a future plugin
-  // strips it we still render the (highlighted) children without chrome.
-  if (!node) return <pre className="ai-code__scroll">{children}</pre>;
+  // strips it we still render a plain pre without chrome.
+  if (!node) return <pre className="ai-code__scroll" />;
 
   if (normalizedLang === 'mermaid' || normalizedLang === 'mmd') {
     return <MermaidBlock code={raw} />;
@@ -81,12 +84,51 @@ export default function CodeBlock({
 
   // Plain-text blocks (no language tag, or explicitly text/txt/plain) get a
   // lightweight text-style rendering instead of the full code-block chrome —
-  // no header bar, no dark code background, proportional font, subtle border.
+  // no header bar, no dark code background, proportional font, subtle code tint.
+  // A fenced GFM pipe-table (the model sometimes wraps an ASCII table in ```)
+  // should render as a real <table>, not a text panel, so it stops reading as
+  // a collapsed code block.
   if (isPlainTextLang(normalizedLang)) {
+    if (looksLikeGfmTable(raw)) {
+      return <TableFromText raw={raw} />;
+    }
+    if (looksLikeAsciiTable(raw)) {
+      return <AsciiTableFromText raw={raw} />;
+    }
+    // 关键分支：fence 没写语言但内容明显是代码（含 `;` / `=>` / 函数调用），
+    // 走 RawCodeBlock + auto-detect 给高亮；否则保持 PlainTextBlock，
+    // 避免把中文散文/ASCII 框图误判成代码并染上 hljs 颜色。
+    if (lang === null && looksLikeCode(raw)) {
+      return <RawCodeBlock raw={raw} language={null} />;
+    }
     return <PlainTextBlock raw={raw} />;
   }
 
-  return <RawCodeBlock raw={raw} language={lang}>{children}</RawCodeBlock>;
+  return <RawCodeBlock raw={raw} language={lang} />;
+}
+
+/**
+ * Heuristic: bare-fence content "looks like code" when it has the syntactic
+ * density of a real programming language — semicolons, braces, function-call
+ * parens, assignment operators. Keeps pure Chinese prose and ASCII diagrams
+ * routed to PlainTextBlock (no hljs false-positives on散文).
+ */
+function looksLikeCode(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  // 含制表/框线字符的图示排除：归 ASCII art 路径处理。
+  if (hasBoxDrawing(trimmed)) return false;
+  // 代码信号：分号结尾、控制流关键字、函数调用、运算符密度、括号配对。
+  let score = 0;
+  if (/[;{}]\s*$/m.test(trimmed)) score += 2;
+  if (/\b(?:const|let|var|function|return|if|else|for|while|class|struct|import|export|fn|def|public|private|static|void|int|float|auto|template|namespace)\b/.test(trimmed)) score += 3;
+  if (/[A-Za-z_]\w*\s*\([^)]*\)\s*[;{]/.test(trimmed)) score += 2;
+  if (/[=\-+*/<>!&|]=?=?/.test(trimmed)) score += 1;
+  if (/^\s*(?:#include|#define|package\s|using\s|using namespace)\b/m.test(trimmed)) score += 3;
+  // 大段中文叙述会快速掉分（CJK 占比高 → 不像代码）。
+  const cjk = (trimmed.match(/[一-鿿]/g) ?? []).length;
+  if (cjk > trimmed.length * 0.3) score -= 3;
+  return score >= 3;
 }
 
 /** Check if the resolved language is "plain text" (no language or text-like). */
@@ -101,14 +143,129 @@ function isPlainTextLang(lang: string | null): boolean {
 }
 
 /**
+ * Detect a GFM pipe-table that got wrapped inside a fence. The model frequently
+ * emits an ASCII table (header row + `|---|---|` separator + body rows) inside a
+ * bare or `text` fence; without this it would render as a text panel. We key on
+ * the unambiguous `|---|` separator row so real prose/ASCII art is never touched.
+ */
+function looksLikeGfmTable(text: string): boolean {
+  const lines = text.split('\n').filter((line) => line.trim() !== '');
+  if (lines.length < 2) return false;
+  const header = lines[0];
+  const separator = lines[1];
+  if (!header.includes('|') || !separator.includes('|')) return false;
+  const headerCells = splitTableRow(header);
+  const sepCells = splitTableRow(separator);
+  if (headerCells.length < 2 || sepCells.length !== headerCells.length) return false;
+  return sepCells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function splitTableRow(line: string): string[] {
+  let value = line.trim();
+  if (value.startsWith('|')) value = value.slice(1);
+  if (value.endsWith('|')) value = value.slice(0, -1);
+  return value.split('|').map((cell) => cell.trim());
+}
+
+/** Render a fenced pipe-table with the same chrome as native GFM tables. */
+function TableFromText({ raw }: { raw: string }) {
+  const lines = raw.split('\n').filter((line) => line.trim() !== '');
+  const header = splitTableRow(lines[0]);
+  const rows = lines.slice(2).map(splitTableRow);
+  const width = header.length;
+  return (
+    <div className="ai-table-wrap my-2 overflow-x-auto rounded-lg border border-border">
+      <table className="ai-table w-full border-collapse text-[13px]">
+        <thead>
+          <tr>
+            {header.map((cell, i) => (
+              <th key={i}>{cell}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              {Array.from({ length: width }, (_, j) => (
+                <td key={j}>{row[j] ?? ''}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Detect a `+---+` / `+===+` bordered ASCII table (the model often draws a
+ * table with box characters instead of a GFM pipe-table). Keyed on the
+ * unambiguous `+---+` separator row so prose/ASCII art is never touched.
+ */
+function looksLikeAsciiTable(text: string): boolean {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 3) return false;
+  if (!isAsciiTableSep(lines[0])) return false;
+  if (!isAsciiTableRow(lines[1])) return false;
+  // 需要一个分隔行把表头与数据隔开。
+  return lines.some((line, idx) => idx > 0 && isAsciiTableSep(line));
+}
+
+function splitAsciiTableRow(line: string): string[] {
+  let value = line.trim();
+  if (value.startsWith('|')) value = value.slice(1);
+  if (value.endsWith('|')) value = value.slice(0, -1);
+  return value.split('|').map((cell) => cell.trim());
+}
+
+/** Render a `+---+` bordered ASCII table with the same chrome as GFM tables. */
+function AsciiTableFromText({ raw }: { raw: string }) {
+  const rows = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(isAsciiTableRow);
+  if (rows.length === 0) return <PlainTextBlock raw={raw} />;
+  const header = splitAsciiTableRow(rows[0]);
+  const body = rows.slice(1).map(splitAsciiTableRow);
+  const width = header.length;
+  return (
+    <div className="ai-table-wrap my-2 overflow-x-auto rounded-lg border border-border">
+      <table className="ai-table w-full border-collapse text-[13px]">
+        <thead>
+          <tr>
+            {header.map((cell, i) => (
+              <th key={i}>{cell}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((row, i) => (
+            <tr key={i}>
+              {Array.from({ length: width }, (_, j) => (
+                <td key={j}>{row[j] ?? ''}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
  * Lightweight rendering for plain-text fences: no header bar, no dark code
- * background, no monospace font. Uses a subtle surface with left border so it
- * reads as a "text panel" rather than a code block. Copy button on hover.
+ * background, no monospace font. Uses a subtle code-tinted surface (no border)
+ * so it reads as a "text panel" rather than a code block. Copy button on hover.
+ * ASCII 树/框图（含制表字符）改用等宽字体，保证对齐。
  */
 function PlainTextBlock({ raw }: { raw: string }) {
   const locale = useStore((s) => s.locale);
   const [hovered, setHovered] = useState(false);
   const text = raw.replace(/\n$/, '');
+  const mono = hasBoxDrawing(raw);
+  const bodyClass =
+    'ai-plain-block__body whitespace-pre-wrap rounded-lg px-3.5 py-2.5 text-[13px] leading-relaxed text-fg ' +
+    (mono ? 'font-mono overflow-x-auto' : 'break-words');
   return (
     <div
       className="ai-plain-block group/plain relative my-2"
@@ -126,7 +283,7 @@ function PlainTextBlock({ raw }: { raw: string }) {
           {t(locale, 'chat.copy')}
         </button>
       )}
-      <div className="ai-plain-block__body whitespace-pre-wrap break-words rounded-lg border-l-2 border-[var(--stream-surface-border)] bg-[var(--stream-surface-bg)] px-3.5 py-2.5 text-[13px] leading-relaxed text-fg">
+      <div className={bodyClass}>
         {text}
       </div>
     </div>

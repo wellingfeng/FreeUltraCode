@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 
 import {
   applyMemoryOp,
+  backfillMemoryTimestamps,
   getMemoryLimits,
-  loadMemory,
+  type MemoryEntry,
   type MemoryTarget,
 } from '@/lib/memoryStore';
+import { refreshMemoryFromHistory, type RefreshScope } from '@/lib/memoryRefresh';
 import {
   DEFAULT_MEMORY_CONFIG,
   loadMemoryConfig,
@@ -24,7 +26,7 @@ interface MemorySettingsProps {
 }
 
 interface StoreView {
-  entries: string[];
+  entries: MemoryEntry[];
   used: number;
   limit: number;
 }
@@ -38,11 +40,24 @@ function fmt(locale: Locale, key: TranslationKey, vars: Record<string, string | 
   );
 }
 
+function formatUpdatedAt(locale: Locale, ts: number | undefined): string {
+  if (!ts) return t(locale, 'settings.memory.updatedUnknown');
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return t(locale, 'settings.memory.updatedUnknown');
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return fmt(locale, 'settings.memory.updatedAt', { at: `${date} ${time}` });
+}
+
 export default function MemorySettings({ locale, workspaceId }: MemorySettingsProps) {
   const wsId = workspaceId ?? undefined;
   const [user, setUser] = useState<StoreView>(EMPTY_VIEW);
   const [memory, setMemory] = useState<StoreView>(EMPTY_VIEW);
   const [error, setError] = useState<string>('');
+  const [refreshDays, setRefreshDays] = useState(10);
+  const [refreshing, setRefreshing] = useState<RefreshScope | null>(null);
+  const [refreshMessage, setRefreshMessage] = useState<string>('');
   const [config, setConfig] = useState<MemoryConfig>(() => {
     try {
       return loadMemoryConfig();
@@ -63,9 +78,20 @@ export default function MemorySettings({ locale, workspaceId }: MemorySettingsPr
 
   const refresh = useCallback(async () => {
     const limits = getMemoryLimits();
-    const [u, m] = await Promise.all([loadMemory('user'), loadMemory('memory', wsId)]);
-    setUser({ entries: u, used: u.join('\n').length, limit: limits.user });
-    setMemory({ entries: m, used: m.join('\n').length, limit: limits.memory });
+    const [u, m] = await Promise.all([
+      backfillMemoryTimestamps('user'),
+      backfillMemoryTimestamps('memory', wsId),
+    ]);
+    setUser({
+      entries: u,
+      used: u.map((e) => e.text).join('\n').length,
+      limit: limits.user,
+    });
+    setMemory({
+      entries: m,
+      used: m.map((e) => e.text).join('\n').length,
+      limit: limits.memory,
+    });
   }, [wsId]);
 
   useEffect(() => {
@@ -87,6 +113,48 @@ export default function MemorySettings({ locale, workspaceId }: MemorySettingsPr
       return true;
     },
     [locale, refresh, wsId],
+  );
+
+  const runRefresh = useCallback(
+    async (scope: RefreshScope) => {
+      if (refreshing) return;
+      setRefreshing(scope);
+      setRefreshMessage('');
+      setError('');
+      const res = await refreshMemoryFromHistory({
+        scope,
+        days: refreshDays,
+        workspaceId: scope === 'project' ? wsId : undefined,
+        evictOnOverflow: config.evictOnOverflow,
+      });
+      setRefreshing(null);
+      if (!res.ok) {
+        setRefreshMessage(
+          fmt(locale, 'settings.memory.refreshError', { msg: res.error ?? '' }),
+        );
+        return;
+      }
+      if (res.messagesScanned === 0) {
+        setRefreshMessage(t(locale, 'settings.memory.refreshEmpty'));
+      } else if (res.appliedOps > 0) {
+        setRefreshMessage(
+          fmt(locale, 'settings.memory.refreshSuccess', {
+            sessions: res.sessionsScanned,
+            messages: res.messagesScanned,
+            applied: res.appliedOps,
+          }),
+        );
+      } else {
+        setRefreshMessage(
+          fmt(locale, 'settings.memory.refreshNoChange', {
+            sessions: res.sessionsScanned,
+            messages: res.messagesScanned,
+          }),
+        );
+      }
+      await refresh();
+    },
+    [refreshing, refreshDays, wsId, config.evictOnOverflow, locale, refresh],
   );
 
   return (
@@ -131,6 +199,40 @@ export default function MemorySettings({ locale, workspaceId }: MemorySettingsPr
       />
 
       <div className="space-y-2">
+        <h4 className="text-xs font-semibold text-fg">{t(locale, 'settings.memory.refreshTitle')}</h4>
+        <p className="text-[11px] leading-relaxed text-fg-faint">
+          {t(locale, 'settings.memory.refreshHint')}
+        </p>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-fg-dim">{t(locale, 'settings.memory.refreshDays')}</span>
+          <StepperControl value={refreshDays} min={1} max={90} onChange={setRefreshDays} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={refreshing !== null}
+            className="flex items-center gap-1 rounded border border-border px-2 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:opacity-40"
+            onClick={() => void runRefresh('global')}
+          >
+            <RefreshCw size={13} className={refreshing === 'global' ? 'animate-spin' : ''} />
+            {t(locale, 'settings.memory.refreshGlobal')}
+          </button>
+          <button
+            type="button"
+            disabled={refreshing !== null || !workspaceId}
+            className="flex items-center gap-1 rounded border border-border px-2 py-1.5 text-xs text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:opacity-40"
+            onClick={() => void runRefresh('project')}
+          >
+            <RefreshCw size={13} className={refreshing === 'project' ? 'animate-spin' : ''} />
+            {t(locale, 'settings.memory.refreshProject')}
+          </button>
+        </div>
+        {refreshMessage && (
+          <p className="text-[11px] leading-relaxed text-fg-dim">{refreshMessage}</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
         <h4 className="text-xs font-semibold text-fg">{t(locale, 'settings.memory.optionsTitle')}</h4>
         <SettingRow
           title={t(locale, 'settings.memory.snapshotEnabled')}
@@ -157,6 +259,15 @@ export default function MemorySettings({ locale, workspaceId }: MemorySettingsPr
           <SwitchControl
             checked={config.recallEnabled}
             onChange={(v) => patchConfig({ recallEnabled: v })}
+          />
+        </SettingRow>
+        <SettingRow
+          title={t(locale, 'settings.memory.evictOnOverflow')}
+          description={t(locale, 'settings.memory.evictHint')}
+        >
+          <SwitchControl
+            checked={config.evictOnOverflow}
+            onChange={(v) => patchConfig({ evictOnOverflow: v })}
           />
         </SettingRow>
         <SettingRow title={t(locale, 'settings.memory.userLimit')}>
@@ -277,7 +388,7 @@ function MemoryStoreSection({
         <ul className="space-y-1">
           {view.entries.map((entry, index) => (
             <li
-              key={`${index}-${entry.slice(0, 16)}`}
+              key={`${index}-${entry.text.slice(0, 16)}`}
               className="group flex items-start gap-2 rounded border border-border/60 bg-bg px-2 py-1.5"
             >
               {editIndex === index ? (
@@ -294,8 +405,8 @@ function MemoryStoreSection({
                     className="rounded p-1 text-emerald-400 hover:bg-bg-soft"
                     onClick={async () => {
                       const next = editText.trim();
-                      if (next && next !== entry) {
-                        const ok = await onReplace(entry, next);
+                      if (next && next !== entry.text) {
+                        const ok = await onReplace(entry.text, next);
                         if (!ok) return;
                       }
                       setEditIndex(null);
@@ -314,16 +425,21 @@ function MemoryStoreSection({
                 </>
               ) : (
                 <>
-                  <span className="flex-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-dim">
-                    {entry}
-                  </span>
+                  <div className="flex-1 space-y-0.5">
+                    <span className="block whitespace-pre-wrap break-words text-xs leading-relaxed text-fg-dim">
+                      {entry.text}
+                    </span>
+                    <span className="block text-[10px] tabular-nums text-fg-faint">
+                      {formatUpdatedAt(locale, entry.updatedAt)}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     title={t(locale, 'settings.memory.edit')}
                     className="rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-bg-soft group-hover:opacity-100"
                     onClick={() => {
                       setEditIndex(index);
-                      setEditText(entry);
+                      setEditText(entry.text);
                     }}
                   >
                     <Pencil size={13} />
@@ -332,7 +448,7 @@ function MemoryStoreSection({
                     type="button"
                     title={t(locale, 'settings.memory.delete')}
                     className="rounded p-1 text-fg-faint opacity-0 transition-opacity hover:bg-bg-soft hover:text-rose-400 group-hover:opacity-100"
-                    onClick={() => void onRemove(entry)}
+                    onClick={() => void onRemove(entry.text)}
                   >
                     <Trash2 size={13} />
                   </button>

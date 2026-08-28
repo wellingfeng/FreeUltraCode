@@ -204,7 +204,7 @@ describe('spawnCliAgent (claude stream-json)', () => {
     expect(argv).not.toContain('--dangerously-skip-permissions');
   });
 
-  it('uses bare mode for Anthropic-compatible relay env so user hooks do not run', async () => {
+  it('uses bare mode only for an explicit UGS-owned route capability', async () => {
     const argvOut = join(dir, 'argv-claude-relay.json');
     const bin = makeFakeCli('fake-claude-relay', fakeClaudeBody(argvOut));
     await spawnCliAgent('p', {
@@ -215,6 +215,7 @@ describe('spawnCliAgent (claude stream-json)', () => {
         ANTHROPIC_API_KEY: 'freecc',
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:8766/ch/open_router',
         ANTHROPIC_MODEL: 'z-ai/glm-4.6',
+        UGS_CLAUDE_BARE: '1',
       },
     });
     const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
@@ -235,6 +236,24 @@ describe('spawnCliAgent (claude stream-json)', () => {
         ANTHROPIC_API_KEY: 'freecc',
         ANTHROPIC_BASE_URL: 'http://127.0.0.1:8766/ch/open_router',
         ANTHROPIC_MODEL: 'z-ai/glm-4.6',
+        UGS_CLAUDE_BARE: '1',
+      },
+    });
+    const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+    expect(argv).not.toContain('--bare');
+  });
+
+  it('does not infer bare mode from a user-provided gateway URL', async () => {
+    const argvOut = join(dir, 'argv-claude-user-relay.json');
+    const bin = makeFakeCli('fake-claude-user-relay', fakeClaudeBody(argvOut));
+    await spawnCliAgent('p', {
+      adapter: 'claude-code',
+      cliCommand: bin,
+      permission: 'full',
+      env: {
+        ANTHROPIC_API_KEY: 'token',
+        ANTHROPIC_BASE_URL: 'https://relay.example/anthropic',
+        ANTHROPIC_MODEL: 'custom-model',
       },
     });
     const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));

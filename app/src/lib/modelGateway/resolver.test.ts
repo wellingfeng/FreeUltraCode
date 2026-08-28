@@ -204,6 +204,7 @@ describe('model gateway compatibility', () => {
       ANTHROPIC_BASE_URL: 'https://relay.example/v1/',
       ANTHROPIC_MODEL: 'custom-model',
     });
+    expect(route.env).not.toHaveProperty('UGS_CLAUDE_BARE');
     expect(route.model).toBe('custom-model');
   });
 
@@ -284,12 +285,12 @@ describe('model gateway compatibility', () => {
       PROVIDERS_STORAGE,
       JSON.stringify([
         {
-          id: 'kuro_relay',
+          id: 'relay_provider',
           kind: 'codex',
           transport: 'direct',
-          name: 'KuroAI',
+          name: 'RelayAI',
           apiKey: 'sk-kuro',
-          baseUrl: 'https://ai-gateway.kurogames.com/v1',
+          baseUrl: 'https://relay.example/v1',
           model: 'gpt-5.5',
           models: ['gpt-5.6-sol'],
         },
@@ -300,7 +301,7 @@ describe('model gateway compatibility', () => {
       defaults: {
         adapter: 'codex',
         modelClass: 'gpt-5.6-sol',
-        providerId: 'kuro_relay',
+        providerId: 'relay_provider',
         channelId: 'default',
       },
     };
@@ -405,12 +406,12 @@ describe('model gateway compatibility', () => {
         adapter: 'deepseek-harness',
         transport: 'cli',
         apiKey: 'ds-key',
-        baseUrl: 'https://ai-gateway.kurogames.com',
+        baseUrl: 'https://relay.example',
         model: 'deepseek-ai/DeepSeek-V3',
       }),
     ).toMatchObject({
       DEEPSEEK_API_KEY: 'ds-key',
-      DEEPSEEK_BASE_URL: 'https://ai-gateway.kurogames.com',
+      DEEPSEEK_BASE_URL: 'https://relay.example',
     });
   });
 
@@ -446,6 +447,46 @@ describe('model gateway compatibility', () => {
     expect(
       gatewayRouteEnv({
         adapter: 'zcode',
+        transport: 'cli',
+        apiKey: undefined,
+        baseUrl: undefined,
+        model: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('exports kimi CLI env (KIMI_MODEL_API_KEY + KIMI_MODEL_NAME) so key-only auth works', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'kimi',
+        transport: 'cli',
+        apiKey: 'sk-moonshot',
+        baseUrl: 'https://api.moonshot.cn/v1',
+        model: 'kimi-k2',
+      }),
+    ).toMatchObject({
+      KIMI_MODEL_API_KEY: 'sk-moonshot',
+      KIMI_MODEL_NAME: 'kimi-k2',
+      KIMI_MODEL_BASE_URL: 'https://api.moonshot.cn/v1',
+    });
+  });
+
+  it('omits kimi env when the channel has a key but no model (env overlay needs both)', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'kimi',
+        transport: 'cli',
+        apiKey: 'sk-moonshot',
+        baseUrl: undefined,
+        model: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('omits kimi env when the channel has no key+model (falls back to login)', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'kimi',
         transport: 'cli',
         apiKey: undefined,
         baseUrl: undefined,
@@ -522,6 +563,7 @@ describe('model gateway compatibility', () => {
     expect(route.model).toBeUndefined();
     expect(route.env).toMatchObject({
       ANTHROPIC_BASE_URL: expect.stringContaining('/ch/auto'),
+      UGS_CLAUDE_BARE: '1',
     });
     expect(route.env).not.toHaveProperty('ANTHROPIC_MODEL');
   });

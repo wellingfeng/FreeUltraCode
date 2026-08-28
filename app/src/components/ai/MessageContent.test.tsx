@@ -186,7 +186,7 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/hljs-built_in|hljs-title/);
   });
 
-  it('renders loose diff code as one folded block instead of scattered markdown lists', () => {
+  it('renders loose diff code as one code block instead of scattered markdown lists', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
         text: [
@@ -200,11 +200,11 @@ describe('MessageContent integration', () => {
       }),
     );
 
-    // One code block, recognized as a diff and folded behind a toggle (its body
-    // is hidden until the user expands it) rather than parsed as markdown lists.
+    // One code block, recognized as a diff and rendered as a folded code block
+    // (no ai-code__folded bar) rather than parsed as markdown lists.
     expect(html.match(/class="ai-code group\/code/g)).toHaveLength(1);
-    expect(html).toMatch(/ai-code__folded/);
-    expect(html).not.toMatch(/controller\.close/);
+    expect(html).not.toMatch(/ai-code__folded/);
+    expect(html).toMatch(/controller\.close/);
     expect(html).not.toMatch(/<ul/);
   });
 
@@ -226,7 +226,7 @@ describe('MessageContent integration', () => {
       }),
     );
 
-    expect(html.match(/class="ai-code group\/code/g)).toHaveLength(2);
+    expect(html.match(/class="ai-code(?: ai-code--tiny)? group\/code/g)).toHaveLength(2);
     expect(html).toMatch(/language-ts/);
     expect(html).toMatch(/language-css/);
   });

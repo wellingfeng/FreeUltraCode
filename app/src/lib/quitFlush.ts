@@ -9,6 +9,14 @@ function hasWindow(): boolean {
   return typeof window !== "undefined";
 }
 
+let beforeQuitListener: (() => void) | null = null;
+let beforeUnloadListener: (() => void) | null = null;
+
+export function resetQuitFlushForTests(): void {
+  beforeQuitListener = null;
+  beforeUnloadListener = null;
+}
+
 /**
  * 安装「退出前落盘兜底」：
  * - 浏览器 beforeunload：同步把内存中的密钥写回 localStorage 镜像。
@@ -19,16 +27,18 @@ function hasWindow(): boolean {
  * 浏览器 / dev 构建下自动跳过 Tauri 部分，beforeunload 兜底始终生效。
  */
 export async function installQuitFlushHandler(): Promise<void> {
-  if (hasWindow()) {
-    window.addEventListener("beforeunload", () => {
+  if (hasWindow() && !beforeUnloadListener) {
+    beforeUnloadListener = () => {
       flushSecretsToLocalStorageFallback();
-    });
+    };
+    window.addEventListener("beforeunload", beforeUnloadListener);
   }
   const { isTauri } = await import("@/lib/tauri");
   if (!isTauri()) return;
   try {
     const { listen } = await import("@tauri-apps/api/event");
-    await listen("ugs:before-quit", () => {
+    if (beforeQuitListener) return;
+    beforeQuitListener = () => {
       flushSecretsToLocalStorageFallback();
       void Promise.all([
         flushSecureStorage().catch(() => {
@@ -40,6 +50,12 @@ export async function installQuitFlushHandler(): Promise<void> {
         flushRemoteProfileWrites().catch(() => {
           /* remote write failed — server copy may be stale */
         }),
+        // 把仍处于 debounce 窗口内的输入框草稿立即落盘，避免「退出即丢」。
+        import("@/store/composerDraftPersistence")
+          .then(({ flushComposerDraftPersist }) => flushComposerDraftPersist())
+          .catch(() => {
+            /* draft flush failed — best-effort only */
+          }),
       ]).finally(() => {
         void import("@tauri-apps/api/core")
           .then(({ invoke }) => invoke("ugs_quit_flush_done"))
@@ -47,7 +63,8 @@ export async function installQuitFlushHandler(): Promise<void> {
             /* host already gone */
           });
       });
-    });
+    };
+    await listen("ugs:before-quit", beforeQuitListener);
   } catch (err) {
     console.warn("[quitFlush] before-quit handler unavailable", err);
   }

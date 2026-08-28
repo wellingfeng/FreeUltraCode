@@ -8,6 +8,7 @@ export type StatusTone =
   | 'waiting'
   | 'draft'
   | 'success'
+  | 'successUnread'
   | 'failed';
 
 interface StatusIndicatorProps {
@@ -27,6 +28,9 @@ const TONE_STYLE: Record<StatusTone, CSSProperties> = {
   waiting: statusColorStyle('var(--status-running)'),
   draft: statusColorStyle('var(--status-draft)'),
   success: statusColorStyle('var(--status-success)'),
+  successUnread: statusColorStyle(
+    'color-mix(in oklab, var(--status-success) 52%, white)',
+  ),
   failed: statusColorStyle('var(--status-error)'),
 };
 
@@ -55,6 +59,7 @@ export default function StatusIndicator({
           aria-hidden="true"
           className={cn(
             'ugs-status-indicator',
+            tone === 'successUnread' && 'ugs-status-unread',
             isSpinningTone(tone) && 'ugs-status-spinner',
           )}
           style={TONE_STYLE[tone]}

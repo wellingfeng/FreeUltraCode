@@ -16,6 +16,12 @@
 // global root (same disk-backed settings store every other settings blob
 // uses); `UGS_CACHE_RETENTION_DAYS` / `UGS_DISABLE_STARTUP_CACHE_CLEANUP` env
 // vars take precedence over that file when set, for support/diagnostics use.
+//
+// The same sweep powers a manual "clean now" button: `manual_cache_cleanup`
+// runs a pass with an explicit retention window chosen in the UI (default 10
+// days) and reports how many files/bytes it removed. Manual cleanup is never
+// gated by the startup toggle or its disable env var - it is a user-initiated
+// action and must always be available.
 
 use std::fs;
 use std::path::Path;
@@ -24,6 +30,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::storage_paths;
 
 const DEFAULT_RETENTION_DAYS: u64 = 30;
+const MIN_RETENTION_DAYS: u64 = 1;
+const MAX_RETENTION_DAYS: u64 = 365;
 const RETENTION_DAYS_ENV: &str = "UGS_CACHE_RETENTION_DAYS";
 const DISABLE_ENV: &str = "UGS_DISABLE_STARTUP_CACHE_CLEANUP";
 const STARTUP_DELAY: Duration = Duration::from_secs(20);
@@ -31,6 +39,30 @@ const STEP_PAUSE: Duration = Duration::from_millis(15);
 const UI_CONFIG_REL_PATH: &str = "settings/cacheCleanup.v1.json";
 
 const GLOBAL_CACHE_SUBDIRS: &[&str] = &["trash", "backups", "quarantine", "tmp", "deleted"];
+
+/// Serializable result of a manual cleanup pass, shown in the Settings UI.
+#[derive(serde::Serialize, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheCleanupSummary {
+    pub files_removed: u64,
+    pub bytes_freed: u64,
+}
+
+/// Internal running tally for a single cleanup pass.
+#[derive(Default, Clone, Copy)]
+struct CleanupStats {
+    files: u64,
+    bytes: u64,
+}
+
+impl CleanupStats {
+    fn into_summary(self) -> CacheCleanupSummary {
+        CacheCleanupSummary {
+            files_removed: self.files,
+            bytes_freed: self.bytes,
+        }
+    }
+}
 
 /// The `settings/cacheCleanup.v1.json` blob the Settings UI writes:
 /// `{ "enabled": bool, "retentionDays": number }`. Missing/corrupt file or
@@ -49,8 +81,8 @@ fn read_ui_config() -> Option<(bool, u64)> {
     Some((enabled, days))
 }
 
-/// Whether the sweep should run at all: the disable env var always wins, then
-/// the UI toggle (default enabled), then on by default.
+/// Whether the startup sweep should run at all: the disable env var always
+/// wins, then the UI toggle (default enabled), then on by default.
 fn cleanup_enabled() -> bool {
     if std::env::var(DISABLE_ENV).is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true")) {
         return false;
@@ -58,14 +90,14 @@ fn cleanup_enabled() -> bool {
     read_ui_config().map(|(enabled, _)| enabled).unwrap_or(true)
 }
 
-fn retention_secs() -> u64 {
-    let days = std::env::var(RETENTION_DAYS_ENV)
+/// Retention window in days: env var wins, then the UI config, then default.
+fn retention_days() -> u64 {
+    std::env::var(RETENTION_DAYS_ENV)
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|&d| d > 0)
         .or_else(|| read_ui_config().map(|(_, days)| days))
-        .unwrap_or(DEFAULT_RETENTION_DAYS);
-    days.saturating_mul(24 * 60 * 60)
+        .unwrap_or(DEFAULT_RETENTION_DAYS)
 }
 
 fn now_secs() -> u64 {
@@ -107,7 +139,20 @@ fn is_favorited_session(path: &Path) -> bool {
 /// Recursively delete stale files under `dir`, then remove any directories
 /// left empty by the sweep (best-effort; failures are ignored since the
 /// directory may still hold fresh files or be racing a concurrent writer).
-fn sweep_cache_dir(dir: &Path, now: u64, max_age: u64) {
+fn sweep_cache_dir(dir: &Path, now: u64, max_age: u64, stats: &mut CleanupStats) {
+    sweep_cache_dir_excluding(dir, now, max_age, stats, &[]);
+}
+
+/// `sweep_cache_dir` 的带排除变体：递归清理时跳过 `excluded_names` 命中的一级子目录。
+/// 用于让 AutoSave 快照目录（`<workspace>/.ultragamestudio/autosave`）免受缓存清理
+/// 的 30 天淘汰影响——AutoSave 自行按 retentionDays（默认 7 天）滚动清理。
+fn sweep_cache_dir_excluding(
+    dir: &Path,
+    now: u64,
+    max_age: u64,
+    stats: &mut CleanupStats,
+    excluded_names: &[&str],
+) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -117,14 +162,22 @@ fn sweep_cache_dir(dir: &Path, now: u64, max_age: u64) {
             continue;
         };
         if file_type.is_dir() {
-            sweep_cache_dir(&path, now, max_age);
+            if excluded_names.iter().any(|name| {
+                entry.file_name() == std::ffi::OsStr::new(name)
+            }) {
+                continue;
+            }
+            sweep_cache_dir_excluding(&path, now, max_age, stats, excluded_names);
             let _ = fs::remove_dir(&path);
             continue;
         }
         if !file_type.is_file() || !is_stale(&path, now, max_age) {
             continue;
         }
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         if fs::remove_file(&path).is_ok() {
+            stats.files += 1;
+            stats.bytes = stats.bytes.saturating_add(size);
             std::thread::sleep(STEP_PAUSE);
         }
     }
@@ -133,7 +186,7 @@ fn sweep_cache_dir(dir: &Path, now: u64, max_age: u64) {
 /// Same as `sweep_cache_dir`, but for a workspace `sessions/` directory: skips
 /// `index.json` (live state, self-healing on mismatch) and keeps favorited
 /// session records regardless of age.
-fn sweep_sessions_dir(dir: &Path, now: u64, max_age: u64) {
+fn sweep_sessions_dir(dir: &Path, now: u64, max_age: u64, stats: &mut CleanupStats) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -154,19 +207,22 @@ fn sweep_sessions_dir(dir: &Path, now: u64, max_age: u64) {
         if is_favorited_session(&path) {
             continue;
         }
+        let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         if fs::remove_file(&path).is_ok() {
+            stats.files += 1;
+            stats.bytes = stats.bytes.saturating_add(size);
             std::thread::sleep(STEP_PAUSE);
         }
     }
 }
 
-fn sweep_global_root(now: u64, max_age: u64) {
+fn sweep_global_root(now: u64, max_age: u64, stats: &mut CleanupStats) {
     let Ok(root) = storage_paths::global_root() else {
         return;
     };
 
     for name in GLOBAL_CACHE_SUBDIRS {
-        sweep_cache_dir(&root.join(name), now, max_age);
+        sweep_cache_dir(&root.join(name), now, max_age, stats);
     }
 
     let workspaces_root = root.join("workspaces");
@@ -175,26 +231,36 @@ fn sweep_global_root(now: u64, max_age: u64) {
     };
     for entry in workspace_entries.flatten() {
         if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            sweep_sessions_dir(&entry.path().join("sessions"), now, max_age);
+            sweep_sessions_dir(&entry.path().join("sessions"), now, max_age, stats);
         }
     }
 }
 
-fn sweep_project_caches(now: u64, max_age: u64) {
+fn sweep_project_caches(now: u64, max_age: u64, stats: &mut CleanupStats) {
     for workspace_root in storage_paths::known_workspace_roots() {
         let cache_root = workspace_root.join(storage_paths::PROJECT_ROOT_DIR_NAME);
-        sweep_cache_dir(&cache_root, now, max_age);
+        sweep_cache_dir_excluding(&cache_root, now, max_age, stats, &["autosave"]);
     }
+}
+
+/// Run a full sweep with an explicit retention window (in days), returning how
+/// much was removed. The window is clamped to the same 1..365 range the UI
+/// enforces so a bogus value can never delete everything.
+fn run_cleanup_pass_with_retention_days(days: u64) -> CleanupStats {
+    let days = days.clamp(MIN_RETENTION_DAYS, MAX_RETENTION_DAYS);
+    let max_age = days.saturating_mul(24 * 60 * 60);
+    let now = now_secs();
+    let mut stats = CleanupStats::default();
+    sweep_global_root(now, max_age, &mut stats);
+    sweep_project_caches(now, max_age, &mut stats);
+    stats
 }
 
 fn run_cleanup_pass() {
     if !cleanup_enabled() {
         return;
     }
-    let max_age = retention_secs();
-    let now = now_secs();
-    sweep_global_root(now, max_age);
-    sweep_project_caches(now, max_age);
+    let _ = run_cleanup_pass_with_retention_days(retention_days());
 }
 
 /// Kick off the retention sweep on a dedicated background thread. Safe to
@@ -211,6 +277,18 @@ pub fn spawn_startup_cache_cleanup() {
             std::thread::sleep(STARTUP_DELAY);
             run_cleanup_pass();
         });
+}
+
+/// Settings UI "clean now" button: run a sweep with the user-chosen retention
+/// window (days) and report files/bytes removed. Never gated by the startup
+/// toggle or its disable env var - this is an explicit user action.
+#[tauri::command]
+pub async fn manual_cache_cleanup(retention_days: u64) -> Result<CacheCleanupSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(run_cleanup_pass_with_retention_days(retention_days).into_summary())
+    })
+    .await
+    .map_err(|e| format!("手动清理任务失败: {e}"))?
 }
 
 #[cfg(test)]
@@ -241,11 +319,13 @@ mod tests {
         let fresh = root.join("fresh.tmp");
         fs::write(&fresh, "{}").unwrap();
 
-        sweep_cache_dir(&root, now_secs(), max_age);
+        let mut stats = CleanupStats::default();
+        sweep_cache_dir(&root, now_secs(), max_age, &mut stats);
 
         assert!(!stale.exists(), "stale file should be removed");
         assert!(!root.join("nested").exists(), "emptied dir should be pruned");
         assert!(fresh.exists(), "fresh file should survive");
+        assert_eq!(stats.files, 1, "one stale file should be tallied");
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -273,7 +353,8 @@ mod tests {
         let stale_plain = root.join("ses_old.json");
         touch_stale(&stale_plain, stale_age);
 
-        sweep_sessions_dir(&root, now_secs(), max_age);
+        let mut stats = CleanupStats::default();
+        sweep_sessions_dir(&root, now_secs(), max_age, &mut stats);
 
         assert!(index.exists(), "sessions index.json must never be swept");
         assert!(favorited.exists(), "favorited session must be kept");
@@ -281,6 +362,7 @@ mod tests {
             !stale_plain.exists(),
             "stale unfavorited session should be removed"
         );
+        assert_eq!(stats.files, 1, "one stale session should be tallied");
 
         let _ = fs::remove_dir_all(&root);
     }

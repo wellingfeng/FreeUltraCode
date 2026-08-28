@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   isTauri: vi.fn(),
   listProviders: vi.fn(),
   loadGatewayConfig: vi.fn(),
-  modelClassFromModelId: vi.fn(),
   patchConfig: vi.fn(),
   providerMetadataSignature: vi.fn(),
   saveGatewayConfig: vi.fn(),
@@ -26,7 +25,6 @@ vi.mock('@/lib/apiConfig', () => ({
 
 vi.mock('@/lib/gatewayConfig', () => ({
   loadGatewayConfig: mocks.loadGatewayConfig,
-  modelClassFromModelId: mocks.modelClassFromModelId,
   saveGatewayConfig: mocks.saveGatewayConfig,
   setActiveGatewaySelection: mocks.setActiveGatewaySelection,
 }));
@@ -71,7 +69,6 @@ beforeEach(() => {
   mocks.isTauri.mockReset();
   mocks.listProviders.mockReset();
   mocks.loadGatewayConfig.mockReset();
-  mocks.modelClassFromModelId.mockReset();
   mocks.patchConfig.mockReset();
   mocks.providerMetadataSignature.mockReset();
   mocks.saveGatewayConfig.mockReset();
@@ -121,7 +118,6 @@ beforeEach(() => {
       ].join('|'),
   );
   mocks.loadGatewayConfig.mockReturnValue({ version: 1, providers: [] });
-  mocks.modelClassFromModelId.mockReturnValue('sonnet');
   mocks.patchConfig.mockImplementation(
     async (patch: Record<string, unknown>) => ({
       schemaVersion: 1,
@@ -185,9 +181,11 @@ describe('maybeRunCcSwitchAutoImportOnFirstRun', () => {
 
     expect(outcome.status).toBe('imported');
     expect(mocks.setActiveProviderId).toHaveBeenCalledWith('p_cc_switch');
+    // The selection stores the channel's real model id, not a Claude tier
+    // placeholder — every modelClass consumer displays it verbatim.
     expect(mocks.setActiveGatewaySelection).toHaveBeenCalledWith({
       adapter: 'claude-code',
-      modelClass: 'sonnet',
+      modelClass: 'claude-sonnet-4',
       providerId: 'p_cc_switch',
       channelId: 'default',
     });
