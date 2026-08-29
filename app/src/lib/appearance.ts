@@ -13,6 +13,7 @@ export const BUILTIN_STYLE_PRESETS = [
   'campbell-powershell',
   'one-half-dark',
   'solarized-dark',
+  'terminal',
 ] as const;
 export const DEFAULT_STREAM_SCHEME_ID = 'current' as const;
 export const BUILTIN_STREAM_SCHEMES = [
@@ -27,6 +28,7 @@ export const TERMINAL_STYLE_PRESET_IDS = [
   'campbell-powershell',
   'one-half-dark',
   'solarized-dark',
+  'terminal',
 ] as const;
 export const DEFAULT_FONT_FAMILY_ID = 'inter' as const;
 export const BUILTIN_FONT_FAMILIES = [
@@ -228,6 +230,19 @@ export const STYLE_PRESETS: Record<BuiltinStylePresetId, StylePresetDefinition> 
         '#0d404d',
         '#268bd2',
         '#2aa198',
+      ],
+    },
+    terminal: {
+      id: 'terminal',
+      labelKey: 'settings.appearancePresetTerminal',
+      descriptionKey: 'settings.appearancePresetTerminalDescription',
+      colorScheme: 'dark',
+      swatches: [
+        '#202020',
+        '#1a1a1a',
+        '#2e2e2e',
+        '#2fc8a8',
+        '#4da3ff',
       ],
     },
   };

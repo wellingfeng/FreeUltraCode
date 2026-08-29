@@ -545,6 +545,37 @@ html.ugs-style-campbell {
   --ugs-status-interrupted-contrast: #050505;
 }
 
+html[data-ugs-style='terminal'],
+html.ugs-style-terminal {
+  color-scheme: dark;
+  /* 中性灰黑底 + 低饱和青/蓝点缀（取自多智能体编码终端录屏实测主色 #202020） */
+  --ugs-color-bg: #202020;
+  --ugs-color-bg-alt: #1a1a1a;
+  --ugs-color-panel: #262626;
+  --ugs-color-panel-2: #2e2e2e;
+  --ugs-color-border: #3c3c3c;
+  --ugs-color-border-soft: #2c2c2c;
+  --ugs-color-text: #e8e8e8;
+  --ugs-color-text-muted: #b0b0b0;
+  --ugs-color-text-faint: #717171;
+  --ugs-color-accent: #2fc8a8;
+  --ugs-color-accent-2: #4da3ff;
+  --ugs-color-accent-3: #e3c25a;
+  --ugs-color-accent-4: #f778ba;
+  --ugs-status-ai-edit: #4da3ff;
+  --ugs-status-ai-edit-contrast: #071421;
+  --ugs-status-running: #e3c25a;
+  --ugs-status-running-contrast: #1a1300;
+  --ugs-status-success: #2fc8a8;
+  --ugs-status-success-contrast: #06231d;
+  --ugs-status-error: #f05265;
+  --ugs-status-error-contrast: #25050b;
+  --ugs-status-draft: #b98cff;
+  --ugs-status-draft-contrast: #160824;
+  --ugs-status-interrupted: #8a8a8a;
+  --ugs-status-interrupted-contrast: #0c0c0c;
+}
+
 html[data-ugs-style='campbell-powershell'],
 html.ugs-style-campbell-powershell {
   color-scheme: dark;

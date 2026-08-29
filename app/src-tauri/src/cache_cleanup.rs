@@ -41,7 +41,7 @@ const UI_CONFIG_REL_PATH: &str = "settings/cacheCleanup.v1.json";
 const GLOBAL_CACHE_SUBDIRS: &[&str] = &["trash", "backups", "quarantine", "tmp", "deleted"];
 
 /// Serializable result of a manual cleanup pass, shown in the Settings UI.
-#[derive(serde::Serialize, Clone, Copy)]
+#[derive(Debug, Default, serde::Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct CacheCleanupSummary {
     pub files_removed: u64,
@@ -72,7 +72,10 @@ fn read_ui_config() -> Option<(bool, u64)> {
     let path = root.join(UI_CONFIG_REL_PATH.replace('/', std::path::MAIN_SEPARATOR_STR));
     let text = fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let enabled = value.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+    let enabled = value
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let days = value
         .get("retentionDays")
         .and_then(|v| v.as_u64())
@@ -136,6 +139,8 @@ fn is_favorited_session(path: &Path) -> bool {
     })
 }
 
+pub type CacheCleanupReport = CacheCleanupSummary;
+
 /// Recursively delete stale files under `dir`, then remove any directories
 /// left empty by the sweep (best-effort; failures are ignored since the
 /// directory may still hold fresh files or be racing a concurrent writer).
@@ -162,9 +167,10 @@ fn sweep_cache_dir_excluding(
             continue;
         };
         if file_type.is_dir() {
-            if excluded_names.iter().any(|name| {
-                entry.file_name() == std::ffi::OsStr::new(name)
-            }) {
+            if excluded_names
+                .iter()
+                .any(|name| entry.file_name() == std::ffi::OsStr::new(name))
+            {
                 continue;
             }
             sweep_cache_dir_excluding(&path, now, max_age, stats, excluded_names);
@@ -241,6 +247,20 @@ fn sweep_project_caches(now: u64, max_age: u64, stats: &mut CleanupStats) {
         let cache_root = workspace_root.join(storage_paths::PROJECT_ROOT_DIR_NAME);
         sweep_cache_dir_excluding(&cache_root, now, max_age, stats, &["autosave"]);
     }
+}
+
+/// Manual sweep requested from the Settings UI (设置 > 通用). Unlike the
+/// startup pass it runs even when the startup toggle is off -- the user asked
+/// for it explicitly -- and `retention_days_override` (the UI stepper value)
+/// wins over the env/UI retention so the sweep matches what the settings row
+/// shows. Favorited sessions and live state are never touched.
+pub fn run_cleanup_now(retention_days_override: Option<u64>) -> CacheCleanupReport {
+    run_cleanup_pass_with_retention_days(
+        retention_days_override
+            .filter(|&d| d > 0)
+            .unwrap_or_else(retention_days),
+    )
+    .into_summary()
 }
 
 /// Run a full sweep with an explicit retention window (in days), returning how
@@ -323,7 +343,10 @@ mod tests {
         sweep_cache_dir(&root, now_secs(), max_age, &mut stats);
 
         assert!(!stale.exists(), "stale file should be removed");
-        assert!(!root.join("nested").exists(), "emptied dir should be pruned");
+        assert!(
+            !root.join("nested").exists(),
+            "emptied dir should be pruned"
+        );
         assert!(fresh.exists(), "fresh file should survive");
         assert_eq!(stats.files, 1, "one stale file should be tallied");
 

@@ -5753,7 +5753,8 @@ export default function AIDock({
       // 依赖 ResizeObserver 的异步修正（它可能错过或滞后于内容高度变化），
       // 所以下一帧再对齐一次，保证底部钉住的会话始终停在真正的最底部。
       const key = activeStreamScrollKey;
-      const frame = window.requestAnimationFrame(() => {
+      let timer: number | null = null;
+      const alignBottom = () => {
         if (activeStreamScrollKeyRef.current !== key) return;
         const stream = streamRef.current;
         if (!stream) return;
@@ -5762,8 +5763,15 @@ export default function AIDock({
           scrollStreamToBottom(stream);
           rememberStreamScrollSnapshot(key);
         }
+      };
+      const frame = window.requestAnimationFrame(() => {
+        alignBottom();
+        timer = window.setTimeout(alignBottom, 20);
       });
-      return () => window.cancelAnimationFrame(frame);
+      return () => {
+        window.cancelAnimationFrame(frame);
+        if (timer !== null) window.clearTimeout(timer);
+      };
     }
   }, [
     activeStreamScrollKey,

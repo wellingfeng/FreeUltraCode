@@ -271,6 +271,16 @@ describe('scanFileRefs (glued absolute paths)', () => {
     expect(parts[0]).toBe('看这个图片 ');
     expect(typeof parts[1] === 'object' && parts[1].path).toBe(WIN);
   });
+
+  it('keeps ampersand inside a pasted PDF path intact', () => {
+    const pdf =
+      'C:\\Users\\FW\\Downloads\\HAMMER_LAZAREK_RIP+&+TEAR++BREAKING+DOWN+THE+RENDERING+OF+DOOM+THE+DARK+AGES.pdf';
+    const parts = scanFileRefs(pdf);
+    const ref = parts.find((p) => typeof p === 'object');
+    expect(ref && typeof ref === 'object' && ref.basename).toBe(
+      'HAMMER_LAZAREK_RIP+&+TEAR++BREAKING+DOWN+THE+RENDERING+OF+DOOM+THE+DARK+AGES.pdf',
+    );
+  });
 });
 
 describe('displayFileRefPath', () => {

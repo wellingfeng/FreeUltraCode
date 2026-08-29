@@ -71,6 +71,8 @@ function imageProviderCard(container: HTMLElement, label: string): HTMLElement {
     (item) => {
       const title = item.querySelector<HTMLElement>(
         'span.text-sm.font-semibold.text-fg',
+      ) ?? item.querySelector<HTMLElement>(
+        'button.text-sm.font-semibold.text-fg span.truncate',
       );
       return (
         item.classList.contains('space-y-3') &&
@@ -93,6 +95,8 @@ function generationProviderCard(
     (item) => {
       const title = item.querySelector<HTMLElement>(
         'span.text-sm.font-semibold.text-fg',
+      ) ?? item.querySelector<HTMLElement>(
+        'button.text-sm.font-semibold.text-fg span.truncate',
       );
       return (
         item.classList.contains('space-y-3') &&

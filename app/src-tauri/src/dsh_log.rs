@@ -465,8 +465,14 @@ pub fn event_to_progress(
                 }
             }
             Some("reasoning-delta") => {
-                let turn = event.pointer("/data/turn").and_then(|v| v.as_i64()).unwrap_or(0);
-                let step = event.pointer("/data/step").and_then(|v| v.as_i64()).unwrap_or(0);
+                let turn = event
+                    .pointer("/data/turn")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                let step = event
+                    .pointer("/data/step")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
                 if thinking_announced.insert((turn, step)) {
                     Some(DshProgressItem::Text("\n💭 正在深入思考…\n".to_string()))
                 } else {
@@ -478,11 +484,17 @@ pub fn event_to_progress(
         "tool/call" => tool_call_patch(event).map(DshProgressItem::Patch),
         "tool/result" => tool_result_patch(event).map(DshProgressItem::Patch),
         "step/start" => {
-            let step = event.pointer("/data/step").and_then(|v| v.as_i64()).unwrap_or(0);
+            let step = event
+                .pointer("/data/step")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             Some(DshProgressItem::Text(format!("\n📋 进入步骤 {step}\n")))
         }
         "turn/start" => {
-            let turn = event.pointer("/data/turn").and_then(|v| v.as_i64()).unwrap_or(0);
+            let turn = event
+                .pointer("/data/turn")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             Some(DshProgressItem::Text(format!("\n▶ 第 {turn} 回合开始\n")))
         }
         _ => None,
@@ -531,9 +543,12 @@ fn clamp_json_strings(value: &serde_json::Value, limit: usize) -> serde_json::Va
                 value.clone()
             }
         }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(|item| clamp_json_strings(item, limit)).collect())
-        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|item| clamp_json_strings(item, limit))
+                .collect(),
+        ),
         serde_json::Value::Object(map) => serde_json::Value::Object(
             map.iter()
                 .map(|(key, item)| (key.clone(), clamp_json_strings(item, limit)))
@@ -574,7 +589,10 @@ fn tool_call_patch(event: &serde_json::Value) -> Option<serde_json::Value> {
 /// 工具结果文本：`data.message.content[].content[].text`（兼容直接 text 块）。
 fn extract_tool_result_text(event: &serde_json::Value) -> String {
     let mut parts = Vec::new();
-    if let Some(blocks) = event.pointer("/data/message/content").and_then(|v| v.as_array()) {
+    if let Some(blocks) = event
+        .pointer("/data/message/content")
+        .and_then(|v| v.as_array())
+    {
         for block in blocks {
             if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                 parts.push(text.to_string());
@@ -604,11 +622,19 @@ fn tool_result_patch(event: &serde_json::Value) -> Option<serde_json::Value> {
     let call_id = event
         .pointer("/data/message/source/callId")
         .and_then(|value| value.as_str())
-        .or_else(|| event.pointer("/data/callId").and_then(|value| value.as_str()))?;
+        .or_else(|| {
+            event
+                .pointer("/data/callId")
+                .and_then(|value| value.as_str())
+        })?;
     let is_error = event
         .pointer("/data/message/content")
         .and_then(|value| value.as_array())
-        .map(|blocks| blocks.iter().any(|block| block.get("isError").and_then(|v| v.as_bool()) == Some(true)))
+        .map(|blocks| {
+            blocks
+                .iter()
+                .any(|block| block.get("isError").and_then(|v| v.as_bool()) == Some(true))
+        })
         .unwrap_or(false);
     let result_raw = extract_tool_result_text(event);
     let truncated = result_raw.chars().count() > crate::TOOL_RESULT_CLAMP;
@@ -672,7 +698,9 @@ mod tests {
 
     #[test]
     fn tool_call_produces_running_patch() {
-        let ev = event(r#"{"type":"tool/call","seq":10,"time":3,"data":{"turn":1,"step":1,"callId":"call_1","name":"read","arguments":"{\"file_path\": \"E:\\\\src\\\\a.rs\", \"limit\": 80}"}}"#);
+        let ev = event(
+            r#"{"type":"tool/call","seq":10,"time":3,"data":{"turn":1,"step":1,"callId":"call_1","name":"read","arguments":"{\"file_path\": \"E:\\\\src\\\\a.rs\", \"limit\": 80}"}}"#,
+        );
         let patch = tool_call_patch(&ev).expect("patch");
         assert_eq!(patch["id"], "call_1");
         assert_eq!(patch["name"], "read");
@@ -684,7 +712,9 @@ mod tests {
 
     #[test]
     fn tool_result_produces_done_patch() {
-        let ev = event(r#"{"type":"tool/result","seq":11,"time":4,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"call_1"},"content":[{"type":"tool-result","toolCallId":"call_1","content":[{"type":"text","text":"OK 42 lines"}],"isError":false}],"role":"user"}}}"#);
+        let ev = event(
+            r#"{"type":"tool/result","seq":11,"time":4,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"call_1"},"content":[{"type":"tool-result","toolCallId":"call_1","content":[{"type":"text","text":"OK 42 lines"}],"isError":false}],"role":"user"}}}"#,
+        );
         let patch = tool_result_patch(&ev).expect("patch");
         assert_eq!(patch["id"], "call_1");
         assert_eq!(patch["status"], "done");
@@ -695,7 +725,9 @@ mod tests {
 
     #[test]
     fn tool_result_error_status() {
-        let ev = event(r#"{"type":"tool/result","seq":12,"time":5,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"call_2"},"content":[{"type":"tool-result","toolCallId":"call_2","content":[{"type":"text","text":"failed"}],"isError":true}],"role":"user"}}}"#);
+        let ev = event(
+            r#"{"type":"tool/result","seq":12,"time":5,"data":{"turn":1,"step":1,"message":{"source":{"kind":"tool","callId":"call_2"},"content":[{"type":"tool-result","toolCallId":"call_2","content":[{"type":"text","text":"failed"}],"isError":true}],"role":"user"}}}"#,
+        );
         let patch = tool_result_patch(&ev).expect("patch");
         assert_eq!(patch["status"], "error");
     }
@@ -724,7 +756,10 @@ mod tests {
                 event_to_progress(&event(line), &mut announced).is_none(),
                 "should ignore: {line}"
             );
-            assert!(!event_sets_received(&event(line)), "should not set received: {line}");
+            assert!(
+                !event_sets_received(&event(line)),
+                "should not set received: {line}"
+            );
         }
     }
 
@@ -833,7 +868,9 @@ mod tests {
         assert!(is_official_deepseek("https://cn.api.deepseek.com"));
         assert!(!is_official_deepseek("https://ai-gateway.kurogames.com/v1"));
         assert!(!is_official_deepseek("https://openrouter.ai/api/v1"));
-        assert!(!is_official_deepseek("https://api.deepseek.com.evil.com/v1"));
+        assert!(!is_official_deepseek(
+            "https://api.deepseek.com.evil.com/v1"
+        ));
     }
 
     #[test]

@@ -1688,6 +1688,7 @@ async function maybeAutoRigThreeDAssets(
   rigging: ThreeDRiggingAssessment,
   signal?: AbortSignal,
 ): Promise<ThreeDAutoRiggingResult | null> {
+  if (!settings.rigging.enabled) return null;
   if (!rigging.enabled) return null;
   const providerIds = uniqueRiggingProviderIds([
     settings.rigging.preferredProviderId,

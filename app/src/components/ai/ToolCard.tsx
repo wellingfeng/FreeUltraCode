@@ -8,6 +8,7 @@ import { scanFileRefs } from './lib/fileScan';
 import FileChip, { type OpenFileFn } from './FileChip';
 import { compactToolSubject, toolSubjectAllowsFileRefs } from './lib/toolDisplay';
 import RawCodeBlock from './RawCodeBlock';
+import TerminalLog from './TerminalLog';
 import { inferToolCodeLanguage, type ToolCodePanel } from './lib/toolCode';
 
 /** Format a duration in ms as a compact human string. */
@@ -44,6 +45,7 @@ function Panel({
   onOpenFile,
   cwd,
   linkify = false,
+  streaming = false,
 }: {
   label: string;
   body: string;
@@ -51,6 +53,7 @@ function Panel({
   onOpenFile?: OpenFileFn;
   cwd?: string;
   linkify?: boolean;
+  streaming?: boolean;
 }) {
   const shouldLinkify = linkify && isPlainTextLanguage(language.toLowerCase());
   return (
@@ -68,6 +71,9 @@ function Panel({
             ),
           )}
         </div>
+      ) : language === 'log' ? (
+        // 日志/错误流以终端信息流风格渲染：逐行语义色、流式光标、自动滚底。
+        <TerminalLog text={body} streaming={streaming} className="ai-tool-panel" />
       ) : (
         <RawCodeBlock
           raw={body}
@@ -203,6 +209,7 @@ export default function ToolCard({
               onOpenFile={onOpenFile}
               cwd={cwd}
               linkify
+              streaming={event.status === 'running'}
             />
           )}
           {childrenEvents?.map((child) => (

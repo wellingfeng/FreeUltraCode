@@ -725,6 +725,7 @@ describe('3D generation settings and routing', () => {
         providerKeys: { meshy: 'msy_test' },
         providerBaseUrls: {},
         providerModels: { meshy: 'meshy-6' },
+        rigging: { enabled: false },
       }),
     );
 

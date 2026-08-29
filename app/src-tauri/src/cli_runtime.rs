@@ -764,10 +764,7 @@ mod tests {
         // Lay out an npm-style shim dir: <root>/zcode.cmd next to
         // <root>/node_modules/zcode-app-cli/bin/zcode.js.
         let root = std::env::temp_dir().join(format!("ugs-zcode-entry-{}", std::process::id()));
-        let bin = root
-            .join("node_modules")
-            .join("zcode-app-cli")
-            .join("bin");
+        let bin = root.join("node_modules").join("zcode-app-cli").join("bin");
         fs::create_dir_all(&bin).unwrap();
         let shim = root.join("zcode.cmd");
         fs::write(&shim, b"@echo off").unwrap();

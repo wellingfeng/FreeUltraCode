@@ -13,14 +13,15 @@ let sessions: Map<string, FakeSession>;
 
 function makeReader(calls?: { count: number }) {
   return {
-    async listSessions(_ws: string) {
+    async listSessions() {
       return [...sessions.entries()].map(([id, s]) => ({
         sessionId: id,
         title: s.title,
         updatedAt: s.updatedAt,
       }));
     },
-    async getSession(_ws: string, sessionId: string) {
+    async getSession(workspaceId: string, sessionId: string) {
+      void workspaceId;
       if (calls) calls.count += 1;
       const s = sessions.get(sessionId);
       return s ? { messages: s.messages } : null;

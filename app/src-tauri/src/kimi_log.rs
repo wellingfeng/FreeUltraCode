@@ -109,7 +109,10 @@ pub fn kimi_sessions_roots() -> Vec<PathBuf> {
         .map(|value| value.to_string_lossy().trim().to_string())
         .filter(|trimmed| !trimmed.is_empty())
         .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|home| PathBuf::from(home).join(".ultragamestudio")))
+        .or_else(|| {
+            home.as_ref()
+                .map(|home| PathBuf::from(home).join(".ultragamestudio"))
+        })
         .unwrap_or_else(|| std::env::temp_dir().join("ultragamestudio"));
 
     let mut roots = Vec::new();
@@ -642,9 +645,7 @@ mod tests {
 
     #[test]
     fn step_begin_updates_step_and_produces_status() {
-        let msg = message(
-            r#"{"timestamp":6.0,"message":{"type":"StepBegin","payload":{"n":3}}}"#,
-        );
+        let msg = message(r#"{"timestamp":6.0,"message":{"type":"StepBegin","payload":{"n":3}}}"#);
         let mut announced = HashSet::new();
         let mut step = 0i64;
         match event_to_progress(&msg, &mut announced, &mut step) {
@@ -695,10 +696,8 @@ mod tests {
 
     #[test]
     fn snapshot_finds_session_dirs_across_roots() {
-        let tmp1 =
-            std::env::temp_dir().join(format!("ugs-kimi-test1-{}", std::process::id()));
-        let tmp2 =
-            std::env::temp_dir().join(format!("ugs-kimi-test2-{}", std::process::id()));
+        let tmp1 = std::env::temp_dir().join(format!("ugs-kimi-test1-{}", std::process::id()));
+        let tmp2 = std::env::temp_dir().join(format!("ugs-kimi-test2-{}", std::process::id()));
         let s1 = tmp1.join("hashA").join("session-1");
         let s2 = tmp2.join("hashB").join("session-2");
         std::fs::create_dir_all(&s1).expect("create tree 1");

@@ -1,13 +1,14 @@
 import { describe, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { segmentMessage } from './segmenter';
 
+const fixture =
+  'C:/Users/fengwei/.ultragamestudio/workspaces/eaf309452219f89c/sessions/778f310b-7b5a-4823-aa1f-322a99d3a53d.json';
+const fixtureTest = existsSync(fixture) ? it : it.skip;
+
 describe('real stuck message', () => {
-  it('segments', () => {
-    const d = JSON.parse(readFileSync(
-      'C:/Users/fengwei/.ultragamestudio/workspaces/eaf309452219f89c/sessions/778f310b-7b5a-4823-aa1f-322a99d3a53d.json',
-      'utf-8',
-    ));
+  fixtureTest('segments local stuck message fixture', () => {
+    const d = JSON.parse(readFileSync(fixture, 'utf-8'));
     const text = d.messages[1].text;
     for (const streaming of [true, false]) {
       const segs = segmentMessage(text, streaming);

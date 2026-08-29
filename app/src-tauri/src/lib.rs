@@ -18,8 +18,8 @@ mod cc_switch_import;
 mod cli_runtime;
 mod dsh_log;
 mod free_proxy;
-mod kimi_log;
 mod history;
+mod kimi_log;
 mod proxy_http;
 mod secure_store;
 mod storage_paths;
@@ -582,7 +582,7 @@ fn assign_child_to_kill_on_close_job(_child: &Child) -> Option<isize> {
 #[cfg(windows)]
 fn kill_job_processes(job: isize) {
     use windows_sys::Win32::System::JobObjects::{
-        QueryInformationJobObject, JobObjectBasicProcessIdList,
+        JobObjectBasicProcessIdList, QueryInformationJobObject,
     };
 
     if job == 0 {
@@ -3279,7 +3279,11 @@ fn translate_skill_to_agents_blocking(
         let mut first_path: Option<String> = None;
         for target_id in &target_ids {
             if target_id.starts_with("project-")
-                && project_root.as_deref().map(str::trim).unwrap_or("").is_empty()
+                && project_root
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
             {
                 continue;
             }
@@ -3431,8 +3435,7 @@ fn merge_codex_mcp_servers(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
     }
-    let serialized =
-        toml::to_string_pretty(&doc).map_err(|e| format!("序列化 TOML 失败：{e}"))?;
+    let serialized = toml::to_string_pretty(&doc).map_err(|e| format!("序列化 TOML 失败：{e}"))?;
     atomic_write(&path, serialized.as_bytes())
         .map_err(|e| format!("写入 config.toml 失败：{e}"))?;
     Ok(path)
@@ -3470,7 +3473,9 @@ fn translate_mcp_to_agents_blocking(
                 merge_mcp_servers_into_json(&path, &servers_map, true)?;
                 Ok(Some(path))
             }
-            other => Err(format!("该 agent（{other}）尚无标准 MCP 配置文件，待接入。")),
+            other => Err(format!(
+                "该 agent（{other}）尚无标准 MCP 配置文件，待接入。"
+            )),
         };
         match outcome {
             Ok(path) => results.push(CapabilityTranslateTargetResult {
@@ -3537,7 +3542,10 @@ fn translate_lsp_to_agents_blocking(
         let mut entry = serde_json::Map::new();
         entry.insert("id".to_string(), serde_json::Value::String(id.to_string()));
         if let Some(cmd) = command {
-            entry.insert("command".to_string(), serde_json::Value::String(cmd.to_string()));
+            entry.insert(
+                "command".to_string(),
+                serde_json::Value::String(cmd.to_string()),
+            );
         }
         entry.insert(
             "args".to_string(),
@@ -3554,8 +3562,7 @@ fn translate_lsp_to_agents_blocking(
     let path = manifest_dir.join("lsp-manifest.json");
     let serialized =
         serde_json::to_string_pretty(&manifest).map_err(|e| format!("序列化清单失败：{e}"))?;
-    atomic_write(&path, serialized.as_bytes())
-        .map_err(|e| format!("写入 LSP 清单失败：{e}"))?;
+    atomic_write(&path, serialized.as_bytes()).map_err(|e| format!("写入 LSP 清单失败：{e}"))?;
 
     let mut results = Vec::new();
     for agent in &req.targets {
@@ -11903,11 +11910,10 @@ async fn preview_local_file(
     path: String,
     cwd: Option<String>,
 ) -> Result<LocalFilePreview, String> {
-    let preview = tauri::async_runtime::spawn_blocking(move || {
-        preview_local_file_blocking(path, cwd)
-    })
-    .await
-    .map_err(|e| format!("文件预览任务失败: {e}"))??;
+    let preview =
+        tauri::async_runtime::spawn_blocking(move || preview_local_file_blocking(path, cwd))
+            .await
+            .map_err(|e| format!("文件预览任务失败: {e}"))??;
 
     // Let the frontend stream the video through the asset protocol
     // (`convertFileSrc`). Scope the file's directory so the webview is allowed
@@ -12024,7 +12030,9 @@ fn clipboard_image_extension(mime: &str, file_name: Option<&str>) -> Result<&'st
         "ogv" => Ok("ogv"),
         "avi" => Ok("avi"),
         "mkv" => Ok("mkv"),
-        _ => Err("仅支持 PNG/JPEG/WebP/GIF/BMP/AVIF 图片或 MP4/WebM/MOV/AVI/MKV 视频粘贴。".to_string()),
+        _ => Err(
+            "仅支持 PNG/JPEG/WebP/GIF/BMP/AVIF 图片或 MP4/WebM/MOV/AVI/MKV 视频粘贴。".to_string(),
+        ),
     }
 }
 
@@ -12731,7 +12739,10 @@ fn probe_background_job(
     if value.get("schema").and_then(|v| v.as_u64()) != Some(1) {
         return None;
     }
-    let done = value.get("done").cloned().unwrap_or(serde_json::Value::Null);
+    let done = value
+        .get("done")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
     let artifact_path = manifest_str(&done, "artifactPath");
     let done_marker = manifest_str(&done, "doneMarkerPath");
     let fail_marker = manifest_str(&done, "failMarkerPath");
@@ -12741,8 +12752,8 @@ fn probe_background_job(
         .and_then(|v| v.as_u64())
         .map(|pid| pid_is_alive(pid as u32));
 
-    let progress_tail = manifest_str(&value, "progressFile")
-        .and_then(|p| read_file_tail(Path::new(p), 16 * 1024));
+    let progress_tail =
+        manifest_str(&value, "progressFile").and_then(|p| read_file_tail(Path::new(p), 16 * 1024));
 
     let file_stem = path
         .file_stem()
@@ -12795,16 +12806,13 @@ async fn list_background_jobs(cwd: Option<String>) -> Result<Vec<BackgroundJobPr
 #[tauri::command]
 async fn remove_background_job(cwd: Option<String>, file_stem: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        if file_stem.is_empty()
-            || file_stem.contains(['/', '\\', '.'])
-        {
+        if file_stem.is_empty() || file_stem.contains(['/', '\\', '.']) {
             return Err("非法的任务标识".into());
         }
         let jobs_dir = storage_paths::managed_artifact_dir(cwd.as_deref(), "jobs");
         let manifest = jobs_dir.join(format!("{file_stem}.json"));
         if manifest.exists() {
-            std::fs::remove_file(&manifest)
-                .map_err(|e| format!("删除任务清单失败: {e}"))?;
+            std::fs::remove_file(&manifest).map_err(|e| format!("删除任务清单失败: {e}"))?;
         }
         Ok(())
     })
@@ -13809,9 +13817,8 @@ fn extract_semver(text: &str) -> Option<String> {
                         end -= 1;
                     }
                 }
-                let version = text[start..end].trim_end_matches(|c: char| {
-                    c == '.' || c == '-' || c == '+'
-                });
+                let version =
+                    text[start..end].trim_end_matches(|c: char| c == '.' || c == '-' || c == '+');
                 return Some(version.to_string());
             }
             i = j.max(i + 1);
@@ -14044,6 +14051,19 @@ async fn update_cli(adapter: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || run_cli_update_blocking(&adapter))
         .await
         .map_err(|e| format!("更新任务启动失败: {e}"))?
+}
+
+/// Manual "clean up now" sweep triggered from the Settings UI (设置 > 通用).
+/// Always runs (even when the startup toggle is off); `retention_days` is the
+/// stepper value the user sees. Runs on a blocking thread so a large backlog
+/// never stalls the webview.
+#[tauri::command]
+async fn run_cache_cleanup_now(
+    retention_days: Option<u64>,
+) -> Result<cache_cleanup::CacheCleanupReport, String> {
+    tauri::async_runtime::spawn_blocking(move || cache_cleanup::run_cleanup_now(retention_days))
+        .await
+        .map_err(|err| format!("缓存清理任务失败: {err}"))
 }
 
 /// Run an emitted workflow script through the mapped local CLI.
@@ -15543,10 +15563,7 @@ fn claude_result_failure(event: &serde_json::Value) -> Option<String> {
         .get("is_error")
         .and_then(|t| t.as_bool())
         .unwrap_or(false);
-    let subtype = event
-        .get("subtype")
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
+    let subtype = event.get("subtype").and_then(|t| t.as_str()).unwrap_or("");
     if !is_error && !subtype.starts_with("error") {
         return None;
     }
@@ -15609,13 +15626,9 @@ fn extract_kimi_assistant_text(content: Option<&serde_json::Value>) -> Option<St
 ///     existing fields), creating file/dirs as needed.
 ///   - If neither source has a key, return an actionable Chinese error instead
 ///     of the opaque CLI failure.
-fn ensure_zcode_user_config(
-    env_vars: Option<&HashMap<String, String>>,
-) -> Result<(), String> {
+fn ensure_zcode_user_config(env_vars: Option<&HashMap<String, String>>) -> Result<(), String> {
     let Some(home) = user_home_dir() else {
-        return Err(
-            "无法定位用户主目录（USERPROFILE/HOME），不能检查 ZCode 配置。".to_string(),
-        );
+        return Err("无法定位用户主目录（USERPROFILE/HOME），不能检查 ZCode 配置。".to_string());
     };
     let config_path = home.join(".zcode").join("cli").join("config.json");
     ensure_zcode_config_at(&config_path, env_vars)
@@ -15683,9 +15696,15 @@ fn ensure_zcode_config_at(
         .get_mut("options")
         .and_then(|options| options.as_object_mut())
         .ok_or_else(|| "ZCode 配置中的 provider.zai.options 不是有效对象。".to_string())?;
-    options.insert("apiKey".to_string(), serde_json::Value::String(api_key.to_string()));
+    options.insert(
+        "apiKey".to_string(),
+        serde_json::Value::String(api_key.to_string()),
+    );
     if let Some(base_url) = env_value(env, "ZCODE_BASE_URL") {
-        options.insert("baseURL".to_string(), serde_json::Value::String(base_url.to_string()));
+        options.insert(
+            "baseURL".to_string(),
+            serde_json::Value::String(base_url.to_string()),
+        );
     }
 
     // Ensure the selected model is registered under provider.zai.models and
@@ -15697,10 +15716,7 @@ fn ensure_zcode_config_at(
             .and_then(|models| models.as_object_mut())
             .ok_or_else(|| "ZCode 配置中的 provider.zai.models 不是有效对象。".to_string())?;
         if !models.contains_key(model) {
-            models.insert(
-                model.to_string(),
-                serde_json::json!({ "name": model }),
-            );
+            models.insert(model.to_string(), serde_json::json!({ "name": model }));
         }
         let main_model = if model.contains('/') {
             model.to_string()
@@ -19223,10 +19239,7 @@ mod tests {
             extract_semver("0.1.0-rc.6 (Claude Code)"),
             Some("0.1.0-rc.6".to_string())
         );
-        assert_eq!(
-            extract_semver("3.7.7-13\n"),
-            Some("3.7.7-13".to_string())
-        );
+        assert_eq!(extract_semver("3.7.7-13\n"), Some("3.7.7-13".to_string()));
     }
 
     #[test]
@@ -20054,7 +20067,8 @@ mod tests {
         assert_eq!(envelope["response"].as_str(), Some("done"));
 
         // Stray diagnostic line before the envelope must not hide it.
-        let with_log = "15:32:01 [info] session started\n{\"sessionId\":\"s\",\"response\":\"ok\"}\n";
+        let with_log =
+            "15:32:01 [info] session started\n{\"sessionId\":\"s\",\"response\":\"ok\"}\n";
         let envelope = zcode_envelope_from_output(with_log).unwrap();
         assert_eq!(envelope["response"].as_str(), Some("ok"));
 
@@ -20066,10 +20080,8 @@ mod tests {
 
     #[test]
     fn zcode_config_created_from_env_when_missing() {
-        let dir = std::env::temp_dir().join(format!(
-            "ugs-zcode-config-created-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ugs-zcode-config-created-{}", std::process::id()));
         let config_path = dir.join(".zcode").join("cli").join("config.json");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -20081,7 +20093,10 @@ mod tests {
 
         let raw = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(config["provider"]["zai"]["options"]["apiKey"], "sk-test-123");
+        assert_eq!(
+            config["provider"]["zai"]["options"]["apiKey"],
+            "sk-test-123"
+        );
         assert_eq!(config["model"]["main"], "zai/glm-5.3");
         // The chosen model is registered so zcode can resolve it.
         assert!(config["provider"]["zai"]["models"]["glm-5.3"].is_object());
@@ -20090,10 +20105,8 @@ mod tests {
 
     #[test]
     fn zcode_config_keeps_existing_api_key() {
-        let dir = std::env::temp_dir().join(format!(
-            "ugs-zcode-config-keeps-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ugs-zcode-config-keeps-{}", std::process::id()));
         let config_path = dir.join(".zcode").join("cli").join("config.json");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
@@ -20116,18 +20129,22 @@ mod tests {
         ensure_zcode_config_at(&config_path, None).unwrap();
         let raw = std::fs::read_to_string(&config_path).unwrap();
         let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(config["provider"]["zai"]["options"]["apiKey"], "existing-key");
-        assert_eq!(config["provider"]["zai"]["options"]["baseURL"], "https://custom.example");
+        assert_eq!(
+            config["provider"]["zai"]["options"]["apiKey"],
+            "existing-key"
+        );
+        assert_eq!(
+            config["provider"]["zai"]["options"]["baseURL"],
+            "https://custom.example"
+        );
         assert_eq!(config["model"]["main"], "zai/glm-5.1");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn zcode_config_merges_env_into_existing_provider() {
-        let dir = std::env::temp_dir().join(format!(
-            "ugs-zcode-config-merges-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ugs-zcode-config-merges-{}", std::process::id()));
         let config_path = dir.join(".zcode").join("cli").join("config.json");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
@@ -20170,10 +20187,8 @@ mod tests {
 
     #[test]
     fn zcode_config_rejects_without_any_key() {
-        let dir = std::env::temp_dir().join(format!(
-            "ugs-zcode-config-no-key-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("ugs-zcode-config-no-key-{}", std::process::id()));
         let config_path = dir.join(".zcode").join("cli").join("config.json");
         let _ = std::fs::remove_dir_all(&dir);
 
@@ -20502,7 +20517,10 @@ mod tests {
             "subtype": "error_during_execution",
             "error": { "message": "Overloaded" },
         });
-        assert_eq!(claude_result_failure(&during).as_deref(), Some("Overloaded"));
+        assert_eq!(
+            claude_result_failure(&during).as_deref(),
+            Some("Overloaded")
+        );
 
         // Prefer the human-readable result text when present.
         let with_text = serde_json::json!({
@@ -21435,12 +21453,18 @@ mod tests {
         let doc: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(doc["keepMe"], serde_json::json!(true));
-        assert_eq!(doc["mcpServers"]["existing"]["command"], serde_json::json!("old"));
+        assert_eq!(
+            doc["mcpServers"]["existing"]["command"],
+            serde_json::json!("old")
+        );
         assert_eq!(
             doc["mcpServers"]["my-server"]["command"],
             serde_json::json!("npx")
         );
-        assert_eq!(doc["mcpServers"]["my-server"]["trust"], serde_json::json!(true));
+        assert_eq!(
+            doc["mcpServers"]["my-server"]["trust"],
+            serde_json::json!(true)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -21586,6 +21610,7 @@ pub fn run() {
             validate_cli_path,
             check_cli_updates,
             update_cli,
+            run_cache_cleanup_now,
             validate_shell_path,
             free_channel_auto_keys,
             local_model_hardware,

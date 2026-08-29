@@ -225,5 +225,5 @@ function persistCache(cache: CachedPricing): void {
 export function formatUsd(value: number): string {
   if (!Number.isFinite(value)) return '0';
   const rounded = roundUsd(value);
-  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+  return String(rounded);
 }

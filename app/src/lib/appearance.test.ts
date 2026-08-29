@@ -37,6 +37,7 @@ const NEW_PRESETS = [
   'campbell-powershell',
   'one-half-dark',
   'solarized-dark',
+  'terminal',
 ] as const;
 const NEW_STREAM_SCHEMES = [
   'campbell',
@@ -120,8 +121,9 @@ describe('appearance presets', () => {
       'campbell-powershell',
       'one-half-dark',
       'solarized-dark',
+      'terminal',
     ]);
-    expect(STYLE_PRESET_LIST).toHaveLength(11);
+    expect(STYLE_PRESET_LIST).toHaveLength(12);
   });
 
   it('uses Cherry dark as the default startup style', () => {
@@ -147,6 +149,7 @@ describe('appearance presets', () => {
       'campbell-powershell',
       'one-half-dark',
       'solarized-dark',
+      'terminal',
     ]);
   });
 

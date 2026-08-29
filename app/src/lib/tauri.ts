@@ -2260,6 +2260,30 @@ export async function updateCli(adapter: string): Promise<string> {
   return invoke<string>('update_cli', { adapter });
 }
 
+/** Result of a manual "clean up now" cache sweep. */
+export interface CacheCleanupReport {
+  filesRemoved: number;
+  bytesFreed: number;
+}
+
+/**
+ * Run the retention sweep immediately (设置 > 通用 > 立即清理). Unlike the
+ * startup pass it always runs, even when the startup toggle is off; the
+ * optional `retentionDays` (the UI stepper value) sets the cutoff age.
+ * Desktop-only; throws `NO_BACKEND` in the browser.
+ */
+export async function runCacheCleanupNow(
+  retentionDays?: number,
+): Promise<CacheCleanupReport> {
+  if (!tauriAvailable()) {
+    throw new Error('NO_BACKEND');
+  }
+  const invoke = await getInvoke();
+  return invoke<CacheCleanupReport>('run_cache_cleanup_now', {
+    retentionDays: retentionDays ?? null,
+  });
+}
+
 /**
  * Validate a user-selected *launch shell* executable path. Unlike
  * {@link validateCliPath} this intentionally ALLOWS shells (cmd/powershell/

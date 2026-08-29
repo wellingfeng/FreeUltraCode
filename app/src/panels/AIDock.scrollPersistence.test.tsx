@@ -87,6 +87,27 @@ function getStream(container: HTMLDivElement): HTMLDivElement {
   return el as HTMLDivElement;
 }
 
+function loadEarlierText(container: HTMLDivElement): string {
+  return (
+    container.querySelector<HTMLElement>(
+      '[data-ugs-load-earlier-messages="true"]',
+    )?.textContent ?? ''
+  );
+}
+
+async function waitForLoadEarlierCount(
+  container: HTMLDivElement,
+  count: string,
+): Promise<void> {
+  for (let i = 0; i < 20; i += 1) {
+    if (loadEarlierText(container).includes(count)) return;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    });
+  }
+  expect(loadEarlierText(container)).toContain(count);
+}
+
 // jsdom does not implement real scroll/overflow layout: scrollHeight and
 // clientHeight are plain zero-valued properties, scrollTop is not clamped to
 // [0, scrollHeight - clientHeight] the way a real browser clamps it, and
@@ -308,12 +329,7 @@ describe('AIDock per-session scroll persistence', () => {
     useStore.setState({ activeSessionId: 'session-long', messages: longMessages });
     const { container, cleanup } = await renderDock();
     try {
-      // Wait for the idle background growth to finish. jsdom has no
-      // requestIdleCallback, so scheduleIdleMessageWindow falls back to an 80ms
-      // setTimeout per page (5 -> 20 -> 35 -> 50 -> 65 -> 80 for 100 messages).
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 700));
-      });
+      await waitForLoadEarlierCount(container, '20');
 
       // Park the session at the absolute bottom.
       const stream = getStream(container);
@@ -323,10 +339,7 @@ describe('AIDock per-session scroll persistence', () => {
 
       // After full growth the window is 80, leaving 20 hidden behind the
       // "load earlier" button.
-      const loadEarlier = container.querySelector<HTMLElement>(
-        '[data-ugs-load-earlier-messages="true"]',
-      );
-      expect(loadEarlier?.textContent ?? '').toContain('20');
+      expect(loadEarlierText(container)).toContain('20');
 
       // Switch away and back.
       await act(async () => {
@@ -341,11 +354,8 @@ describe('AIDock per-session scroll persistence', () => {
       expect(streamBack.scrollTop).toBe(1500);
       // ...and the window must NOT have reset to INITIAL_MESSAGE_WINDOW (5),
       // which would show 95 hidden and force the fragile re-anchor path.
-      const loadEarlierBack = container.querySelector<HTMLElement>(
-        '[data-ugs-load-earlier-messages="true"]',
-      );
-      expect(loadEarlierBack?.textContent ?? '').toContain('20');
-      expect(loadEarlierBack?.textContent ?? '').not.toContain('95');
+      expect(loadEarlierText(container)).toContain('20');
+      expect(loadEarlierText(container)).not.toContain('95');
     } finally {
       await cleanup();
     }

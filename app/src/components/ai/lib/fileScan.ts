@@ -20,7 +20,7 @@ export type FileScanPart = string | FileRef;
 
 // A maximal run of path-ish characters. Whitespace, quotes, pipes, and most
 // punctuation end the run; parseFileRef keeps false positives low.
-const PATH_RUN = /[\p{L}\p{N}._~$@+%\-/\\:#]+/gu;
+const PATH_RUN = /[\p{L}\p{N}._~$@+%&\-/\\:#]+/gu;
 
 // Trailing punctuation to peel off a token before validation (but NOT a digit
 // after ':' — that is a line number). We only strip from the very end.

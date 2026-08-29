@@ -93,7 +93,10 @@ fn status_text_for(code: u16) -> &'static str {
     }
 }
 
-fn collect_response(response: ureq::Response, final_url: String) -> Result<ProxyHttpResponse, String> {
+fn collect_response(
+    response: ureq::Response,
+    final_url: String,
+) -> Result<ProxyHttpResponse, String> {
     let status = response.status();
     let status_text = {
         let native = response.status_text().trim().to_string();
@@ -152,9 +155,7 @@ fn proxy_http_blocking(request: ProxyHttpRequest) -> Result<ProxyHttpResponse, S
         .map(|d| d.clamp(Duration::from_millis(1), MAX_TIMEOUT))
         .unwrap_or(DEFAULT_TIMEOUT);
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout(timeout)
-        .build();
+    let agent = ureq::AgentBuilder::new().timeout(timeout).build();
 
     let mut req = agent.request(&method, url);
     for header in &request.headers {

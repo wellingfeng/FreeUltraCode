@@ -202,7 +202,9 @@ pub fn autosave_config() -> AutosaveConfig {
 
 /// 列出某工作区已有的快照（按时间倒序），供潜在的恢复 UI 使用。
 #[tauri::command]
-pub fn autosave_list_snapshots(workspace_path: String) -> Result<Vec<AutosaveSnapshotInfo>, String> {
+pub fn autosave_list_snapshots(
+    workspace_path: String,
+) -> Result<Vec<AutosaveSnapshotInfo>, String> {
     let root = PathBuf::from(workspace_path.trim());
     if root.as_os_str().is_empty() {
         return Err("工作区路径为空。".to_string());
@@ -235,15 +237,15 @@ fn read_config() -> AutosaveConfig {
     let mut config = AutosaveConfig::default();
 
     if let Ok(root) = storage_paths::global_root() {
-        let path = root
-            .join(UI_CONFIG_REL_PATH.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let path = root.join(UI_CONFIG_REL_PATH.replace('/', std::path::MAIN_SEPARATOR_STR));
         if let Ok(text) = fs::read_to_string(path) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let Some(enabled) = value.get("enabled").and_then(|v| v.as_bool()) {
                     config.enabled = enabled;
                 }
                 if let Some(minutes) = value.get("intervalMinutes").and_then(|v| v.as_u64()) {
-                    config.interval_minutes = minutes.clamp(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES);
+                    config.interval_minutes =
+                        minutes.clamp(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES);
                 }
                 if let Some(days) = value.get("retentionDays").and_then(|v| v.as_u64()) {
                     config.retention_days = days.clamp(MIN_RETENTION_DAYS, MAX_RETENTION_DAYS);
@@ -380,8 +382,10 @@ fn snapshot_workspace(workspace: &Path) -> Result<Option<SnapshotStats>, String>
         files: meta_files,
     };
 
-    let meta_json = serde_json::to_vec_pretty(&meta).map_err(|e| format!("序列化 meta.json 失败: {e}"))?;
-    fs::write(snapshot_dir.join("meta.json"), meta_json).map_err(|e| format!("写入 meta.json 失败: {e}"))?;
+    let meta_json =
+        serde_json::to_vec_pretty(&meta).map_err(|e| format!("序列化 meta.json 失败: {e}"))?;
+    fs::write(snapshot_dir.join("meta.json"), meta_json)
+        .map_err(|e| format!("写入 meta.json 失败: {e}"))?;
 
     if stats.files == 0 {
         // 什么都没写成，清掉空目录，避免留下噪音。
@@ -394,9 +398,9 @@ fn snapshot_workspace(workspace: &Path) -> Result<Option<SnapshotStats>, String>
 
 fn should_include_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
-    !SKIP_PATH_PREFIXES.iter().any(|p| {
-        normalized == *p || normalized.starts_with(&format!("{p}/"))
-    })
+    !SKIP_PATH_PREFIXES
+        .iter()
+        .any(|p| normalized == *p || normalized.starts_with(&format!("{p}/")))
 }
 
 /// 读取一条改动的内容：优先读工作区文件；缺失时（如 deleted）向 VCS 取删除前版本。
@@ -483,7 +487,11 @@ fn capture_vcs_bytes(
 
     let bytes = fs::read(&temp).unwrap_or_default();
     let _ = fs::remove_file(&temp);
-    if success { Some(bytes) } else { None }
+    if success {
+        Some(bytes)
+    } else {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +513,11 @@ fn committable_changes(workspace: &Path) -> Result<Option<(String, Vec<ChangeEnt
 
 fn git_committable_changes(workspace: &Path) -> Result<Option<Vec<ChangeEntry>>, String> {
     // `git` 未安装（spawn 失败）时视为「非 git 工作区」，静默落到 SVN/P4 探测。
-    let probe = match crate::run_workspace_status_command(workspace, "git", &["rev-parse", "--is-inside-work-tree"]) {
+    let probe = match crate::run_workspace_status_command(
+        workspace,
+        "git",
+        &["rev-parse", "--is-inside-work-tree"],
+    ) {
         Ok(output) => output,
         Err(_) => return Ok(None),
     };
@@ -516,7 +528,11 @@ fn git_committable_changes(workspace: &Path) -> Result<Option<Vec<ChangeEntry>>,
         return Ok(None);
     }
 
-    let prefix = match crate::run_workspace_status_command(workspace, "git", &["rev-parse", "--show-prefix"])? {
+    let prefix = match crate::run_workspace_status_command(
+        workspace,
+        "git",
+        &["rev-parse", "--show-prefix"],
+    )? {
         output if output.timed_out => return Err("Git 工作区前缀读取超时".to_string()),
         output if output.success => output.stdout.trim().to_string(),
         _ => String::new(),
@@ -538,7 +554,10 @@ fn git_committable_changes(workspace: &Path) -> Result<Option<Vec<ChangeEntry>>,
         return Err("Git 状态收集超时".to_string());
     }
     if !status.success {
-        return Err(format!("Git 状态读取失败: {}", crate::workspace_status_error(&status)));
+        return Err(format!(
+            "Git 状态读取失败: {}",
+            crate::workspace_status_error(&status)
+        ));
     }
 
     Ok(Some(parse_git_committable(&status.stdout, &prefix)))
@@ -556,12 +575,16 @@ fn svn_committable_changes(workspace: &Path) -> Result<Option<Vec<ChangeEntry>>,
         return Ok(None);
     }
 
-    let status = crate::run_workspace_status_command(workspace, "svn", &["status", "--ignore-externals"])?;
+    let status =
+        crate::run_workspace_status_command(workspace, "svn", &["status", "--ignore-externals"])?;
     if status.timed_out {
         return Err("SVN 状态收集超时".to_string());
     }
     if !status.success {
-        return Err(format!("SVN 状态读取失败: {}", crate::workspace_status_error(&status)));
+        return Err(format!(
+            "SVN 状态读取失败: {}",
+            crate::workspace_status_error(&status)
+        ));
     }
 
     Ok(Some(parse_svn_committable(&status.stdout)))
@@ -759,7 +782,8 @@ fn prune_workspace_snapshots(workspace: &Path, retention_ms: u64) {
 
 fn list_snapshots(autosave_root: &Path) -> Result<Vec<AutosaveSnapshotInfo>, String> {
     let mut snapshots = Vec::new();
-    let entries = fs::read_dir(autosave_root).map_err(|e| format!("读取 AutoSave 目录失败: {e}"))?;
+    let entries =
+        fs::read_dir(autosave_root).map_err(|e| format!("读取 AutoSave 目录失败: {e}"))?;
     for entry in entries.flatten() {
         let id = entry.file_name().to_string_lossy().to_string();
         let meta_path = entry.path().join("meta.json");
