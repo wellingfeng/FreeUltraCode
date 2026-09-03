@@ -1,7 +1,7 @@
 {
   "version": "0.5.14",
   "notes": "UltraGameStudio v0.5.14",
-  "pubDate": "2026-08-29",
+  "pubDate": "2026-09-03",
   "platforms": {
     "windows": "https://github.com/wellingfeng/UltraGameStudio/releases/download/v0.5.14/UltraGameStudio_0.5.14_x64-setup.exe",
     "macos": "https://github.com/wellingfeng/UltraGameStudio/releases/download/v0.5.14/UltraGameStudio_0.5.14_universal.dmg",
