@@ -20,10 +20,17 @@ import 'katex/dist/katex.min.css';
 import { repairMarkdown, repairFences } from './lib/repairMarkdown';
 import { normalizeMath } from './lib/normalizeMath';
 import { protectWindowsPaths } from './lib/protectWindowsPaths';
+import { promoteStructureBreaks } from './lib/promoteStructureBreaks';
 import { convertInlineHtml } from './lib/htmlInline';
+import {
+  convertDetailsHtml,
+  detectDetails,
+  detectDetailsTitle,
+} from './lib/htmlDetails';
 import { scanFileRefs } from './lib/fileScan';
 import { parseToolLine } from './lib/toolLine';
 import CodeBlock from './CodeBlock';
+import DetailsBlock from './DetailsBlock';
 import InlineCode from './InlineCode';
 import SmartLink from './SmartLink';
 import ToolLine from './ToolLine';
@@ -146,7 +153,15 @@ function MarkdownImpl({
   searchState?: SearchHighlightState | null;
 }) {
   const normalized = useMemo(
-    () => protectWindowsPaths(convertInlineHtml(normalizeMath(text))),
+    () =>
+      // promoteStructureBreaks runs AFTER the HTML converters: those rewrites
+      // (e.g. <details> -> `> [!details]` blockquote) need to see the model's
+      // original line continuity, and their output is already block-structured
+      // so the promote pass then treats it correctly (quote-after-quote is a
+      // continuation, not a new block).
+      protectWindowsPaths(
+        promoteStructureBreaks(convertDetailsHtml(convertInlineHtml(normalizeMath(text)))),
+      ),
     [text],
   );
   // An unbalanced ``` fence must be closed even on the final render: otherwise
@@ -334,6 +349,21 @@ function MarkdownImpl({
     return walk(children);
   };
 
+  // Extract a `> [!details] 标题` blockquote's title (from the first paragraph)
+  // and its folded body (the remaining paragraphs). Returns null when the
+  // blockquote is not a details container.
+  const detailsParts = (
+    children: ReactNode,
+  ): { title: string; body: ReactNode } | null => {
+    const arr = Array.isArray(children) ? children : [children];
+    const intro = plainText(arr[0]);
+    if (!detectDetails(intro)) return null;
+    return {
+      title: detectDetailsTitle(intro),
+      body: arr.length > 1 ? arr.slice(1) : null,
+    };
+  };
+
   return {
     pre: ({ node }) => <CodeBlock node={node as never} />,
     code: ({ className, children, ...props }) => {
@@ -385,11 +415,17 @@ function MarkdownImpl({
     td: ({ children }) => <td>{linkify(children)}</td>,
     th: ({ children }) => <th>{linkify(children)}</th>,
     table: ({ children }) => (
-      <div className="ai-table-wrap my-2 overflow-x-auto rounded-lg border border-border">
-        <table className="ai-table w-full border-collapse text-[13px]">{children}</table>
+      <div className="ai-table-wrap overflow-x-auto">
+        <table className="ai-table border-collapse">{children}</table>
       </div>
     ),
     blockquote: ({ children }) => {
+      const details = detailsParts(children);
+      if (details) {
+        return (
+          <DetailsBlock title={details.title}>{details.body}</DetailsBlock>
+        );
+      }
       const kind = detectCallout(plainText(children));
       if (kind) {
         return <Callout kind={kind}>{stripCalloutFromTree(children)}</Callout>;
@@ -427,7 +463,7 @@ function MarkdownImpl({
   }, []);
 
   return (
-    <div className="ai-markdown ai-stream-markdown text-sm leading-relaxed">
+    <div className="ai-markdown ai-stream-markdown">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks, remarkMath]}
         rehypePlugins={rehypePlugins}

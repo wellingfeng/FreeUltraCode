@@ -835,14 +835,14 @@ mod tests {
         // deepseek-official（否则私有 thinking 字段触发 HTTP 400）。
         let yaml = ugs_patch_yaml(
             Some("deepseek-v4-pro"),
-            Some("https://ai-gateway.kurogames.com/v1"),
+            Some("https://gateway.example.com/v1"),
         );
         assert!(yaml.contains("id: llm-pi-ai"));
         assert!(yaml.contains("provider: deepseek-compat"));
         assert!(yaml.contains("deepseek-compat:"));
         assert!(yaml.contains("api: openai-completions"));
         assert!(yaml.contains("apiKeyEnv: DEEPSEEK_API_KEY"));
-        assert!(yaml.contains("baseURL: \"https://ai-gateway.kurogames.com/v1\""));
+        assert!(yaml.contains("baseURL: \"https://gateway.example.com/v1\""));
         assert!(yaml.contains("id: \"deepseek-v4-pro\""));
         // 关键：不得回落到 native 官方路由。
         assert!(!yaml.contains("provider: deepseek-official"));
@@ -853,10 +853,10 @@ mod tests {
     fn ugs_patch_yaml_third_party_without_model_falls_back_to_native() {
         // 第三方 baseURL 但缺 model：无法安全声明 pi-ai catalog（会
         // UNKNOWN_MODEL），退回 native + baseURL 覆盖，保持旧行为不崩。
-        let yaml = ugs_patch_yaml(None, Some("https://ai-gateway.kurogames.com/v1"));
+        let yaml = ugs_patch_yaml(None, Some("https://gateway.example.com/v1"));
         assert!(!yaml.contains("llm-pi-ai"));
         assert!(yaml.contains("id: llm-deepseek"));
-        assert!(yaml.contains("baseURL: \"https://ai-gateway.kurogames.com/v1\""));
+        assert!(yaml.contains("baseURL: \"https://gateway.example.com/v1\""));
         assert!(!yaml.contains("agent-default-model"));
     }
 
@@ -866,7 +866,7 @@ mod tests {
         assert!(is_official_deepseek("https://api.deepseek.com/v1"));
         assert!(is_official_deepseek("http://api.deepseek.com:443/v1"));
         assert!(is_official_deepseek("https://cn.api.deepseek.com"));
-        assert!(!is_official_deepseek("https://ai-gateway.kurogames.com/v1"));
+        assert!(!is_official_deepseek("https://gateway.example.com/v1"));
         assert!(!is_official_deepseek("https://openrouter.ai/api/v1"));
         assert!(!is_official_deepseek(
             "https://api.deepseek.com.evil.com/v1"

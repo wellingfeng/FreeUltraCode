@@ -118,6 +118,14 @@ fn ugs_quit_flush_done(app: AppHandle) {
     app.exit(0);
 }
 
+/// 前端决定本次不退出（例如仍有会话在运行，用户点了「取消」）。
+/// 标记 QUIT_FLUSH_DONE=true 让 1.5s 超时线程放弃 exit，并把主窗拉回前台。
+#[tauri::command]
+fn ugs_quit_cancel(app: AppHandle) {
+    QUIT_FLUSH_DONE.store(true, Ordering::SeqCst);
+    show_main_window(&app);
+}
+
 #[tauri::command]
 fn notify_session_complete(
     app: AppHandle,
@@ -700,10 +708,25 @@ struct ActiveClaudeSteer {
     stdin: Arc<Mutex<Option<ChildStdin>>>,
 }
 
+/// Live handle for steering an in-flight zcode app-server turn. The steer
+/// path writes an extra `session/send` on the SAME session that the writer
+/// thread opened, using the shared stdin handle (the Mutex serializes writes
+/// with the writer/reader threads). `session_id` is populated by the reader
+/// once `session/create`/`session/resume` answers; `pending` collects the
+/// per-steer oneshot senders keyed by request id so the reader can route the
+/// `session/send` ack/error back to the waiting `steer_ai_cli` call.
+#[derive(Clone)]
+struct ActiveZcodeSteer {
+    stdin: Arc<Mutex<ChildStdin>>,
+    session_id: Arc<Mutex<Option<String>>>,
+    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<(), String>>>>>,
+}
+
 #[derive(Clone)]
 enum ActiveAiCliSteer {
     Codex(ActiveCodexSteer),
     Claude(ActiveClaudeSteer),
+    Zcode(ActiveZcodeSteer),
 }
 
 fn active_ai_cli_steers() -> &'static Mutex<HashMap<String, ActiveAiCliSteer>> {
@@ -731,6 +754,13 @@ fn unregister_ai_cli_steer(run_id: &str) {
             }
         }
         Some(ActiveAiCliSteer::Claude(state)) => close_claude_stream_input(&state.stdin),
+        Some(ActiveAiCliSteer::Zcode(state)) => {
+            if let Ok(mut pending) = state.pending.lock() {
+                for (_, sender) in pending.drain() {
+                    let _ = sender.send(Err("ZCode turn 已结束。".to_string()));
+                }
+            }
+        }
         None => {}
     }
 }
@@ -1781,6 +1811,7 @@ fn skill_root_candidates() -> Vec<PathBuf> {
             [".agents", "skills"],
             [".claude", "skills"],
             [".gemini", "skills"],
+            [".grok", "skills"],
             [".codex", "plugins"],
             [".agents", "plugins"],
             [".claude", "plugins"],
@@ -2088,6 +2119,8 @@ fn command_source_label(source: &str) -> (&'static str, &'static str) {
         "gemini" => ("Gemini", "Gemini"),
         "kimi" => ("Kimi Code", "Kimi Code"),
         "deepseek-harness" => ("DeepSeek Harness", "DeepSeek Harness"),
+        "zcode" => ("ZCode / GLM", "ZCode / GLM"),
+        "grok" => ("Grok", "Grok"),
         "agent" => ("Agent", "Agent"),
         _ => ("CLI", "CLI"),
     }
@@ -2100,6 +2133,7 @@ fn source_adapter_from_path(path: &Path) -> Option<&'static str> {
             ".claude" => return Some("claude-code"),
             ".codex" => return Some("codex"),
             ".gemini" => return Some("gemini"),
+            ".grok" => return Some("grok"),
             ".agents" => return Some("agent"),
             _ => {}
         }
@@ -2456,6 +2490,7 @@ fn skill_install_root(
             "codex" => ("Codex 项目 Skill (.codex/skills)", [".codex", "skills"]),
             "agents" => ("Agents 项目 Skill (.agents/skills)", [".agents", "skills"]),
             "claude" => ("Claude 项目 Skill (.claude/skills)", [".claude", "skills"]),
+            "grok" => ("Grok 项目 Skill (.grok/skills)", [".grok", "skills"]),
             _ => return Err("未知安装目标。".to_string()),
         };
         return Ok((
@@ -2490,6 +2525,12 @@ fn skill_install_root(
             "global-gemini".to_string(),
             "全局 Gemini Skills (~/.gemini/skills)".to_string(),
             home.join(".gemini").join("skills"),
+            false,
+        ),
+        "global-grok" => (
+            "global-grok".to_string(),
+            "全局 Grok Skills (~/.grok/skills)".to_string(),
+            home.join(".grok").join("skills"),
             false,
         ),
         _ => return Err("未知安装目标。".to_string()),
@@ -3216,6 +3257,7 @@ fn translate_agent_label(agent: &str) -> String {
         "kimi" => "Kimi Code".to_string(),
         "deepseek-harness" => "DeepSeek Harness".to_string(),
         "zcode" => "ZCode / GLM".to_string(),
+        "grok" => "Grok".to_string(),
         other => other.to_string(),
     }
 }
@@ -3226,6 +3268,7 @@ fn skill_target_ids_for_agent(agent: &str) -> Vec<&'static str> {
         "claude-code" => vec!["global-claude", "project-claude"],
         "codex" => vec!["global-codex", "project-codex"],
         "gemini" => vec!["global-gemini"],
+        "grok" => vec!["global-grok", "project-grok"],
         "agents" => vec!["global-agents", "project-agents"],
         _ => vec![],
     }
@@ -5082,6 +5125,7 @@ fn project_skill_roots(root: &Path) -> Vec<ProjectSkillRootSnapshot> {
         ("codex", "Codex 项目 Skill", ".codex/skills"),
         ("agents", "Agents 项目 Skill", ".agents/skills"),
         ("claude", "Claude 项目 Skill", ".claude/skills"),
+        ("grok", "Grok 项目 Skill", ".grok/skills"),
     ]
     .into_iter()
     .map(|(id, label, rel)| {
@@ -13721,6 +13765,12 @@ const CLI_UPDATE_SPECS: &[CliUpdateSpec] = &[
         npm_package: "zcode-app-cli",
         installable: true,
     },
+    CliUpdateSpec {
+        adapter: "grok",
+        label: "Grok",
+        npm_package: "@xai-official/grok",
+        installable: true,
+    },
 ];
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -14020,7 +14070,7 @@ fn cli_update_command(spec: &CliUpdateSpec, exe: Option<&str>) -> Result<Command
             c.arg("update");
             Ok(c)
         }
-        "gemini" | "kimi" | "deepseek-harness" | "zcode" => {
+        "gemini" | "kimi" | "deepseek-harness" | "zcode" | "grok" => {
             // `npm install -g <pkg>@latest` installs when missing and updates
             // when present, so one command covers both. Prefer the owning
             // package manager of the detected shim (bun for ~/.bun/bin), else
@@ -16380,6 +16430,12 @@ fn ai_cli_steer_supported(
             repair_claude_binary();
             Ok(claude_cli_supports_stream_input(&binary, &shell))
         }
+        // zcode steers by writing an extra `session/send` on the live app-server
+        // session — only possible when the bundled runtime entry resolves (same
+        // gate `ai_cli` uses to pick the app-server transport over `--prompt
+        // --json`). No support probing of the CLI itself: the capability is a
+        // property of the vendored runtime layout, which UGS ships.
+        "zcode" => Ok(cli_runtime::resolve_zcode_runtime_entry(&binary).is_some()),
         _ => Ok(false),
     }
 }
@@ -16543,6 +16599,9 @@ fn steer_ai_cli(run_id: String, text: String) -> Result<bool, String> {
             write_claude_stream_message(&state.stdin, text)?;
             return Ok(true);
         }
+        ActiveAiCliSteer::Zcode(state) => {
+            return steer_zcode_session(&state, text, deadline);
+        }
         ActiveAiCliSteer::Codex(state) => state,
     };
 
@@ -16590,6 +16649,64 @@ fn steer_ai_cli(run_id: String, text: String) -> Result<bool, String> {
         Ok(Err(error)) => Err(error),
         Err(mpsc::RecvTimeoutError::Timeout) => Err("Codex steer 响应超时。".to_string()),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err("Codex steer 通道已断开。".to_string()),
+    }
+}
+
+/// Steer a live zcode app-server turn by sending an extra `session/send` on
+/// the SAME session the writer thread opened. The vendored runtime consumes
+/// queued `session/send` messages in-order per session, so the steered text
+/// is delivered as soon as the current model turn drains — a true in-session
+/// steer, not a new process. We wait (bounded by `deadline`, itself already
+/// capped at ~2s by `steer_ai_cli`) for the reader to have populated the
+/// session id, then await the send ack via the shared pending map; an error
+/// ack (or disconnect) is surfaced so the frontend can fall back to FIFO.
+fn steer_zcode_session(
+    state: &ActiveZcodeSteer,
+    text: &str,
+    deadline: std::time::Instant,
+) -> Result<bool, String> {
+    let session_id = loop {
+        let session_id = state.session_id.lock().ok().and_then(|id| id.clone());
+        if let Some(session_id) = session_id {
+            break session_id;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+
+    static ZCODE_STEER_SEQ: AtomicUsize = AtomicUsize::new(1);
+    let request_id = format!(
+        "ugs-zcode-steer-{}",
+        ZCODE_STEER_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let (sender, receiver) = mpsc::channel();
+    state
+        .pending
+        .lock()
+        .map_err(|_| "ZCode steer 等待表锁已损坏。".to_string())?
+        .insert(request_id.clone(), sender);
+    let request = serde_json::json!({
+        "method": "session/send",
+        "id": request_id,
+        "params": {
+            "sessionId": session_id,
+            "content": text,
+        }
+    });
+    if let Err(error) = write_zcode_protocol_message(&state.stdin, &request) {
+        if let Ok(mut pending) = state.pending.lock() {
+            pending.remove(&request_id);
+        }
+        return Err(error);
+    }
+
+    match receiver.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(Ok(())) => Ok(true),
+        Ok(Err(error)) => Err(error),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err("ZCode steer 响应超时。".to_string()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err("ZCode steer 通道已断开。".to_string()),
     }
 }
 
@@ -16839,6 +16956,7 @@ async fn ai_cli(
         let is_kimi = protocol == "kimi";
         let is_dsh = protocol == "deepseek-harness";
         let is_zcode = protocol == "zcode";
+        let is_grok = protocol == "grok";
         let claude_stream_input =
             is_claude && claude_cli_supports_stream_input(&binary, &shell);
         // App Server approval callbacks need a live UI reviewer. Keep the
@@ -16966,6 +17084,13 @@ async fn ai_cli(
             args.push(String::new());
             args.push("--output-format".into());
             args.push("stream-json".into());
+            // Headless runs land in a folder Gemini CLI has not marked trusted,
+            // which silently overrides `--approval-mode` back to "default" and
+            // exits with code 55. `--skip-trust` mirrors how codex/claude skip
+            // their own approval gates in headless mode (`--dangerously-bypass-
+            // approvals-and-sandbox` / `--dangerously-skip-permissions`), so the
+            // turn always runs without an interactive trust prompt.
+            args.push("--skip-trust".into());
 
             if mcp_enabled() {
                 if let Some(project_mcp_file) =
@@ -17162,6 +17287,78 @@ async fn ai_cli(
                     workdir = Some(common_ancestor_dir(&scope).unwrap_or_else(|| p.to_path_buf()));
                 }
             }
+        } else if is_grok {
+            // grok (`@xai-official/grok`) is claude-family headless, but its
+            // npm shim routes through cmd.exe on Windows (~8 KB argv cap), so
+            // the full turn prompt is handed over via `--prompt-file` instead
+            // of argv/stdin. `--output-format streaming-messages-json` emits
+            // NDJSON in the Anthropic Messages wire format — the same
+            // `assistant`/`user`/`result` shape the claude parser reads below.
+            let mut task = String::new();
+            if inject_extra_workspace_note {
+                task.push_str(&extra_workspace_note);
+                if !task.is_empty() {
+                    task.push_str("\n\n");
+                }
+            }
+            task.push_str(&prompt);
+            if !language_directive.is_empty() {
+                task.push_str("\n\n");
+                task.push_str(&language_directive);
+            }
+            let prompt_path =
+                managed_temp_path(cwd.as_deref(), "sidecar", "ultragamestudio-grok", "txt");
+            std::fs::write(&prompt_path, task.as_bytes())
+                .map_err(|e| format!("写入 grok 提示文件失败: {e}"))?;
+            temp_files.push(TempFileGuard::new(prompt_path.clone()));
+
+            args.push("-p".into());
+            args.push("--output-format".into());
+            args.push("streaming-messages-json".into());
+
+            // Session continuity: continue a prior session (warm context) when
+            // the caller asks to resume, else pin a fresh session id.
+            if let Some(sid) = session_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                if resume.unwrap_or(false) {
+                    args.push("--resume".into());
+                    args.push(sid.to_string());
+                } else {
+                    args.push("--session-id".into());
+                    args.push(sid.to_string());
+                }
+            }
+
+            if let Some(m) = model
+                .as_deref()
+                .filter(|m| cli_runtime::should_pass_model(&adapter, m))
+            {
+                args.push("--model".into());
+                args.push(m.to_string());
+            }
+
+            match permission.as_deref().unwrap_or("full") {
+                "readonly" => {
+                    args.push("--permission-mode".into());
+                    args.push("plan".into());
+                }
+                "ask" => {}
+                _ => {
+                    args.push("--permission-mode".into());
+                    args.push("bypassPermissions".into());
+                }
+            }
+
+            if let Some(dir) = cwd.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                let p = std::path::Path::new(dir);
+                if p.is_dir() {
+                    workdir = Some(p.to_path_buf());
+                    args.push("--cwd".into());
+                    args.push(dir.to_string());
+                }
+            }
+
+            args.push("--prompt-file".into());
+            args.push(prompt_path.to_string_lossy().to_string());
         } else if is_zcode {
             // ZCode (zcode-app-cli) credentials live ONLY in
             // `~/.zcode/cli/config.json` (`provider.zai` + `model.main`) — never
@@ -17490,6 +17687,7 @@ async fn ai_cli(
         // startup error slot the writer fills when the handshake fails.
         let zcode_session_id = Arc::new(Mutex::new(None::<String>));
         let zcode_startup_error = Arc::new(Mutex::new(None::<String>));
+        let zcode_pending = Arc::new(Mutex::new(HashMap::new()));
         let zcode_stdin = if zcode_app_server {
             stdin_pipe.take().map(|stdin| Arc::new(Mutex::new(stdin)))
         } else {
@@ -17510,6 +17708,15 @@ async fn ai_cli(
                 &run_id,
                 ActiveAiCliSteer::Claude(ActiveClaudeSteer {
                     stdin: Arc::clone(stdin),
+                }),
+            );
+        } else if let Some(stdin) = zcode_stdin.as_ref() {
+            register_ai_cli_steer(
+                &run_id,
+                ActiveAiCliSteer::Zcode(ActiveZcodeSteer {
+                    stdin: Arc::clone(stdin),
+                    session_id: Arc::clone(&zcode_session_id),
+                    pending: Arc::clone(&zcode_pending),
                 }),
             );
         }
@@ -17756,11 +17963,12 @@ async fn ai_cli(
                     );
                 }
             })
-        } else if is_dsh || is_zcode || is_kimi {
+        } else if is_dsh || is_zcode || is_kimi || is_grok {
             // dsh reads the task from argv (see the args branch above), not
             // stdin; zcode and kimi likewise take their prompt as a `--prompt`
-            // argv value. Close stdin immediately so none can block on a
-            // half-open pipe; the task itself never uses this fd.
+            // argv value, and grok via `--prompt-file`. Close stdin immediately
+            // so none can block on a half-open pipe; the task itself never uses
+            // this fd.
             std::thread::spawn(move || {
                 drop(stdin_pipe);
             })
@@ -17789,6 +17997,7 @@ async fn ai_cli(
         let claude_stdin_reader = claude_stdin.clone();
         let zcode_session_id_reader = Arc::clone(&zcode_session_id);
         let zcode_startup_error_reader = Arc::clone(&zcode_startup_error);
+        let zcode_pending_reader = Arc::clone(&zcode_pending);
         // The zcode app-server is BIDIRECTIONAL: it sends its own requests to
         // the client (e.g. `session/requestRuntimePreferences`) that must be
         // answered. The reader replies through this shared stdin handle (the
@@ -18054,6 +18263,33 @@ async fn ai_cli(
                                             *slot = Some(format!("ZCode 本轮执行出错：{msg}"));
                                         }
                                     }
+                                }
+                            } else if let Some(req_id) = v
+                                .get("id")
+                                .and_then(|id| id.as_str())
+                                .filter(|id| id.starts_with("ugs-zcode-steer-"))
+                            {
+                                // Steer ack: route the `session/send` response
+                                // back to the waiting `steer_ai_cli` call. An
+                                // error ack means the runtime rejected the
+                                // steer — surface it so the frontend can fall
+                                // back to the FIFO queue instead of losing the
+                                // message silently.
+                                let result = if let Some(error) = v.get("error") {
+                                    let msg = error
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("session/send 被拒绝");
+                                    Err(format!("ZCode steer 失败:{msg}"))
+                                } else {
+                                    Ok(())
+                                };
+                                let sender = zcode_pending_reader
+                                    .lock()
+                                    .ok()
+                                    .and_then(|mut pending| pending.remove(req_id));
+                                if let Some(sender) = sender {
+                                    let _ = sender.send(result);
                                 }
                             }
                             continue;
@@ -19331,6 +19567,22 @@ mod tests {
             "install".to_string(),
             "-g".to_string(),
             "@moonshot-ai/kimi-code@latest".to_string(),
+        ]));
+    }
+
+    #[test]
+    fn cli_update_command_installs_grok_when_missing() {
+        // grok is npm-provisionable via `@xai-official/grok`; a missing CLI must
+        // route to `npm install -g @xai-official/grok@latest`.
+        let grok = CLI_UPDATE_SPECS
+            .iter()
+            .find(|spec| spec.adapter == "grok")
+            .unwrap();
+        let grok_cmd = cli_update_command(grok, None).unwrap();
+        assert!(command_arg_strings(&grok_cmd).ends_with(&[
+            "install".to_string(),
+            "-g".to_string(),
+            "@xai-official/grok@latest".to_string(),
         ]));
     }
 
@@ -20959,8 +21211,8 @@ mod tests {
     #[test]
     fn parse_unified_workspace_diff_lines_accepts_p4_headers() {
         let (lines, binary) = parse_unified_workspace_diff_lines(
-            "--- //MoonEngine/dev/Engine/Shaders/Private/KuroMoon.usf\t2026-05-27\n\
-             +++ E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\KuroMoon.usf\t2026-05-27\n\
+            "--- //MoonEngine/dev/Engine/Shaders/Private/MoonShader.usf\t2026-05-27\n\
+             +++ E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\MoonShader.usf\t2026-05-27\n\
              @@ -139,0 +139,1 @@\n\
              +\tValue.a = 1.0f; // Moon Modified\n\
              @@ -169,1 +170,1 @@\n\
@@ -20987,7 +21239,7 @@ mod tests {
         ));
         let primary = base.join("primary");
         let external_dir = base.join("external").join("Engine").join("Shaders");
-        let file = external_dir.join("KuroMoon.usf");
+        let file = external_dir.join("MoonShader.usf");
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&primary).unwrap();
         std::fs::create_dir_all(&external_dir).unwrap();
@@ -21001,7 +21253,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
 
         assert_eq!(diff_root, expected_root);
-        assert_eq!(relative_path, "KuroMoon.usf");
+        assert_eq!(relative_path, "MoonShader.usf");
     }
 
     #[test]
@@ -21421,6 +21673,10 @@ mod tests {
         );
         assert_eq!(skill_target_ids_for_agent("gemini"), vec!["global-gemini"]);
         assert_eq!(
+            skill_target_ids_for_agent("grok"),
+            vec!["global-grok", "project-grok"]
+        );
+        assert_eq!(
             skill_target_ids_for_agent("agents"),
             vec!["global-agents", "project-agents"]
         );
@@ -21588,11 +21844,14 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             focus_main_window,
             ugs_quit_flush_done,
+            ugs_quit_cancel,
             notify_session_complete,
             dismiss_session_waiting_input_notification,
             migrate_legacy_brand_storage,
             ai_edit_graph,
-            run_workflow,
+            // [workflow 编排已废弃] run_workflow 命令停用：前端 tauri.ts 绑定本就无调用方。
+            // 恢复功能取消下一行注释即可（命令实现保留）。
+            // run_workflow,
             run_studio,
             ai_cli,
             cancel_ai_cli,

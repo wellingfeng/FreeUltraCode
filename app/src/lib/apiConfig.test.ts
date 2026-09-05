@@ -301,7 +301,7 @@ describe('apiConfig provider compatibility', () => {
       {
         id: 'p_kimi',
         kind: 'anthropic',
-        name: 'KuroKimi',
+        name: 'ExampleKimi',
         apiKey: 'sk-test',
         baseUrl: 'https://api.kimi.com/coding/',
         transport: 'cli',

@@ -40,6 +40,38 @@ describe('parseMemoryWrites', () => {
     expect(reqs[0].operations[0]).toEqual({ action: 'remove', oldText: '陈旧' });
   });
 
+  it('passes through the importance tier verbatim for the store to normalize', () => {
+    const reqs = parseMemoryWrites(
+      block(
+        '{"target":"user","operations":[' +
+          '{"action":"add","content":"硬性偏好","importance":"必须"},' +
+          '{"action":"replace","oldText":"旧条目","content":"新内容","importance":"minor"}]}',
+      ),
+    );
+    expect(reqs[0].operations[0]).toEqual({
+      action: 'add',
+      content: '硬性偏好',
+      importance: '必须',
+    });
+    expect(reqs[0].operations[1]).toEqual({
+      action: 'replace',
+      oldText: '旧条目',
+      content: '新内容',
+      importance: 'minor',
+    });
+    // Missing / non-string importance simply stays absent.
+    const plain = parseMemoryWrites(
+      block('{"target":"user","operations":[{"action":"add","content":"x","importance":3}]}'),
+    );
+    expect(plain[0].operations[0]).toEqual({ action: 'add', content: 'x' });
+  });
+
+  it('documents the importance field in the write instruction', () => {
+    expect(MEMORY_WRITE_INSTRUCTION).toContain('importance');
+    expect(MEMORY_WRITE_INSTRUCTION).toContain('must');
+    expect(MEMORY_WRITE_INSTRUCTION).toContain('不重要');
+  });
+
   it('parses multiple blocks into multiple requests', () => {
     const text =
       block('{"target":"user","operations":[{"action":"add","content":"a"}]}') +

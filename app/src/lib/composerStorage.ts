@@ -17,6 +17,7 @@ import {
   normalizeGameExpertSettings,
   type GameExpertSettings,
 } from '@/lib/gameExperts';
+import { tauriAvailable } from '@/lib/tauri';
 
 /**
  * localStorage persistence for AI-input composer state, the AIDock height, and
@@ -181,10 +182,153 @@ function normalizePersonalInstructionsByModel(
   return out;
 }
 
+/**
+ * 个性化指令（按 adapter 分桶）的持久化通道。
+ *
+ * 为什么不能只用 localStorage：WebView2 的 localStorage 底层是 Chromium
+ * leveldb，写入是 write-behind（先进内存 log，再异步压实到 .ldb）。托盘右键
+ * 「退出」会同步 setItem 后立即强杀 WebView2 进程，内存 log 段根本没机会压实，
+ * 重启后丢失。实证：扫 `%LOCALAPPDATA%\com.ultragamestudio.desktop\EBWebView\
+ * Default\Local Storage\leveldb\*.ldb|*.log`，其他 ultragamestudio key 都在盘
+ * 上，唯独 `personalInstructionsByModel.v1` 完全不存在。
+ *
+ * 修法（与 apiConfig/generationSettingsStore 同模式）：Tauri 下以
+ * `~/.ultragamestudio/settings/personalInstructionsByModel.v1.json` 为权威源
+ * （`history_write_json` invoke 同步落盘，不经 WebView2），localStorage 仅作
+ * 同步读镜像；启动时 hydrate 磁盘 → cache，退出前 quitFlush 冲刷 pending 写。
+ */
+const PERSONAL_INSTRUCTIONS_BY_MODEL_REL_PATH =
+  'settings/personalInstructionsByModel.v1.json';
+
+// Authoritative in-memory view once hydrate has run under Tauri. `null` 表示
+// 尚未 hydrate（此时读走 localStorage 镜像，写仍双写，等 hydrate 时被磁盘值
+// 覆盖或落盘一次）。
+let personalInstructionsDiskCache: PersonalInstructionsByModel | null = null;
+let personalInstructionsDiskReady = false;
+const personalInstructionsPendingWrites = new Set<Promise<void>>();
+
+async function getInvoke() {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke;
+}
+
+function personalInstructionsDiskWriteSoon(
+  value: PersonalInstructionsByModel,
+): void {
+  if (!tauriAvailable()) return;
+  const json = JSON.stringify(value);
+  const task = (async (): Promise<void> => {
+    try {
+      const invoke = await getInvoke();
+      await invoke<void>('history_write_json', {
+        relPath: PERSONAL_INSTRUCTIONS_BY_MODEL_REL_PATH,
+        json,
+      });
+    } catch (err) {
+      console.error(
+        '[composerStorage] personalInstructions disk write failed',
+        err,
+      );
+    }
+  })();
+  personalInstructionsPendingWrites.add(task);
+  void task.finally(() => personalInstructionsPendingWrites.delete(task));
+}
+
+/**
+ * 启动时把磁盘上的 personalInstructionsByModel 读进内存 cache；磁盘为空且
+ * localStorage 有 legacy 值时迁移一次。必须在 settingsSlice 冷启动（
+ * `loadPersonalInstructionsByModel`）之前 await。浏览器/dev 构建下 no-op。
+ */
+export async function initializePersonalInstructionsStore(): Promise<void> {
+  if (personalInstructionsDiskReady) return;
+  if (!tauriAvailable()) return;
+  try {
+    const invoke = await getInvoke();
+    const fromDisk = await invoke<string | null>('history_read_json', {
+      relPath: PERSONAL_INSTRUCTIONS_BY_MODEL_REL_PATH,
+    });
+    if (fromDisk != null && fromDisk !== '' && fromDisk !== 'null') {
+      try {
+        const parsed = normalizePersonalInstructionsByModel(
+          JSON.parse(fromDisk),
+        );
+        if (parsed) {
+          personalInstructionsDiskCache = parsed;
+          // 同步镜像到 localStorage，供任何 sync reader 兜底。
+          try {
+            if (hasStorage()) {
+              window.localStorage.setItem(
+                PERSONAL_INSTRUCTIONS_BY_MODEL_KEY,
+                JSON.stringify(parsed),
+              );
+            }
+          } catch {
+            /* non-fatal */
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          '[composerStorage] personalInstructions disk parse failed',
+          err,
+        );
+      }
+    }
+    // 迁移：磁盘为空但 localStorage 有值时，把 localStorage 写到磁盘。
+    let legacy: string | null = null;
+    try {
+      legacy = hasStorage()
+        ? window.localStorage.getItem(PERSONAL_INSTRUCTIONS_BY_MODEL_KEY)
+        : null;
+    } catch {
+      legacy = null;
+    }
+    if (legacy) {
+      try {
+        const parsed = normalizePersonalInstructionsByModel(
+          JSON.parse(legacy),
+        );
+        if (parsed && Object.keys(parsed).length > 0) {
+          personalInstructionsDiskCache = parsed;
+          personalInstructionsDiskWriteSoon(parsed);
+        }
+      } catch {
+        /* legacy value unparseable — ignore */
+      }
+    }
+  } catch (err) {
+    console.warn(
+      '[composerStorage] personalInstructions disk init failed',
+      err,
+    );
+  } finally {
+    personalInstructionsDiskReady = true;
+  }
+}
+
+/** 退出前冲刷所有未完成的 personalInstructions 磁盘写。 */
+export async function flushPersonalInstructionsDiskWrites(): Promise<void> {
+  const inFlight = [...personalInstructionsPendingWrites];
+  if (inFlight.length === 0) return;
+  await Promise.all(inFlight);
+}
+
+/** 测试专用：重置 hydrate 状态。 */
+export function resetPersonalInstructionsStoreForTests(): void {
+  personalInstructionsDiskCache = null;
+  personalInstructionsDiskReady = false;
+  personalInstructionsPendingWrites.clear();
+}
+
 export function loadPersonalInstructionsByModel(
   legacySelection?: Partial<GatewaySelection> | null,
   defaultSelections: ReadonlyArray<Partial<GatewaySelection> | null | undefined> = [],
 ): PersonalInstructionsByModel {
+  // 磁盘 cache 优先（Tauri + hydrate 完成后，磁盘是权威源）。
+  if (personalInstructionsDiskCache) {
+    return personalInstructionsDiskCache;
+  }
   if (!hasStorage()) return {};
   try {
     const raw = window.localStorage.getItem(PERSONAL_INSTRUCTIONS_BY_MODEL_KEY);
@@ -215,16 +359,24 @@ export function loadPersonalInstructionsByModel(
 export function savePersonalInstructionsByModel(
   byModel: PersonalInstructionsByModel,
 ): void {
-  if (!hasStorage()) return;
-  try {
-    const normalized = normalizePersonalInstructionsByModel(byModel) ?? {};
-    window.localStorage.setItem(
-      PERSONAL_INSTRUCTIONS_BY_MODEL_KEY,
-      JSON.stringify(normalized),
-    );
-  } catch {
-    // non-fatal
+  const normalized = normalizePersonalInstructionsByModel(byModel) ?? {};
+  // 更新内存 cache（hydrate 之后磁盘是权威源，cache 即磁盘值的内存投影）。
+  if (personalInstructionsDiskReady || tauriAvailable()) {
+    personalInstructionsDiskCache = normalized;
   }
+  // localStorage 同步镜像（非 Tauri 环境下是唯一存储；Tauri 下作同步读兜底）。
+  if (hasStorage()) {
+    try {
+      window.localStorage.setItem(
+        PERSONAL_INSTRUCTIONS_BY_MODEL_KEY,
+        JSON.stringify(normalized),
+      );
+    } catch {
+      // non-fatal: quota / serialization errors fall through to the disk write.
+    }
+  }
+  // 磁盘异步写（write-behind；退出前由 quitFlush 冲刷）。
+  personalInstructionsDiskWriteSoon(normalized);
 }
 
 export function loadGameExpertSettings(): GameExpertSettings {

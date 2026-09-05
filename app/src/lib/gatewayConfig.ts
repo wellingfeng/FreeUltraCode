@@ -40,19 +40,7 @@ export const GATEWAY_CONFIG_STORAGE = 'ugs_model_gateway_v1';
 export const ACTIVE_GATEWAY_SELECTION_STORAGE =
   'ugs_active_gateway_selection_v1';
 
-const LEGACY_PROVIDERS_STORAGE = 'ugs_providers';
 const LEGACY_ACTIVE_PROVIDER_STORAGE = 'ugs_active_provider_id';
-
-interface LegacyProvider {
-  id: string;
-  kind?: string;
-  adapter?: string;
-  name?: string;
-  apiKey?: string;
-  baseUrl?: string;
-  transport?: string;
-  model?: string;
-}
 
 const hasWindow = (): boolean => typeof window !== 'undefined';
 
@@ -82,16 +70,34 @@ async function getInvoke() {
   return invoke;
 }
 
+// Track in-flight disk writes so the quit-flush handshake can await them.
+// Write-behind is fire-and-forget during normal operation, but on exit we must
+// drain the queue or the on-disk settings files go stale.
+const inflightDiskWrites = new Set<Promise<void>>();
+
 function diskWriteSoon(relPath: string, json: string): void {
   if (!tauriAvailable()) return;
-  void (async () => {
+  let write!: Promise<void>;
+  write = (async () => {
     try {
       const invoke = await getInvoke();
       await invoke<void>('history_write_json', { relPath, json });
     } catch (err) {
       console.error('[gatewayConfig] disk write failed', relPath, err);
+    } finally {
+      inflightDiskWrites.delete(write);
     }
   })();
+  inflightDiskWrites.add(write);
+}
+
+/**
+ * Await all in-flight disk writes so the on-disk settings files are current
+ * before the process exits. Called from the quit-flush handshake; resolves
+ * even if individual writes failed (errors are logged inside diskWriteSoon).
+ */
+export async function flushGatewayConfigDiskWrites(): Promise<void> {
+  await Promise.all([...inflightDiskWrites]);
 }
 
 function diskDeleteSoon(relPath: string): void {
@@ -218,7 +224,8 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
     value === 'gemini' ||
     value === 'kimi' ||
     value === 'deepseek-harness' ||
-    value === 'zcode'
+    value === 'zcode' ||
+    value === 'grok'
   ) {
     return value;
   }
@@ -461,105 +468,6 @@ function providerHasInlineApiKey(value: unknown): boolean {
   );
 }
 
-function readLegacyProviders(): LegacyProvider[] {
-  const stored = rawGet(LEGACY_PROVIDERS_STORAGE);
-  if (stored === null) return [];
-  try {
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((value): LegacyProvider | null => {
-        if (typeof value !== 'object' || value === null) return null;
-        const raw = value as Record<string, unknown>;
-        if (typeof raw.id !== 'string') return null;
-        return {
-          id: raw.id,
-          kind: typeof raw.kind === 'string' ? raw.kind : undefined,
-          adapter: typeof raw.adapter === 'string' ? raw.adapter : undefined,
-          name: typeof raw.name === 'string' ? raw.name : undefined,
-          apiKey: legacyProviderApiKey(
-            raw.id,
-            typeof raw.apiKey === 'string' ? raw.apiKey : undefined,
-          ),
-          baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : undefined,
-          transport:
-            typeof raw.transport === 'string' ? raw.transport : undefined,
-          model: typeof raw.model === 'string' ? raw.model : undefined,
-        };
-      })
-      .filter((provider): provider is LegacyProvider => provider !== null);
-  } catch {
-    return [];
-  }
-}
-
-function legacyProviderApiKey(providerId: string, fallback?: string): string | undefined {
-  if (!secureStorageAvailable()) return fallback;
-  return readSecureRecordValue(PROVIDER_API_KEYS_SECRET, providerId) || fallback;
-}
-
-function legacyKind(value: LegacyProvider): string {
-  if (
-    value.kind === 'codex' ||
-    value.adapter === 'codex' ||
-    value.kind === 'gemini' ||
-    value.adapter === 'gemini' ||
-    value.kind === 'kimi' ||
-    value.adapter === 'kimi' ||
-    value.kind === 'deepseek-harness' ||
-    value.adapter === 'deepseek-harness' ||
-    value.kind === 'zcode' ||
-    value.adapter === 'zcode'
-  ) {
-    return normalizeAdapter(value.kind ?? value.adapter);
-  }
-  return 'anthropic';
-}
-
-function legacyTransport(value: LegacyProvider): GatewayTransport {
-  if (value.transport === 'cli') return 'cli';
-  const kind = legacyKind(value);
-  // Direct transport is available to every kind: Anthropic speaks the Anthropic
-  // API, codex/gemini custom relays speak the OpenAI-compatible API. An explicit
-  // 'direct' choice is honored; without one, anthropic defaults to direct and
-  // codex/gemini default to cli (they usually run through their own CLI).
-  if (value.transport === 'direct') {
-    return kind === 'anthropic' ? 'anthropic' : 'openai-compatible';
-  }
-  return kind === 'anthropic' ? 'anthropic' : 'cli';
-}
-
-function legacyProviderToGateway(provider: LegacyProvider): GatewayProvider {
-  const kind = legacyKind(provider);
-  const adapter = normalizeAdapter(kind === 'anthropic' ? 'claude-code' : kind);
-  const transport = legacyTransport(provider);
-  const name =
-    provider.name?.trim() ||
-    (adapter === 'claude-code' ? 'Claude' : adapter);
-  return {
-    id: provider.id,
-    kind,
-    name,
-    adapter,
-    channels: [
-      {
-        id: 'default',
-        name: 'Default',
-        apiKey: provider.apiKey ?? '',
-        baseUrl: provider.baseUrl ?? '',
-        model: provider.model,
-        models: undefined,
-        route: {
-          transport,
-          baseUrl: provider.baseUrl ?? '',
-          model: provider.model,
-          models: undefined,
-        },
-      },
-    ],
-  };
-}
-
 export function preferredGatewayProvider(
   providers: GatewayProvider[],
   adapter: RuntimeAdapterId,
@@ -592,21 +500,15 @@ function selectionFromProvider(provider: GatewayProvider): GatewaySelection {
 
 export function loadGatewayConfig(): GatewayConfig {
   const stored = readStoredGatewayConfig();
-  const legacy = readLegacyProviders();
   const free = freeChannelGatewayProviders();
-
-  if (legacy.length === 0) {
-    return { version: 1, providers: [...stored.providers, ...free] };
-  }
-
-  const legacyIds = new Set(legacy.map((provider) => provider.id));
-  const nonLegacy = stored.providers.filter(
-    (provider) => !legacyIds.has(provider.id),
-  );
-  return {
-    version: 1,
-    providers: [...legacy.map(legacyProviderToGateway), ...nonLegacy, ...free],
-  };
+  // The gateway mirror is now maintained exclusively by apiConfig's sync path
+  // (add/update/delete/import) plus the boot-time `syncGatewayFromProviders()`.
+  // We deliberately no longer overlay `readLegacyProviders()` here: that legacy
+  // overlay read the best-effort localStorage mirror of `ugs_providers`, which
+  // goes stale when the 5MB localStorage quota fills, and then re-clobbered the
+  // freshly-synced gateway name with an old one (e.g. "ExampleGemini" rendered as
+  // "ExampleAI" in the run header while the channel picker showed "ExampleGemini").
+  return { version: 1, providers: [...stored.providers, ...free] };
 }
 
 export function saveGatewayConfig(config: GatewayConfig): void {

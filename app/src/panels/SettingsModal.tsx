@@ -100,6 +100,7 @@ import {
   type ProviderRuntimeStatus,
 } from '@/lib/apiConfig';
 import { flushSecureStorage } from '@/lib/secureStorage';
+import { registerQuitFlushTask } from '@/lib/quitFlush';
 import { importCcSwitchProviders } from '@/lib/ccSwitchAutoImport';
 import {
   isTauri,
@@ -1698,6 +1699,7 @@ const CLI_UPDATE_ADAPTER_ORDER = [
   'kimi',
   'deepseek-harness',
   'zcode',
+  'grok',
 ] as const;
 
 function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
@@ -1707,6 +1709,7 @@ function cliUpdateAdapterLabel(adapter: string, fallback: string): string {
   if (adapter === 'kimi') return 'Kimi Code';
   if (adapter === 'deepseek-harness') return 'DeepSeek Harness';
   if (adapter === 'zcode') return 'ZCode / GLM';
+  if (adapter === 'grok') return 'Grok';
   return fallback;
 }
 
@@ -1891,17 +1894,98 @@ function PersonalizationSettings({
   );
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
+  // Debounced autosave: typing persists to the store (and localStorage) without
+  // requiring the save button. Without this, closing the modal / switching tabs
+  // discards the unsaved draft even though the card reads "已保存" (dirty is
+  // false when draft and saved value match — including when both are empty).
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  const saveTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  const flushDraftSave = useCallback(
+    (key: string) => {
+      const timer = saveTimersRef.current.get(key);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        saveTimersRef.current.delete(key);
+      }
+      const draft = draftsRef.current[key];
+      if (draft === undefined) return;
+      const entry = entriesRef.current.find((candidate) => candidate.key === key);
+      if (!entry) return;
+      setPersonalInstructions(draft, entry.selection);
+      // Sync the draft to the normalized stored value (trimmed + required
+      // larkdoc section appended) so the save button reads "已保存" right away.
+      const normalized = ensureRequiredPersonalInstructions(draft);
+      setDrafts((previous) =>
+        previous[key] === normalized
+          ? previous
+          : { ...previous, [key]: normalized },
+      );
+    },
+    [setPersonalInstructions],
+  );
+
+  const scheduleDraftSave = useCallback(
+    (key: string, delayMs: number) => {
+      const existing = saveTimersRef.current.get(key);
+      if (existing !== undefined) clearTimeout(existing);
+      saveTimersRef.current.set(
+        key,
+        setTimeout(() => {
+          saveTimersRef.current.delete(key);
+          flushDraftSave(key);
+        }, delayMs),
+      );
+    },
+    [flushDraftSave],
+  );
+
+  // Tab switch / modal close: flush pending debounced saves on unmount.
+  useEffect(() => {
+    const timers = saveTimersRef.current;
+    return () => {
+      for (const key of [...timers.keys()]) flushDraftSave(key);
+      timers.clear();
+    };
+  }, [flushDraftSave]);
+
+  // Tray「退出」/ window close: quitFlush runs registered sync tasks before
+  // the host exits, so a quit inside the debounce window still persists.
+  useEffect(
+    () =>
+      registerQuitFlushTask(() => {
+        for (const key of [...saveTimersRef.current.keys()]) {
+          flushDraftSave(key);
+        }
+      }),
+    [flushDraftSave],
+  );
+
   useEffect(() => {
     setDrafts((previous) => {
       const visibleKeys = new Set(entries.map((entry) => entry.key));
       let changed = false;
       const next = { ...previous };
       for (const entry of entries) {
-        if (entry.key in next) continue;
-        next[entry.key] = personalInstructionsForSelection(
+        const storeValue = personalInstructionsForSelection(
           personalInstructionsByModel,
           entry.selection,
         );
+        if (entry.key in next) {
+          // draft 已存在：通常是用户正在编辑，保留。但若 draft 是初始空串且
+          // store 在异步水合后已拿到非空值，需要把 store 值回填进来 ——
+          // 否则用户看到的就是「已保存徽章 + 空 textarea」这种自相矛盾的 UI。
+          // 用户主动清空后 store 也是 ''，不会误回填。
+          if (next[entry.key] === '' && storeValue !== '') {
+            next[entry.key] = storeValue;
+            changed = true;
+          }
+          continue;
+        }
+        next[entry.key] = storeValue;
         changed = true;
       }
       for (const key of Object.keys(next)) {
@@ -1915,6 +1999,8 @@ function PersonalizationSettings({
 
   const setDraft = (key: string, value: string) => {
     setDrafts((previous) => ({ ...previous, [key]: value }));
+    // Debounced autosave ~1.2s after the last keystroke.
+    scheduleDraftSave(key, 1200);
   };
 
   return (
@@ -1950,15 +2036,26 @@ function PersonalizationSettings({
                 setDraft(entry.key, personalInstructionsSample(entry.selection))
               }
               onClear={() => {
+                // Cancel any pending autosave first, otherwise it would
+                // re-persist the pre-clear draft over this deletion.
+                const timer = saveTimersRef.current.get(entry.key);
+                if (timer !== undefined) {
+                  clearTimeout(timer);
+                  saveTimersRef.current.delete(entry.key);
+                }
                 setDraft(entry.key, '');
                 setPersonalInstructions('', entry.selection);
               }}
               onSave={() => {
-                // Persist, then sync the draft to the normalized value the store
-                // actually stored (trimmed + required larkdoc section appended).
-                // Otherwise the draft keeps differing from the saved value and
-                // the button never flips to "已保存", making it look like the
-                // save did not stick.
+                // Cancel the pending autosave (this handler supersedes it),
+                // persist, then sync the draft to the normalized value the
+                // store actually stored (trimmed + required larkdoc section
+                // appended) so the button flips to "已保存" immediately.
+                const timer = saveTimersRef.current.get(entry.key);
+                if (timer !== undefined) {
+                  clearTimeout(timer);
+                  saveTimersRef.current.delete(entry.key);
+                }
                 setPersonalInstructions(draft, entry.selection);
                 setDraft(entry.key, ensureRequiredPersonalInstructions(draft));
               }}
@@ -2072,6 +2169,10 @@ function PersonalizationModelCard({
   onSave: () => void;
 }) {
   const dirty = draft !== savedInstructions;
+  // "已保存" must mean the store actually holds content for this bucket. When
+  // both draft and saved value are empty, dirty is false too — showing "已保存"
+  // there reads as a false confirmation (empty card, nothing persisted).
+  const hasSavedContent = savedInstructions.trim().length > 0;
   return (
     <div className="rounded-lg border border-border bg-bg-alt p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -2132,7 +2233,9 @@ function PersonalizationModelCard({
           >
             {dirty
               ? t(locale, 'settings.personalizationSave')
-              : t(locale, 'settings.personalizationSaved')}
+              : hasSavedContent
+                ? t(locale, 'settings.personalizationSaved')
+                : t(locale, 'settings.personalizationEmpty')}
           </button>
         </div>
       </div>
@@ -2178,6 +2281,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'kimi') return 'kimi';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
   if (kind === 'zcode') return 'zcode';
+  if (kind === 'grok') return 'grok';
   return 'claude-code';
 }
 
@@ -2188,6 +2292,7 @@ function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
+  if (adapter === 'grok') return 'grok';
   return 'anthropic';
 }
 
@@ -2202,6 +2307,7 @@ const PROVIDER_ADAPTER_SECTIONS: ReadonlyArray<{
   { adapter: 'kimi', dotClassName: 'bg-fuchsia-400' },
   { adapter: 'deepseek-harness', dotClassName: 'bg-indigo-400' },
   { adapter: 'zcode', dotClassName: 'bg-cyan-400' },
+  { adapter: 'grok', dotClassName: 'bg-lime-400' },
 ];
 
 type BadgeState = 'direct' | 'cli' | 'unavailable' | 'default';
@@ -3282,6 +3388,9 @@ function DefaultChannelRow({
     apiKey: keyValue,
     model: modelValue.trim() || undefined,
   };
+  const effectiveTransport =
+    draftProvider.transport ??
+    (draftProvider.kind === 'anthropic' ? 'direct' : 'cli');
   const draftRuntime = getProviderRuntimeInfo(draftProvider, {
     canUseCliFallback: runtime.canUseCliFallback,
   });
@@ -3480,9 +3589,36 @@ function DefaultChannelRow({
           state={draftRuntime.status}
           label={providerStatusLabel(draftRuntime.status, locale)}
         />
-        <span className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg-faint">
-          {providerRouteLabel(draftProvider, draftRuntime, locale)}
-        </span>
+        <div
+          role="group"
+          aria-label={t(locale, 'settings.models.runtimeMode')}
+          title={t(locale, 'settings.models.runtimeModeHelp')}
+          className="flex overflow-hidden rounded border border-border"
+        >
+          {(
+            [
+              ['direct', 'settings.models.runtimeModeDirect'],
+              ['cli', 'settings.models.runtimeModeCli'],
+            ] as const
+          ).map(([mode, labelKey]) => {
+            const active = effectiveTransport === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => saveImmediately({ transport: mode })}
+                className={cn(
+                  'px-1.5 py-0.5 text-[10px] leading-none transition-colors',
+                  active
+                    ? 'bg-accent text-bg'
+                    : 'bg-panel text-fg-faint hover:bg-panel-2 hover:text-fg',
+                )}
+              >
+                {t(locale, labelKey)}
+              </button>
+            );
+          })}
+        </div>
         <span className="min-w-0 flex-1" />
         <div className="flex items-center gap-1.5">
           {onClone && (
@@ -4459,21 +4595,6 @@ function providerStatusLabel(
   if (status === 'direct') return t(locale, 'settings.models.statusDirect');
   if (status === 'cli') return t(locale, 'settings.models.statusCli');
   return t(locale, 'settings.models.statusUnavailable');
-}
-
-function providerRouteLabel(
-  provider: Provider,
-  runtime: ReturnType<typeof getProviderRuntimeInfo>,
-  locale: Locale,
-): string {
-  if (
-    runtime.status === 'cli' ||
-    provider.transport === 'cli' ||
-    provider.kind !== 'anthropic'
-  ) {
-    return t(locale, 'settings.models.sourceSystemCli');
-  }
-  return t(locale, 'settings.models.sourceDirect');
 }
 
 function clearErrorsForPatch(

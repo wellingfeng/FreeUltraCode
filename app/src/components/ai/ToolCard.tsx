@@ -10,6 +10,7 @@ import { compactToolSubject, toolSubjectAllowsFileRefs } from './lib/toolDisplay
 import RawCodeBlock from './RawCodeBlock';
 import TerminalLog from './TerminalLog';
 import { inferToolCodeLanguage, type ToolCodePanel } from './lib/toolCode';
+import { buildEditDiff, isDiffableEditArgs } from './lib/toolDiff';
 
 /** Format a duration in ms as a compact human string. */
 function fmtDuration(ms: number): string {
@@ -134,6 +135,11 @@ export default function ToolCard({
       : typeof event.args === 'string'
         ? event.args
         : safeJson(event.args);
+  // Edit/Write args: render a red/green unified diff instead of the raw JSON
+  // blob so the user sees the actual line changes like a terminal diff.
+  const editDiff = isDiffableEditArgs(event.name, event.args)
+    ? buildEditDiff(event.name, event.args)
+    : null;
   const hasBody =
     (event.args !== undefined && event.args !== null) ||
     (event.result != null && event.result !== '') ||
@@ -194,7 +200,14 @@ export default function ToolCard({
               language={toolLanguage('details', subject)}
             />
           )}
-          {argsBody && (
+          {argsBody && editDiff && (
+            <Panel
+              label={t(locale, 'chat.request')}
+              body={editDiff}
+              language="diff"
+            />
+          )}
+          {argsBody && !editDiff && (
             <Panel
               label={t(locale, 'chat.request')}
               body={argsBody}

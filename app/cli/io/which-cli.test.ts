@@ -10,7 +10,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { repairClaudeBunInstall } from './which-cli';
+import {
+  adapterBinary,
+  adapterProtocol,
+  repairClaudeBunInstall,
+  shouldPassModel,
+} from './which-cli';
 
 let dir: string;
 
@@ -20,6 +25,21 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe('grok adapter mapping', () => {
+  it('maps grok to the grok binary and protocol', () => {
+    expect(adapterBinary('grok')).toBe('grok');
+    expect(adapterProtocol('grok')).toBe('grok');
+  });
+
+  it('passes grok model ids but rejects Claude tiers/ids', () => {
+    expect(shouldPassModel('grok', 'grok-4.6')).toBe(true);
+    expect(shouldPassModel('grok', 'grok-4.5')).toBe(true);
+    expect(shouldPassModel('grok', 'opus')).toBe(false);
+    expect(shouldPassModel('grok', 'sonnet')).toBe(false);
+    expect(shouldPassModel('grok', 'claude-3-5-sonnet')).toBe(false);
+  });
 });
 
 describe('repairClaudeBunInstall', () => {

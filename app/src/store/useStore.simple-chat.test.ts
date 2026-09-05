@@ -120,6 +120,7 @@ function resetStore(workflow: IRGraph): void {
     chattingSessions: [],
     queuedChatMessageIds: [],
     steerableQueuedChatMessageIds: [],
+    editingQueuedChatMessageId: null,
     blockedSendTip: null,
     dirty: false,
     currentFilePath: null,
@@ -2279,11 +2280,11 @@ describe('simple-workflow chat mode', () => {
       adapter: 'claude-code',
       modelClass: 'sonnet',
       model: 'glm-5.2',
-      providerName: 'KuroGLM5.2',
+      providerName: 'ExampleGLM5.2',
       channelName: 'glm-5.2',
       transport: 'cli',
       mode: 'cli',
-      label: 'KuroGLM5.2',
+      label: 'ExampleGLM5.2',
       source: 'global',
       cliCommand: 'claude',
     });
@@ -4518,6 +4519,18 @@ describe('simple-workflow chat mode', () => {
       'steered Claude turn to finish',
     );
     expect(tauriMocks.aiEditViaCli).toHaveBeenCalledTimes(1);
+    // The interjection belongs to the turn it was steered into, so the stream
+    // shows it above that turn's reply instead of stranded at the tail.
+    const steeredMessages = useStore.getState().messages;
+    const interjectionIndex = steeredMessages.findIndex((message) =>
+      message.text.includes('补充：也分析测试'),
+    );
+    const replyIndex = steeredMessages.findIndex(
+      (message) => message.role === 'assistant',
+    );
+    expect(interjectionIndex).toBeGreaterThanOrEqual(0);
+    expect(steeredMessages[interjectionIndex]?.interjected).toBe(true);
+    expect(interjectionIndex).toBeLessThan(replyIndex);
   });
 
   it('keeps a Codex follow-up queued when its lightning steer is rejected', async () => {
@@ -4602,6 +4615,70 @@ describe('simple-workflow chat mode', () => {
     await waitFor(() => resolvers.length === 2, 'queued direct follow-up');
     resolvers[1]('第二答');
     await waitFor(() => !useStore.getState().aiStreaming, 'direct queue to finish');
+  });
+
+  it('confirms a queued follow-up on a non-native CLI adapter without a real steer call', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    tauriMocks.isTauri.mockReturnValue(true);
+    tauriMocks.tauriAvailable.mockReturnValue(true);
+    gatewayMocks.resolveDirectGatewayRoute.mockReturnValue(null);
+    // gemini has no in-turn steer channel: aiCliSteerSupported resolves false,
+    // so liveSteer.native is false and the lightning action takes the
+    // queue-steer path — confirm the message (drop the pending badge) but
+    // leave it in the FIFO to fire after the current turn drains.
+    gatewayMocks.resolveCliGatewayRoute.mockResolvedValue({
+      selection: { adapter: 'gemini', modelClass: 'gemini' },
+      adapter: 'gemini',
+      modelClass: 'gemini',
+      model: 'gemini-2.5-pro',
+      transport: 'cli',
+      mode: 'cli',
+      label: 'Gemini',
+      source: 'fallback',
+      cliCommand: 'gemini',
+    });
+    const resolvers: Array<(value: string) => void> = [];
+    tauriMocks.aiEditViaCli.mockImplementation(
+      async () =>
+        await new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    useStore.getState().sendPrompt('第一问');
+    await waitFor(
+      () => tauriMocks.aiEditViaCli.mock.calls.length === 1,
+      'gemini turn to start',
+    );
+
+    useStore.getState().sendPrompt('第二问');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'gemini follow-up to enter the queue',
+    );
+
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+    // The lightning action is available (queue-steer), not a native steer.
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([queuedId]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(true);
+
+    // Confirming drops the pending badge immediately and never calls the CLI
+    // steer channel. The entry stays queued internally, but is no longer
+    // surfaced as "排队中" — and it cannot be steered a second time.
+    expect(tauriMocks.steerAiCli).not.toHaveBeenCalled();
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 0,
+      'confirmed gemini follow-up to leave the pending badge',
+    );
+    expect(useStore.getState().queuedChatMessageIds).toEqual([]);
+    expect(useStore.getState().steerableQueuedChatMessageIds).toEqual([]);
+    expect(useStore.getState().steerQueuedChatMessage(queuedId)).toBe(false);
+
+    // The follow-up still fires after the current turn drains, via the FIFO.
+    resolvers[0]('第一答');
+    await waitFor(() => resolvers.length === 2, 'confirmed gemini follow-up runs');
+    resolvers[1]('第二答');
+    await waitFor(() => !useStore.getState().aiStreaming, 'gemini queue to finish');
   });
 
   it('queues an interjection behind the in-flight turn and merges it into the running chat', async () => {
@@ -4714,6 +4791,126 @@ describe('simple-workflow chat mode', () => {
       '问题一',
       '改后的问题二',
     ]);
+  });
+
+  it('pauses a queued turn while the user is editing it, then runs the edited text', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    const userContents: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async (request) =>
+        new Promise<string>((resolve) => {
+          userContents.push(String(request.userContent));
+          resolvers.push(resolve);
+        }),
+    );
+
+    useStore.getState().sendPrompt('问题一');
+    await waitFor(() => resolvers.length === 1, 'first chat call');
+    useStore.getState().sendPrompt('问题二');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'queued message id',
+    );
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+
+    useStore.getState().beginQueuedChatMessageEdit(queuedId);
+    expect(useStore.getState().editingQueuedChatMessageId).toBe(queuedId);
+
+    // Finish the first turn while the queued message is still being edited.
+    resolvers[0]('答一');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(resolvers).toHaveLength(1);
+    expect(useStore.getState().queuedChatMessageIds).toEqual([queuedId]);
+    expect(useStore.getState().editingQueuedChatMessageId).toBe(queuedId);
+
+    // Commit the edit; only then does the queued turn start with the new text.
+    expect(
+      useStore.getState().updateQueuedChatMessage(queuedId, '改后的问题二'),
+    ).toBe(true);
+    expect(useStore.getState().editingQueuedChatMessageId).toBeNull();
+    await waitFor(() => resolvers.length === 2, 'edited queued turn runs');
+    expect(userContents[1]).toContain('改后的问题二');
+    expect(userContents[1]).not.toContain('用户：问题二');
+
+    resolvers[1]('答二');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'edited queued chat to finish',
+    );
+    expect(useStore.getState().workflow.nodes[0].params.userInputs).toEqual([
+      '问题一',
+      '改后的问题二',
+    ]);
+  });
+
+  it('resumes a paused queued turn with the original text when the edit is cancelled', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    const userContents: string[] = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async (request) =>
+        new Promise<string>((resolve) => {
+          userContents.push(String(request.userContent));
+          resolvers.push(resolve);
+        }),
+    );
+
+    useStore.getState().sendPrompt('问题一');
+    await waitFor(() => resolvers.length === 1, 'first chat call');
+    useStore.getState().sendPrompt('问题二');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'queued message id',
+    );
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+
+    useStore.getState().beginQueuedChatMessageEdit(queuedId);
+    useStore.getState().cancelQueuedChatMessageEdit();
+    expect(useStore.getState().editingQueuedChatMessageId).toBeNull();
+
+    resolvers[0]('答一');
+    await waitFor(() => resolvers.length === 2, 'queued turn runs after cancel');
+    expect(userContents[1]).toContain('问题二');
+
+    resolvers[1]('答二');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'cancelled-edit queued chat to finish',
+    );
+  });
+
+  it('deleting a queued message while editing it does not hang the queue', async () => {
+    resetStore(simpleBlueprint('Simple chat'));
+    mockDirectRoute();
+    const resolvers: Array<(value: string) => void> = [];
+    gatewayMocks.completeGatewayText.mockImplementation(
+      async () => new Promise<string>((resolve) => resolvers.push(resolve)),
+    );
+
+    useStore.getState().sendPrompt('问题一');
+    await waitFor(() => resolvers.length === 1, 'first chat call');
+    useStore.getState().sendPrompt('问题二');
+    await waitFor(
+      () => useStore.getState().queuedChatMessageIds.length === 1,
+      'queued message id',
+    );
+    const queuedId = useStore.getState().queuedChatMessageIds[0];
+
+    useStore.getState().beginQueuedChatMessageEdit(queuedId);
+    expect(useStore.getState().deleteQueuedChatMessage(queuedId)).toBe(true);
+    expect(useStore.getState().editingQueuedChatMessageId).toBeNull();
+    expect(useStore.getState().queuedChatMessageIds).toEqual([]);
+
+    resolvers[0]('答一');
+    await waitFor(
+      () => !useStore.getState().aiStreaming,
+      'remaining chat turn to finish',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gatewayMocks.completeGatewayText).toHaveBeenCalledTimes(1);
   });
 
   it('deletes a queued interjection before it starts', async () => {
@@ -5157,13 +5354,13 @@ describe('simple-workflow chat mode', () => {
       adapter: 'claude-code' as const,
       modelClass: 'opus' as const,
       model: 'claude-opus-4.8',
-      providerName: 'Kuro',
+      providerName: 'Acme',
       channelName: 'claude-sonnet-5',
-      label: 'Claude Code · Kuro · claude-sonnet-5 · opus',
+      label: 'Claude Code · Acme · claude-sonnet-5 · opus',
     };
 
-    expect(gatewayRouteHeader(route)).toBe('Kuro · claude-opus-4.8');
-    expect(gatewayRouteLine(route)).toBe('⚙ 路由：Kuro · 模型：claude-opus-4.8');
+    expect(gatewayRouteHeader(route)).toBe('Acme · claude-opus-4.8');
+    expect(gatewayRouteLine(route)).toBe('⚙ 路由：Acme · 模型：claude-opus-4.8');
   });
 
   it('surfaces free proxy startup failures before invoking the CLI', async () => {

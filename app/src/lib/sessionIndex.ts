@@ -28,6 +28,7 @@
 import {
   queryTerms,
   rankSessions,
+  sessionMatchesQuery,
   type SearchableSession,
   type SessionReader,
   type SessionSearchHit,
@@ -200,6 +201,35 @@ export async function searchSessionsIndexed(
       (s) => !options.excludeSessionId || s.sessionId !== options.excludeSessionId,
     );
   return rankSessions(candidates, query, options);
+}
+
+/**
+ * Return every session id in a workspace whose full text (title or any message)
+ * matches `query`, reusing the same cached inverted index as
+ * `searchSessionsIndexed`. Unlike ranked search there is no `limit` — the
+ * sidebar needs the complete match set to filter its list, not a top-N.
+ */
+export async function searchSessionIdsIndexed(
+  reader: SessionReader,
+  workspaceId: string,
+  query: string,
+): Promise<Set<string>> {
+  if (queryTerms(query).length === 0) return new Set();
+  const summaries = await reader.listSessions(workspaceId);
+  const signature = buildSignature(summaries);
+  let entry = cache.get(workspaceId);
+  if (!entry || entry.signature !== signature) {
+    entry = await rebuild(reader, workspaceId, summaries, signature, entry);
+    cache.set(workspaceId, entry);
+    trimCache();
+  }
+  const indices = candidateIndices(entry, queryTerms(query));
+  const matched = new Set<string>();
+  for (const idx of indices) {
+    const session = entry.sessions[idx];
+    if (sessionMatchesQuery(session, query)) matched.add(session.sessionId);
+  }
+  return matched;
 }
 
 /** Drop the cached index for a workspace (or all workspaces). */

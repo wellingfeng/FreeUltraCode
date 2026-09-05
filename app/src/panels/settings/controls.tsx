@@ -311,8 +311,22 @@ export function StepperControl({
   onChange: (value: number) => void;
 }) {
   const set = (v: number) => onChange(Math.min(max, Math.max(min, v)));
+  const [text, setText] = useState(String(value));
+  // 外部 value 变化时同步，但不要打断用户正在输入的焦点
+  useEffect(() => {
+    const el = document.activeElement;
+    if (el && el.tagName === 'INPUT') return;
+    setText(String(value));
+  }, [value]);
+  const commit = () => {
+    const n = parseInt(text, 10);
+    if (Number.isFinite(n)) set(n);
+    else setText(String(value));
+  };
   const btn =
     'flex h-8 w-8 items-center justify-center rounded-md border border-border bg-panel text-fg-dim transition-colors hover:border-accent hover:text-fg disabled:cursor-not-allowed disabled:opacity-40';
+  const inputCls =
+    'w-12 rounded-md border border-border bg-panel-2 px-1 py-0.5 text-center font-mono text-sm text-fg outline-none focus:border-accent [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
   return (
     <div
       className={cn(
@@ -329,7 +343,19 @@ export function StepperControl({
       >
         −
       </button>
-      <span className="w-10 text-center font-mono text-sm text-fg">{value}</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        aria-label="value"
+        value={text}
+        disabled={disabled}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+        }}
+        className={inputCls}
+      />
       <button
         type="button"
         aria-label="+"

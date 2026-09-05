@@ -172,6 +172,20 @@ html.ugs-style-pencil {
   --ugs-status-error-contrast: #2a0a1a;
   --ugs-status-interrupted: #d995a6;
   --ugs-status-interrupted-contrast: #2a0a1a;
+  /* Terminal-style syntax: GitHub-dark softened. */
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-number: #79c0ff;
+  --hl-func: #d2a8ff;
+  --hl-type: #ffa657;
+  --hl-attr: #7ee787;
+  --hl-deletion: #ffa198;
+  --hl-addition: #7ee787;
+  --code-bg: #0a0d12;
+  --code-border: #262c34;
+  --diff-add-bg: color-mix(in oklab, #37c2a8 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #f778ba 14%, transparent);
 }
 
 html[data-ugs-style='cherry-dark'],
@@ -230,6 +244,20 @@ html.ugs-style-cherry-dark {
     var(--border) 72%,
     var(--fg-faint)
   );
+  /* Terminal-style syntax: cherry dark. */
+  --hl-comment: #737373;
+  --hl-keyword: #f05265;
+  --hl-string: #18c782;
+  --hl-number: #6aa7ff;
+  --hl-func: #b98cff;
+  --hl-type: #d7a84f;
+  --hl-attr: #18c782;
+  --hl-deletion: #f05265;
+  --hl-addition: #18c782;
+  --code-bg: #121212;
+  --code-border: #2a2a2a;
+  --diff-add-bg: color-mix(in oklab, #18c782 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #f05265 14%, transparent);
 }
 
 html[data-ugs-style='cherry-light'],
@@ -288,6 +316,20 @@ html.ugs-style-cherry-light {
     var(--border) 78%,
     var(--panel)
   );
+  /* Terminal-style syntax: GitHub-light-inspired, readable on white. */
+  --hl-comment: #6e7781;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-number: #0550ae;
+  --hl-func: #8250df;
+  --hl-type: #953800;
+  --hl-attr: #116329;
+  --hl-deletion: #cf222e;
+  --hl-addition: #116329;
+  --code-bg: #f6f8fa;
+  --code-border: #d0d7de;
+  --diff-add-bg: color-mix(in oklab, #1a7f37 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #cf222e 12%, transparent);
 }
 
 html[data-ugs-style='midnight'],
@@ -344,6 +386,20 @@ html.ugs-style-midnight {
     var(--border) 72%,
     var(--fg-faint)
   );
+  /* Terminal-style syntax: midnight indigo. */
+  --hl-comment: #6e7699;
+  --hl-keyword: #f062c8;
+  --hl-string: #2dd4d4;
+  --hl-number: #4d8dff;
+  --hl-func: #b1a1ff;
+  --hl-type: #f5b73c;
+  --hl-attr: #23c08a;
+  --hl-deletion: #ff5c7a;
+  --hl-addition: #23c08a;
+  --code-bg: #0a0c14;
+  --code-border: #1f2540;
+  --diff-add-bg: color-mix(in oklab, #23c08a 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #ff5c7a 14%, transparent);
 }
 
 html[data-ugs-style='aurora'],
@@ -400,6 +456,20 @@ html.ugs-style-aurora {
     var(--border) 72%,
     var(--fg-faint)
   );
+  /* Terminal-style syntax: Nord aurora. */
+  --hl-comment: #6f7b8d;
+  --hl-keyword: #81a1c1;
+  --hl-string: #a3be8c;
+  --hl-number: #b48ead;
+  --hl-func: #88c0d0;
+  --hl-type: #ebcb8b;
+  --hl-attr: #8fbcbb;
+  --hl-deletion: #bf616a;
+  --hl-addition: #a3be8c;
+  --code-bg: #1e242c;
+  --code-border: #343c48;
+  --diff-add-bg: color-mix(in oklab, #a3be8c 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #bf616a 14%, transparent);
 }
 
 html[data-ugs-style='daylight'],
@@ -459,6 +529,20 @@ html.ugs-style-daylight {
     var(--border) 76%,
     var(--panel)
   );
+  /* Terminal-style syntax: GitHub-light tuned for daylight. */
+  --hl-comment: #6a737d;
+  --hl-keyword: #d73a49;
+  --hl-string: #032f62;
+  --hl-number: #005cc5;
+  --hl-func: #6f42c1;
+  --hl-type: #e36209;
+  --hl-attr: #22863a;
+  --hl-deletion: #d73a49;
+  --hl-addition: #22863a;
+  --code-bg: #f6f8fa;
+  --code-border: #d1d5da;
+  --diff-add-bg: color-mix(in oklab, #22863a 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #d73a49 12%, transparent);
 }
 
 html[data-ugs-style='ember'],
@@ -515,6 +599,20 @@ html.ugs-style-ember {
     var(--border) 72%,
     var(--fg-faint)
   );
+  /* Terminal-style syntax: ember warm. */
+  --hl-comment: #8c7461;
+  --hl-keyword: #f5843e;
+  --hl-string: #3fb8a8;
+  --hl-number: #f0b429;
+  --hl-func: #e06b8b;
+  --hl-type: #d97d3e;
+  --hl-attr: #3fb8a8;
+  --hl-deletion: #e0566b;
+  --hl-addition: #3fb8a8;
+  --code-bg: #140f0c;
+  --code-border: #38291d;
+  --diff-add-bg: color-mix(in oklab, #3fb8a8 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #e0566b 14%, transparent);
 }
 
 html[data-ugs-style='campbell'],
@@ -543,6 +641,20 @@ html.ugs-style-campbell {
   --ugs-status-error-contrast: #260407;
   --ugs-status-interrupted: #767676;
   --ugs-status-interrupted-contrast: #050505;
+  /* Terminal-style syntax: Windows Terminal Campbell. */
+  --hl-comment: #767676;
+  --hl-keyword: #e74856;
+  --hl-string: #16c60c;
+  --hl-number: #3b78ff;
+  --hl-func: #61d6d6;
+  --hl-type: #f9f1a5;
+  --hl-attr: #b4009e;
+  --hl-deletion: #e74856;
+  --hl-addition: #16c60c;
+  --code-bg: #0a0a0a;
+  --code-border: #2a2a2a;
+  --diff-add-bg: color-mix(in oklab, #16c60c 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #e74856 14%, transparent);
 }
 
 html[data-ugs-style='terminal'],
@@ -574,6 +686,20 @@ html.ugs-style-terminal {
   --ugs-status-draft-contrast: #160824;
   --ugs-status-interrupted: #8a8a8a;
   --ugs-status-interrupted-contrast: #0c0c0c;
+  /* Terminal-style syntax: neutral terminal (teal + blue accents). */
+  --hl-comment: #717171;
+  --hl-keyword: #f778ba;
+  --hl-string: #2fc8a8;
+  --hl-number: #4da3ff;
+  --hl-func: #b98cff;
+  --hl-type: #e3c25a;
+  --hl-attr: #2fc8a8;
+  --hl-deletion: #f05265;
+  --hl-addition: #2fc8a8;
+  --code-bg: #1a1a1a;
+  --code-border: #2c2c2c;
+  --diff-add-bg: color-mix(in oklab, #2fc8a8 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #f05265 14%, transparent);
 }
 
 html[data-ugs-style='campbell-powershell'],
@@ -602,6 +728,20 @@ html.ugs-style-campbell-powershell {
   --ugs-status-error-contrast: #2a0509;
   --ugs-status-interrupted: #84a8d6;
   --ugs-status-interrupted-contrast: #061529;
+  /* Terminal-style syntax: PowerShell blue. */
+  --hl-comment: #84a8d6;
+  --hl-keyword: #ff9da4;
+  --hl-string: #6ee787;
+  --hl-number: #79c0ff;
+  --hl-func: #61d6d6;
+  --hl-type: #f9f1a5;
+  --hl-attr: #d2a8ff;
+  --hl-deletion: #ff9da4;
+  --hl-addition: #6ee787;
+  --code-bg: #011733;
+  --code-border: #1c4a86;
+  --diff-add-bg: color-mix(in oklab, #6ee787 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #ff9da4 14%, transparent);
 }
 
 html[data-ugs-style='one-half-dark'],
@@ -630,6 +770,20 @@ html.ugs-style-one-half-dark {
   --ugs-status-error-contrast: #2a090b;
   --ugs-status-interrupted: #8b94a7;
   --ugs-status-interrupted-contrast: #0b0e12;
+  /* Terminal-style syntax: Atom One Dark. */
+  --hl-comment: #5a6374;
+  --hl-keyword: #c678dd;
+  --hl-string: #98c379;
+  --hl-number: #d19a66;
+  --hl-func: #61afef;
+  --hl-type: #e5c07b;
+  --hl-attr: #56b6c2;
+  --hl-deletion: #e06c75;
+  --hl-addition: #98c379;
+  --code-bg: #21252b;
+  --code-border: #313744;
+  --diff-add-bg: color-mix(in oklab, #98c379 14%, transparent);
+  --diff-del-bg: color-mix(in oklab, #e06c75 14%, transparent);
 }
 
 html[data-ugs-style='solarized-dark'],
@@ -658,6 +812,20 @@ html.ugs-style-solarized-dark {
   --ugs-status-error-contrast: #260605;
   --ugs-status-interrupted: #657b83;
   --ugs-status-interrupted-contrast: #00131a;
+  /* Terminal-style syntax: Solarized dark canonical. */
+  --hl-comment: #586e75;
+  --hl-keyword: #859900;
+  --hl-string: #2aa198;
+  --hl-number: #d33682;
+  --hl-func: #268bd2;
+  --hl-type: #b58900;
+  --hl-attr: #6c71c4;
+  --hl-deletion: #dc322f;
+  --hl-addition: #859900;
+  --code-bg: #00232c;
+  --code-border: #144b57;
+  --diff-add-bg: color-mix(in oklab, #859900 16%, transparent);
+  --diff-del-bg: color-mix(in oklab, #dc322f 16%, transparent);
 }
 
 * {
@@ -1535,22 +1703,30 @@ html.ugs-stream-scheme-solarized-dark {
   min-width: 0;
   max-width: 100%;
   color: var(--stream-fg);
-  line-height: 1.75;
+  line-height: 1.55;
 }
 .ai-message,
 .ai-markdown {
   min-width: 0;
   max-width: 100%;
 }
-/* 连续 answer 段之间的自动分割线（被 tool/reasoning 隔开的） */
+/* 连续 answer 段之间的自动分割线（被 tool/reasoning 隔开的）。
+   Dashed hairline reads like a CLI separator (`---`) rather than a UI card
+   edge. */
 .ai-message > .ai-answer-sep + .ai-answer-sep {
-  margin-top: 0.6em;
-  padding-top: 0.6em;
-  border-top: 1px solid var(--stream-surface-border);
+  margin-top: 0.7em;
+  padding-top: 0.7em;
+  border-top: 1px dashed color-mix(in oklab, var(--stream-surface-border) 55%, transparent);
 }
 .ai-markdown {
   overflow-wrap: anywhere;
   isolation: isolate;
+  font-family: var(--ugs-mono-font-family);
+  font-size: 13px;
+  line-height: 1.6;
+  font-feature-settings: 'liga' 0, 'calt' 0;
+  /* 让 CJK + 等宽字体稍微松一点；太小会让汉字挤成一片 */
+  letter-spacing: 0.012em;
 }
 .ai-stream-user-bubble {
   border: 1px solid var(--stream-user-bubble-border);
@@ -1559,59 +1735,64 @@ html.ugs-stream-scheme-solarized-dark {
 }
 .ai-markdown > :first-child { margin-top: 0; }
 .ai-markdown > :last-child { margin-bottom: 0; }
-/* 按 --- 分段的段落组：用 1px 细线代替整段底色块，回到"一整页画布"的视觉 */
+/* 按 --- 分段的段落组：dashed hairline，像 `---` 或 `less` 的分段 */
 .ai-markdown .ai-para-group {
-  border-top: 1px solid var(--stream-surface-border);
-  padding-top: 0.85em;
+  border-top: 1px dashed color-mix(in oklab, var(--stream-surface-border) 55%, transparent);
+  padding-top: 0.8em;
 }
 .ai-markdown .ai-para-group:first-child {
   border-top: none;
   padding-top: 0;
 }
 .ai-markdown .ai-para-group + .ai-para-group {
-  margin-top: 0.85em;
+  margin-top: 0.8em;
 }
 .ai-markdown .ai-para-group > :first-child { margin-top: 0; }
 .ai-markdown .ai-para-group > :last-child { margin-bottom: 0; }
-.ai-markdown p { margin: 0.75em 0; line-height: 1.75; }
+.ai-markdown p { margin: 0.55em 0; line-height: 1.6; }
 .ai-markdown h1,
 .ai-markdown h2,
 .ai-markdown h3,
 .ai-markdown h4 {
-  margin: 1em 0 0.4em;
+  margin: 1.05em 0 0.45em;
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.4;
   color: var(--stream-fg-strong);
 }
-.ai-markdown h1 { font-size: 1.3em; }
-.ai-markdown h2 { font-size: 1.18em; }
-.ai-markdown h3 { font-size: 1.06em; }
+.ai-markdown h1 { font-size: 1.42em; }
+.ai-markdown h2 { font-size: 1.26em; }
+.ai-markdown h3 { font-size: 1.12em; }
 .ai-markdown h4 { font-size: 1em; }
-/* 小节标题改深色带：h1/h2/h3 用浅色背景+圆角代替"上方细横线"，视觉锚点更强 */
+/* 小节标题改终端式：左边竖线代替色带 pill，等宽下更像 `##` 标题 */
 .ai-markdown h1:not(:first-child),
 .ai-markdown h2:not(:first-child),
 .ai-markdown h3:not(:first-child) {
-  margin-top: 1.1em;
+  margin-top: 1.15em;
 }
 .ai-markdown h2,
 .ai-markdown h3 {
-  padding: 0.42em 0.7em;
-  background: color-mix(in oklab, var(--stream-surface-control-bg) 78%, transparent);
-  border-radius: 6px;
+  padding: 0 0 0 0.65em;
+  background: transparent;
+  border-left: 3px solid color-mix(in oklab, var(--accent) 75%, transparent);
+  border-radius: 0;
+}
+.ai-markdown h1 {
+  padding-bottom: 0.18em;
+  border-bottom: 1px dashed color-mix(in oklab, var(--stream-surface-border) 55%, transparent);
 }
 /* 自动分割：代码块/命令面板用浅背景色区分，仅留上间距（不再画顶部横线） */
 .ai-markdown .ai-code:not(:first-child),
 .ai-markdown .ai-plain-block:not(:first-child) {
-  margin-top: 1.1em;
+  margin-top: 1em;
 }
-/* 自动分割：表格、引用块、图表之前仍画淡横线，首个元素不加 */
+/* 自动分割：表格、引用块、图表之前 dashed hairline */
 .ai-markdown .ai-mermaid:not(:first-child),
 .ai-markdown .ai-table-wrap:not(:first-child),
 .ai-markdown .ai-model-viewer:not(:first-child),
 .ai-markdown blockquote:not(:first-child) {
-  margin-top: 1.1em;
-  padding-top: 0.9em;
-  border-top: 1px solid var(--stream-surface-border);
+  margin-top: 1em;
+  padding-top: 0.75em;
+  border-top: 1px dashed color-mix(in oklab, var(--stream-surface-border) 45%, transparent);
 }
 /* ── 去重：模型输出的 hr 与 CSS 自动分割线不重复 ── */
 /* hr 紧邻块元素之前 → hr 已充当分割线，去掉后者的 border-top */
@@ -1621,15 +1802,15 @@ html.ugs-stream-scheme-solarized-dark {
 .ai-markdown hr + .ai-model-viewer,
 .ai-markdown hr + .ai-plain-block,
 .ai-markdown hr + blockquote {
-  margin-top: 0.6em;
+  margin-top: 0.45em;
   padding-top: 0;
   border-top: none;
 }
-/* hr 紧邻 h1/h2/h3 之前：标题现在是深色带，不再依赖 border-top 分隔，只需收紧 margin */
+/* hr 紧邻 h1/h2/h3 之前：标题现在是左边竖线，不再依赖 border-top 分隔，只需收紧 margin */
 .ai-markdown hr + h1,
 .ai-markdown hr + h2,
 .ai-markdown hr + h3 {
-  margin-top: 0.6em;
+  margin-top: 0.5em;
 }
 /* 块元素紧跟 hr 之后 → 块元素的自动分割线已画，去掉 hr 的 border */
 .ai-markdown h1 + hr,
@@ -1653,12 +1834,12 @@ html.ugs-stream-scheme-solarized-dark {
   margin-top: 0;
 }
 .ai-markdown ul,
-.ai-markdown ol { margin: 0.6em 0; padding-left: 1.4em; }
+.ai-markdown ol { margin: 0.5em 0; padding-left: 1.4em; }
 .ai-markdown ul { list-style: disc; }
 .ai-markdown ol { list-style: decimal; }
-.ai-markdown li { margin: 0.3em 0; }
+.ai-markdown li { margin: 0.22em 0; line-height: 1.6; }
 .ai-markdown li::marker { color: var(--fg-faint); }
-.ai-markdown li > input[type='checkbox'] { margin-right: 0.4em; }
+.ai-markdown li > input[type='checkbox'] { margin-right: 0.5em; }
 .ai-markdown a { color: var(--stream-link); }
 .ai-markdown :where(.ai-code, .ai-mermaid, .ai-comfy, .ai-world, .ai-table-wrap, .ai-model-viewer, .ai-plain-block) {
   min-width: 0;
@@ -1796,52 +1977,88 @@ html.ugs-stream-scheme-solarized-dark {
   outline: 2px solid var(--file-preview-link);
   outline-offset: 2px;
 }
-.ai-markdown strong { color: var(--stream-fg-strong); font-weight: 600; }
-.ai-markdown em { font-style: italic; }
+.ai-markdown strong { color: var(--stream-fg-strong); font-weight: 700; }
+.ai-markdown em { font-style: italic; color: var(--stream-fg-strong); }
 .ai-markdown hr {
   margin: 1em 0;
   border: 0;
-  border-top: 1px solid var(--stream-surface-border);
+  border-top: 1px dashed color-mix(in oklab, var(--stream-surface-border) 55%, transparent);
 }
 .ai-markdown blockquote {
-  margin: 0.6em 0;
-  padding: 0.1em 0.9em;
-  border-left: 3px solid var(--stream-blockquote-border);
-  background: var(--stream-blockquote-bg);
+  margin: 0.7em 0;
+  padding: 0.15em 1em;
+  border-left: 2px solid var(--stream-blockquote-border);
+  background: transparent;
   color: var(--stream-blockquote-text);
-  border-radius: 0 6px 6px 0;
+  border-radius: 0;
+  line-height: 1.7;
 }
 
-/* Tables (remark-gfm). */
-.ai-table { border-collapse: collapse; }
+/* <details> collapsible panel (DetailsBlock), produced from [!details] marker. */
+.ai-markdown .ai-details {
+  margin: 0.6em 0;
+  border-color: var(--stream-surface-border);
+  background: var(--stream-blockquote-bg);
+}
+.ai-details__summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  color: var(--stream-fg-strong);
+  font-weight: 600;
+}
+.ai-details__summary:hover {
+  background: color-mix(in oklab, var(--stream-blockquote-bg) 60%, transparent);
+}
+.ai-details__summary::marker {
+  color: var(--stream-blockquote-border);
+}
+.ai-details__body {
+  color: var(--stream-blockquote-text);
+}
+.ai-details__body > :first-child { margin-top: 0; }
+.ai-details__body > :last-child { margin-bottom: 0; }
+
+
+/* Tables (remark-gfm). Full grid: every cell bordered on all four sides,
+   thin hairlines, no outer thick frame, no row striping. Reads like `tput`
+   boxed output — structured but still lightweight. */
+.ai-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  /* 按内容收缩，超出才横向滚动 */
+  width: auto;
+  max-width: 100%;
+  line-height: 1.5;
+}
 .ai-table th,
 .ai-table td {
-  border: 1px solid var(--stream-surface-border);
-  padding: 0.4em 0.7em;
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  padding: 0.3em 0.9em;
   text-align: left;
   vertical-align: top;
+  line-height: 1.5;
 }
 .ai-table th {
-  background: var(--stream-table-header-bg);
+  background: transparent;
   font-weight: 600;
   color: var(--stream-fg-strong);
+  border-bottom-color: var(--border); /* 表头底线实一点，强调分区 */
 }
-.ai-table tr:nth-child(even) td {
-  background: var(--stream-table-row-alt-bg);
-}
+.ai-table tr:nth-child(even) td { background: transparent; }
 
 /* Fenced code block body. */
 .ai-code__scroll pre { margin: 0; }
 .ai-code__scroll code {
   display: block;
-  padding: 0.75rem 0.9rem;
+  padding: 0.55rem 0.75rem;
   font-family: var(--ugs-mono-font-family);
   white-space: pre;
   tab-size: 2;
 }
 .ai-code--wrap code { white-space: pre-wrap; word-break: break-word; }
 .ai-code--compact .ai-code__scroll code {
-  padding: 0.45rem 0.6rem;
+  padding: 0.4rem 0.55rem;
 }
 .ai-code--compact .ai-code__scroll {
   background: var(--stream-tool-panel-bg);
@@ -2013,6 +2230,19 @@ html.ugs-stream-scheme-solarized-dark {
 .hljs-addition { color: var(--hl-addition); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
+
+/*
+ * Inline-code token categories (see lib/inlineCodeKind.ts). The message stream's
+ * `code` chips re-use the fenced-code palette vars so prose and code blocks share
+ * one theme — the base .ai-inline-code color (accent-2) still wins for the
+ * unclassified `code` kind. Slightly lightened variants keep small mono glyphs
+ * legible against the chip background.
+ */
+.ai-inline-code--path { color: var(--hl-string); }
+.ai-inline-code--cmd { color: var(--hl-number); font-weight: 600; }
+.ai-inline-code--flag { color: var(--hl-attr); }
+.ai-inline-code--func { color: var(--hl-func); }
+.ai-inline-code--ident { color: color-mix(in oklab, var(--hl-type) 82%, var(--fg)); }
 
 /* Streaming reasoning header shimmer. */
 .ai-reasoning__toggle {

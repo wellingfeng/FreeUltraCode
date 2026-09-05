@@ -163,6 +163,15 @@ export function resolveDirectGatewayRoute(
   return null;
 }
 
+/**
+ * Alias kept for readability at review call sites: resolves a route for an
+ * EXPLICIT selection (e.g. the memory-review model pin) rather than the
+ * current global active selection. Same direct/CLI split as the base
+ * function; `resolveCliGatewayRoute(selection)` already takes an explicit
+ * selection so only the direct variant is mirrored here.
+ */
+export const resolveDirectGatewayRouteForSelection = resolveDirectGatewayRoute;
+
 export async function resolveCliGatewayRoute(
   selection: GatewaySelection,
 ): Promise<ResolvedGatewayRoute & { cliCommand: string }> {

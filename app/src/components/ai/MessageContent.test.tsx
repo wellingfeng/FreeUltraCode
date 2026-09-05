@@ -254,6 +254,27 @@ describe('MessageContent integration', () => {
     expect(html).not.toMatch(/<img[^>]*onerror/);
   });
 
+  it('renders <details><summary> as a collapsible panel, not raw html', () => {
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text:
+          '<details><summary>已查到的线索（待 agent 汇总）</summary>\n' +
+          '- 第一行线索\n' +
+          '- 第二行线索\n' +
+          '</details>',
+        streaming: false,
+      }),
+    );
+    // 不再显示转义源码。
+    expect(html).not.toMatch(/&lt;details/);
+    // 折叠面板 + summary 标题 + body 列表都被正常渲染。
+    expect(html).toMatch(/<details/);
+    expect(html).toMatch(/<summary/);
+    expect(html).toMatch(/已查到的线索（待 agent 汇总）/);
+    expect(html).toMatch(/<li/);
+    expect(html).toMatch(/第一行线索/);
+  });
+
   it('renders generated image markdown with data URLs in the chat stream', () => {
     const html = renderToStaticMarkup(
       createElement(MessageContent, {
@@ -650,6 +671,97 @@ describe('MessageContent integration', () => {
       expect(container.textContent).toContain('json');
       expect(container.querySelector('.hljs-keyword')).not.toBeNull();
       expect(container.querySelector('.ai-tool-panel > pre')).toBeNull();
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('renders Edit tool args as a red/green unified diff', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const text =
+      'editing' +
+      encodeToolPatch({
+        id: 'tool-edit',
+        name: 'Edit',
+        subject: 'src/foo.ts',
+        args: {
+          file_path: 'src/foo.ts',
+          old_string: 'const a = 1;\nconst b = 2;',
+          new_string: 'const a = 10;\nconst c = 3;',
+        },
+        status: 'done',
+        result: 'ok',
+      });
+
+    try {
+      await act(async () => {
+        root.render(createElement(MessageContent, { text, streaming: false }));
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('.ai-tool-toggle')?.click();
+      });
+
+      // Diff body should be rendered with the diff language class so the
+      // red/green line backgrounds activate via .ai-code--diff.
+      const diffScroll = container.querySelector('.ai-code--diff');
+      expect(diffScroll).not.toBeNull();
+      const html = diffScroll!.innerHTML;
+      expect(html).toContain('--- a/src/foo.ts');
+      expect(html).toContain('+++ b/src/foo.ts');
+      expect(html).toContain('@@ -1,2 +1,2 @@');
+      expect(container.querySelectorAll('.hljs-deletion').length).toBeGreaterThanOrEqual(2);
+      expect(container.querySelectorAll('.hljs-addition').length).toBeGreaterThanOrEqual(2);
+      expect(container.textContent).toContain('const a = 1;');
+      expect(container.textContent).toContain('const a = 10;');
+      // The JSON args blob should NOT be rendered alongside the diff.
+      expect(container.textContent).not.toContain('"old_string"');
+    } finally {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    }
+  });
+
+  it('renders Write tool args as a pure-addition diff', async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    const text =
+      'writing' +
+      encodeToolPatch({
+        id: 'tool-write',
+        name: 'Write',
+        subject: 'src/new.ts',
+        args: {
+          file_path: 'src/new.ts',
+          content: 'export const x = 1;\nexport const y = 2;',
+        },
+        status: 'done',
+        result: 'ok',
+      });
+
+    try {
+      await act(async () => {
+        root.render(createElement(MessageContent, { text, streaming: false }));
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('.ai-tool-toggle')?.click();
+      });
+
+      const diffScroll = container.querySelector('.ai-code--diff');
+      expect(diffScroll).not.toBeNull();
+      const html = diffScroll!.innerHTML;
+      expect(html).toContain('--- a/src/new.ts');
+      expect(html).toContain('+++ b/src/new.ts');
+      expect(html).toContain('@@ -0,0 +1,2 @@');
+      expect(container.querySelectorAll('.hljs-addition').length).toBeGreaterThanOrEqual(2);
+      expect(container.querySelectorAll('.hljs-deletion').length).toBe(0);
     } finally {
       await act(async () => {
         root.unmount();

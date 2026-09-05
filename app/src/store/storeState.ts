@@ -171,6 +171,12 @@ export interface StoreState {
   /** Queued messages that can be steered into the active native CLI turn. */
   steerableQueuedChatMessageIds: string[];
   /**
+   * Queued simple-chat message currently open in the inline editor. While set,
+   * that message's FIFO slot is paused: the queue will not send it (with stale
+   * text) until the edit is committed, cancelled, or the message is removed.
+   */
+  editingQueuedChatMessageId: string | null;
+  /**
    * Sessions whose in-flight turn is parked on a user interaction (a UGS_ASK
    * select/input/confirm). The turn is still "live" (its channel stays open),
    * but it is *paused* waiting on the user rather than streaming — so the
@@ -491,6 +497,10 @@ export interface StoreState {
   updateQueuedChatMessage: (messageId: string, text: string) => boolean;
   /** Delete a simple-chat user message that is still waiting in the local queue. */
   deleteQueuedChatMessage: (messageId: string) => boolean;
+  /** Open the inline editor for a queued message and pause its queue slot. */
+  beginQueuedChatMessageEdit: (messageId: string) => void;
+  /** Close the inline editor without applying changes; the queue slot resumes. */
+  cancelQueuedChatMessageEdit: () => void;
   /** Steer a queued message into a compatible active native CLI turn. */
   steerQueuedChatMessage: (messageId: string) => boolean;
   /** Create a new chat session containing messages up to the chosen assistant reply. */

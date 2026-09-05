@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useStore } from '@/store/useStore';
 import AutoTextarea from '@/components/AutoTextarea';
+// [workflow 编排已废弃] 下方 JSX 仍引用这两个组件保持类型完整，但
+// selectedNodeId/taskLedger 已在组件内置空，分支永远不渲染。
 import NodeInspector from './NodeInspector';
 import TaskLedgerPanel from './TaskLedgerPanel';
 import { useResizableWidth } from '@/lib/useResizableWidth';
@@ -41,8 +43,10 @@ export default function PromptPanel() {
   const promptGroups = useStore((s) => s.promptGroups);
   const locale = useStore((s) => s.locale);
   const autoTranslate = useStore((s) => s.promptAutoTranslate);
-  const selectedNodeId = useStore((s) => s.selectedNodeId);
-  const taskLedger = useStore((s) => s.workflow.meta.run?.taskLedger);
+  // [workflow 编排已废弃] 蓝图节点检查器/任务台账只由编排画布与编排运行触发，
+  // 现统一置空：下方分支不再渲染 NodeInspector / TaskLedgerPanel。
+  const selectedNodeId = null;
+  const taskLedger = null;
   const mode = useStore((s) => s.mode);
   const appendComposerDraft = useStore((s) => s.appendComposerDraft);
   const addPromptItem = useStore((s) => s.addPromptItem);

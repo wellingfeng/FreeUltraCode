@@ -14,9 +14,16 @@
  * argv (codex):   [-a never|on-request] exec [-c project MCP overrides...] --json --skip-git-repo-check
  *                 [--sandbox read-only|workspace-write | --dangerously-bypass-...]
  *                 [--model <m>] [-C <cwd>] [-o <outfile>] -
+ * argv (grok):    -p --output-format streaming-messages-json
+ *                 [--resume <sid> | --session-id <sid>]
+ *                 [--model <m>            (filtered by shouldPassModel)]
+ *                 [--permission-mode plan | --permission-mode bypassPermissions]
+ *                 [--cwd <cwd>] --prompt-file <tmp/prompt.txt>
  *
  * The prompt is fed via stdin (then closed) so large prompts can't hit the OS
- * command-line length limit. `DISABLE_AUTOUPDATER=1` is layered onto the claude
+ * command-line length limit; grok instead receives it via `--prompt-file` (its
+ * npm shim routes through cmd.exe on Windows, so argv is capped at ~8 KB).
+ * `DISABLE_AUTOUPDATER=1` is layered onto the claude
  * env. On Windows the child is launched with `windowsHide: true` and killed via
  * `taskkill /PID <pid> /T /F`; elsewhere via `kill -TERM`.
  *
@@ -429,6 +436,7 @@ function buildArgs(
   protocol: string,
   codexOutPath: string | undefined,
   binary: string,
+  prompt: string,
 ): { args: string[]; workdir?: string; disableAutoupdater: boolean; tempDirs: string[] } {
   const args: string[] = [];
   let workdir: string | undefined;
@@ -463,6 +471,45 @@ function buildArgs(
       args.push('-o', codexOutPath);
     }
     args.push('-');
+  } else if (protocol === 'grok') {
+    // grok (`@xai-official/grok`): claude-family headless single-turn, but with
+    // grok's own flag names. `streaming-messages-json` emits NDJSON in the
+    // Anthropic Messages wire format, so the claude parser below reads it as-is.
+    // NOTE: grok ≥ v1.0.13 made `-p`/`--single` REQUIRE an inline <PROMPT> value.
+    // We pass the prompt via `--prompt-file` (Windows .cmd shim has ~8 KB argv cap),
+    // so `-p` must NOT be present — otherwise grok swallows the next flag as its
+    // value and dies with "a value is required for '--single <PROMPT>'".
+    args.push('--output-format', 'streaming-messages-json');
+    const sid = opts.sessionId?.trim();
+    if (sid) {
+      if (opts.resume) {
+        args.push('--resume', sid);
+      } else {
+        args.push('--session-id', sid);
+      }
+    }
+    if (opts.model && shouldPassModel(opts.adapter, opts.model)) {
+      args.push('--model', opts.model);
+    }
+    if (permission === 'readonly') {
+      args.push('--permission-mode', 'plan');
+    } else if (permission === 'ask') {
+      /* default: may print a permission question */
+    } else {
+      args.push('--permission-mode', 'bypassPermissions');
+    }
+    if (cwd) {
+      workdir = cwd;
+      args.push('--cwd', cwd);
+    }
+    // grok's npm bin is a `.cmd` shim (cmd.exe ~8 KB arg cap on Windows), so the
+    // prompt is handed over via `--prompt-file` instead of an argv value. The
+    // same temp dir is cleaned up with the other adapters' scratch dirs.
+    const dir = mkdtempSync(join(tmpdir(), 'ultragamestudio-grok-'));
+    const promptPath = join(dir, 'prompt.txt');
+    writeFileSync(promptPath, prompt, 'utf8');
+    tempDirs.push(dir);
+    args.push('--prompt-file', promptPath);
   } else {
     // claude (and any non-codex protocol falls through to the claude shape).
     args.push('-p', '--output-format', 'stream-json', '--verbose');
@@ -548,6 +595,7 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     protocol,
     codexOutPath,
     binary,
+    prompt,
   );
   const { args, workdir, disableAutoupdater } = built;
   tempDirs = built.tempDirs;
@@ -635,12 +683,18 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
     });
 
     // --- stdin: write prompt then close (EOF) ---
+    // grok takes its prompt via `--prompt-file` (built into argv), never stdin,
+    // so just close the pipe to signal EOF and avoid a half-open handle.
     if (child.stdin) {
       child.stdin.on('error', () => {
         /* ignore EPIPE if the child exits before reading the full prompt */
       });
-      child.stdin.write(prompt);
-      child.stdin.end();
+      if (protocol === 'grok') {
+        child.stdin.end();
+      } else {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      }
     }
 
     // --- stdout: line-buffered JSONL parse ---

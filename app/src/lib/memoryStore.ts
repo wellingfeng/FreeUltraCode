@@ -37,6 +37,7 @@
  */
 
 import { tauriAvailable } from './tauri';
+import { scanMemoryContent, type MemorySafetyFinding } from './memorySafety';
 
 export type MemoryTarget = 'memory' | 'user';
 
@@ -80,12 +81,40 @@ export function getMemoryNudgeThresholdPct(): number {
 }
 
 /**
- * One stored entry. `updatedAt` is epoch-ms of the last add/replace; `undefined`
- * for entries migrated from the legacy string[] shape (timestamp unknown).
+ * AI-suggested importance tier for one entry, set by the model when it writes
+ * (memoryProtocol `importance`) or by the user in the Memory settings panel.
+ * Drives the colored badge in the UI and the eviction order (minor entries are
+ * evicted before must-keep ones). `undefined` = untagged (legacy entries).
  */
+export type MemoryImportance = 'must' | 'important' | 'minor';
+
+/** Map tolerant model output (English or Chinese) onto the canonical tiers. */
+export function normalizeImportance(value: unknown): MemoryImportance | undefined {
+  if (typeof value !== 'string') return undefined;
+  switch (value.trim().toLowerCase()) {
+    case 'must':
+    case 'critical':
+    case '必须':
+      return 'must';
+    case 'important':
+    case '重要':
+      return 'important';
+    case 'minor':
+    case 'low':
+    case 'trivial':
+    case '不重要':
+      return 'minor';
+    default:
+      return undefined;
+  }
+}
+
+/** One stored entry. `updatedAt` is epoch-ms of the last add/replace; `undefined`
+ * for entries migrated from the legacy string[] shape (timestamp unknown). */
 export interface MemoryEntry {
   text: string;
   updatedAt?: number;
+  importance?: MemoryImportance;
 }
 
 /**
@@ -135,6 +164,13 @@ export interface MemoryOp {
   content?: string;
   /** A short unique substring identifying the entry for replace/remove. */
   oldText?: string;
+  /**
+   * AI-suggested importance for add; on replace it overrides the existing
+   * tier (omit to keep the entry's current one). Ignored for remove. Free-form
+   * string from the model — normalized via normalizeImportance() on write,
+   * falling back to 'important'.
+   */
+  importance?: string;
 }
 
 export interface MemoryResult {
@@ -147,6 +183,15 @@ export interface MemoryResult {
   error?: string;
   /** Entry texts evicted to make room, only when `evictOnOverflow` ran. */
   evicted?: string[];
+  /**
+   * Ops skipped WITHOUT failing the batch. Two causes, both mirroring Hermes:
+   * an `add` whose normalized text already exists verbatim ("no duplicate
+   * added") and an add/replace rejected by the safety scan when
+   * `safetyScan` mode is 'skip'. Callers surface these to the model/user.
+   */
+  skipped?: { reason: string }[];
+  /** Safety-scan findings that rejected this batch (only on failure). */
+  safetyFindings?: MemorySafetyFinding[];
 }
 
 /** Optional policy knobs for a batch (see `applyMemoryBatch`). */
@@ -157,6 +202,13 @@ export interface MemoryBatchOptions {
    * rejecting. Off by default so no data is lost without an explicit opt-in.
    */
   evictOnOverflow?: boolean;
+  /**
+   * Safety-scan policy for add/replace content (see lib/memorySafety.ts).
+   * 'reject' (default) fails the whole batch atomically when a scan fires;
+   * 'off' disables the scan; 'skip' rejects only the offending op and carries
+   * on (the op lands in `result.skipped`). Never rewrites content.
+   */
+  safetyScan?: 'reject' | 'skip' | 'off';
 }
 
 // --- low-level IO (mirrors store/history/store.ts) ---------------------------
@@ -204,7 +256,12 @@ async function readFile(target: MemoryTarget, workspaceId?: string): Promise<Nor
                 typeof e.updatedAt === 'number' && Number.isFinite(e.updatedAt)
                   ? e.updatedAt
                   : undefined;
-              return updatedAt !== undefined ? { text, updatedAt } : { text };
+              const importance = normalizeImportance(e.importance);
+              return {
+                text,
+                ...(updatedAt !== undefined ? { updatedAt } : {}),
+                ...(importance ? { importance } : {}),
+              };
             }
             return null;
           })
@@ -265,12 +322,57 @@ function result(
   };
 }
 
-/** Apply one op to a working copy. Throws Error(message) on a bad targeted op. */
-function applyOp(entries: MemoryEntry[], op: MemoryOp, now: number): MemoryEntry[] {
+/**
+ * Normalized form for exact-duplicate detection (mirrors Hermes' "no duplicate
+ * added"). Trim + collapse ALL whitespace runs so an add that differs only in
+ * spacing/padding from an existing entry is still recognized as the same fact.
+ */
+function normalizeForDuplicate(text: string): string {
+  return text.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+interface OpOutcome {
+  entries: MemoryEntry[];
+  /** Non-fatal skip note (duplicate add / skipped-by-scan op). */
+  skippedReason?: string;
+}
+
+/**
+ * Apply one op to a working copy.
+ * - A verbatim-duplicate `add` is a no-op (skippedReason), NOT an error —
+ *   Hermes treats re-adding the same fact as success-without-effect.
+ * - Throws Error(message) on a bad targeted op or (mode 'reject') on a
+ *   safety-scan hit.
+ */
+function applyOp(
+  entries: MemoryEntry[],
+  op: MemoryOp,
+  now: number,
+  safetyMode: 'reject' | 'skip' | 'off',
+): OpOutcome {
+  const failSafety = (text: string): string | null => {
+    if (safetyMode === 'off') return null;
+    const findings = scanMemoryContent(text);
+    if (!findings.length) return null;
+    return `安全扫描拒绝写入：${findings.map((f) => f.reason).join('；')}`;
+  };
+
   if (op.action === 'add') {
     const text = (op.content ?? '').trim();
     if (!text) throw new Error("'add' needs non-empty content.");
-    return [...entries, { text, updatedAt: now }];
+    const dup = normalizeForDuplicate(text);
+    if (entries.some((e) => normalizeForDuplicate(e.text) === dup)) {
+      return { entries, skippedReason: 'no duplicate added — 已存在内容相同的条目' };
+    }
+    const safetyError = failSafety(text);
+    if (safetyError) {
+      if (safetyMode === 'skip') return { entries, skippedReason: safetyError };
+      throw new Error(safetyError);
+    }
+    // Entries default to 'important' when the writer doesn't judge a tier;
+    // tolerant model output (Chinese aliases) normalizes here, at the store.
+    const importance = normalizeImportance(op.importance) ?? 'important';
+    return { entries: [...entries, { text, updatedAt: now, importance }] };
   }
   const needle = (op.oldText ?? '').trim();
   if (!needle) {
@@ -286,29 +388,50 @@ function applyOp(entries: MemoryEntry[], op: MemoryOp, now: number): MemoryEntry
     throw new Error(`"${needle}" matches ${matches.length} entries — use a more specific substring.`);
   }
   if (op.action === 'remove') {
-    return entries.filter((e) => !e.text.includes(needle));
+    return { entries: entries.filter((e) => !e.text.includes(needle)) };
   }
-  // replace
+  // replace — keep the entry's existing importance unless the op supplies one.
   const text = (op.content ?? '').trim();
   if (!text) throw new Error("'replace' needs non-empty content.");
-  return entries.map((e) => (e.text.includes(needle) ? { text, updatedAt: now } : e));
+  const safetyError = failSafety(text);
+  if (safetyError) {
+    if (safetyMode === 'skip') return { entries, skippedReason: safetyError };
+    throw new Error(safetyError);
+  }
+  return {
+    entries: entries.map((e) =>
+      e.text.includes(needle)
+        ? {
+            ...e,
+            text,
+            updatedAt: now,
+            ...(normalizeImportance(op.importance)
+              ? { importance: normalizeImportance(op.importance) }
+              : {}),
+          }
+        : e,
+    ),
+  };
 }
 
 /**
- * Drop the OLDEST entries until the store fits `limit`. Entries whose
- * `updatedAt === now` were touched by the current batch and are pinned — they
- * are never evicted (we never silently discard what the caller just wrote).
- * Returns the kept list plus the evicted entries in eviction order.
+ * Drop entries until the store fits `limit`. Entries whose `updatedAt === now`
+ * were touched by the current batch and are pinned — they are never evicted
+ * (we never silently discard what the caller just wrote). Eviction order:
+ * least-important first (minor → untagged → important → must), oldest first
+ * within a tier. Returns the kept list plus the evicted entries in order.
  */
 function evictOldest(
   entries: MemoryEntry[],
   limit: number,
   now: number,
 ): { kept: MemoryEntry[]; evicted: MemoryEntry[] } {
-  // Legacy entries have `updatedAt === undefined` and count as the oldest.
+  // Higher rank = keep longer. Untagged (legacy) entries sit between the tiers.
+  const rank = (e: MemoryEntry): number =>
+    e.importance === 'minor' ? 0 : e.importance === 'must' ? 3 : e.importance === 'important' ? 2 : 1;
   const evictable = entries
     .filter((e) => e.updatedAt !== now)
-    .sort((a, b) => (a.updatedAt ?? 0) - (b.updatedAt ?? 0));
+    .sort((a, b) => rank(a) - rank(b) || (a.updatedAt ?? 0) - (b.updatedAt ?? 0));
   const evicted: MemoryEntry[] = [];
   let kept = entries;
   for (const entry of evictable) {
@@ -389,9 +512,15 @@ export async function applyMemoryBatch(
   if (!ops.length) return result(target, file.entries, true);
 
   const now = Date.now();
+  const safetyMode = opts?.safetyScan ?? 'reject';
   let working = file.entries;
+  const skipped: { reason: string }[] = [];
   try {
-    for (const op of ops) working = applyOp(working, op, now);
+    for (const op of ops) {
+      const outcome = applyOp(working, op, now, safetyMode);
+      working = outcome.entries;
+      if (outcome.skippedReason) skipped.push({ reason: outcome.skippedReason });
+    }
   } catch (err) {
     return result(
       target,
@@ -426,12 +555,16 @@ export async function applyMemoryBatch(
     await writeFile(target, { version: 2, entries: kept }, workspaceId);
     return {
       ...result(target, kept, true),
+      ...(skipped.length ? { skipped } : {}),
       ...(evicted.length ? { evicted: evicted.map((e) => e.text) } : {}),
     };
   }
 
   await writeFile(target, { version: 2, entries: working }, workspaceId);
-  return result(target, working, true);
+  return {
+    ...result(target, working, true),
+    ...(skipped.length ? { skipped } : {}),
+  };
 }
 
 /** Convenience single-op wrapper. */
@@ -442,6 +575,33 @@ export function applyMemoryOp(
   opts?: MemoryBatchOptions,
 ): Promise<MemoryResult> {
   return applyMemoryBatch(target, [op], workspaceId, opts);
+}
+
+/**
+ * Set (or clear) the importance tier of ONE entry without touching its text or
+ * `updatedAt` — used by the Memory settings badge, which cycles the tier on
+ * click. Matches by unique substring like replace/remove. Returns false when
+ * the entry is missing or ambiguous.
+ */
+export async function setMemoryImportance(
+  target: MemoryTarget,
+  oldText: string,
+  importance: MemoryImportance | undefined,
+  workspaceId?: string,
+): Promise<boolean> {
+  const needle = oldText.trim();
+  if (!needle) return false;
+  const file = await readFile(target, workspaceId);
+  const matches = file.entries.filter((e) => e.text.includes(needle));
+  if (matches.length !== 1) return false;
+  const entries = file.entries.map((e) =>
+    e.text.includes(needle)
+      ? { ...e, ...(importance ? { importance } : { importance: undefined }) }
+      : e,
+  );
+  // JSON.stringify drops undefined fields, so the cleared tier simply vanishes.
+  await writeFile(target, { version: 2, entries }, workspaceId);
+  return true;
 }
 
 /**

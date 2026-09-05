@@ -23,6 +23,16 @@ export interface SelectProps {
   /** Accessible label for the trigger. */
   title?: string;
   className?: string;
+  /** 可折叠的分组头：点击组头切换展开/收起。折叠态按 collapsedGroupsKey 持久化。 */
+  collapsibleGroups?: boolean;
+  /** localStorage key，用于持久化已折叠的分组集合。 */
+  collapsedGroupsKey?: string;
+  /** 是否在每条选项右侧渲染置顶按钮（不关闭菜单、不切换选中）。 */
+  pinnable?: boolean;
+  /** 当前已置顶的 option id 列表，用于显示置顶图标状态。 */
+  pinnedIds?: string[];
+  /** 点击置顶按钮回调。 */
+  onTogglePin?: (id: string) => void;
 }
 
 const isZh = typeof navigator !== 'undefined' && navigator.language?.startsWith('zh');
@@ -37,11 +47,45 @@ export default function Select({
   icon,
   title,
   className,
+  collapsibleGroups = false,
+  collapsedGroupsKey,
+  pinnable = false,
+  pinnedIds,
+  onTogglePin,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // 折叠的分组集合（按 group 字符串）。传入 collapsedGroupsKey 时持久化到
+  // localStorage；切语言后 group 名会变，折叠态随之重置，属可接受行为。
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    if (!collapsibleGroups || !collapsedGroupsKey) return new Set();
+    try {
+      const raw = localStorage.getItem(collapsedGroupsKey);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch {
+      /* ignore */
+    }
+    return new Set();
+  });
+  useEffect(() => {
+    if (!collapsibleGroups || !collapsedGroupsKey) return;
+    try {
+      localStorage.setItem(
+        collapsedGroupsKey,
+        JSON.stringify([...collapsed]),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed, collapsibleGroups, collapsedGroupsKey]);
+
+  const pinnedSet = useMemo(
+    () => new Set(pinnedIds ?? []),
+    [pinnedIds],
+  );
 
   // If value doesn't match any option (e.g. model override persisted but
   // options list was rebuilt), show the value itself instead of falling back
@@ -167,55 +211,139 @@ export default function Select({
                   !opt.action &&
                   !!opt.group &&
                   opt.group !== filtered[index - 1]?.group;
+                const hasQuery = !!query.trim();
+                const groupCollapsed =
+                  collapsibleGroups &&
+                  !hasQuery &&
+                  !!opt.group &&
+                  collapsed.has(opt.group);
+                // 折叠组内非首项：不渲染（组头只渲染一次，点击组头展开）。
+                if (groupCollapsed && !showGroupHeader) return null;
+                const isPinned = pinnedSet.has(opt.id);
                 return (
                   <Fragment key={opt.id}>
-                    {showGroupHeader && (
-                      <li
-                        role="presentation"
-                        className={cn(
-                          'px-3 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-faint',
-                          index > 0 && 'mt-1 border-t border-border-soft',
-                        )}
-                      >
-                        {opt.group}
-                      </li>
-                    )}
-                    <li>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={active}
-                        onClick={() => {
-                          onChange(opt.id);
-                          setOpen(false);
-                        }}
-                        className={cn(
-                          'flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors',
-                          opt.action
-                            ? 'border-b border-border-soft text-accent hover:bg-accent/10 hover:text-accent'
-                            : active
-                              ? 'bg-border-soft text-fg'
-                              : 'text-fg-dim hover:bg-border-soft hover:text-fg',
-                        )}
-                      >
-                        <span
+                    {showGroupHeader &&
+                      (collapsibleGroups ? (
+                        <li role="presentation">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCollapsed((prev) => {
+                                const next = new Set(prev);
+                                if (opt.group && next.has(opt.group))
+                                  next.delete(opt.group);
+                                else if (opt.group) next.add(opt.group);
+                                return next;
+                              })
+                            }
+                            className={cn(
+                              'flex w-full items-center gap-1.5 px-3 pb-1 pt-1.5 text-left font-mono text-[9px] uppercase tracking-wider text-fg-faint hover:text-fg-dim',
+                              index > 0 && 'border-t border-border-soft',
+                            )}
+                          >
+                            <span className="shrink-0 text-[9px] leading-none">
+                              {groupCollapsed ? '▸' : '▾'}
+                            </span>
+                            <span className="flex-1 truncate">{opt.group}</span>
+                            {groupCollapsed && (
+                              <span className="shrink-0 text-[9px] text-fg-faint/70">
+                                {
+                                  filtered.filter(
+                                    (o) => o.group === opt.group && !o.action,
+                                  ).length
+                                }
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      ) : (
+                        <li
+                          role="presentation"
                           className={cn(
-                            'text-[10px] leading-none',
-                            opt.action
-                              ? 'text-accent'
-                              : active
-                                ? 'text-accent'
-                                : 'text-transparent',
+                            'px-3 pb-1 pt-1.5 font-mono text-[9px] uppercase tracking-wider text-fg-faint',
+                            index > 0 && 'mt-1 border-t border-border-soft',
                           )}
                         >
-                          {opt.action ? '+' : '●'}
-                        </span>
-                        <span className="flex-1">{opt.label}</span>
-                        {opt.hint && (
-                          <span className="text-[10px] text-fg-faint">{opt.hint}</span>
-                        )}
-                      </button>
-                    </li>
+                          {opt.group}
+                        </li>
+                      ))}
+                    {groupCollapsed ? null : (
+                      <li>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={active}
+                          onClick={() => {
+                            onChange(opt.id);
+                            setOpen(false);
+                          }}
+                          className={cn(
+                            'flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-xs transition-colors',
+                            opt.action
+                              ? 'border-b border-border-soft text-accent hover:bg-accent/10 hover:text-accent'
+                              : active
+                                ? 'bg-border-soft text-fg'
+                                : 'text-fg-dim hover:bg-border-soft hover:text-fg',
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              'text-[10px] leading-none',
+                              opt.action
+                                ? 'text-accent'
+                                : active
+                                  ? 'text-accent'
+                                  : 'text-transparent',
+                            )}
+                          >
+                            {opt.action ? '+' : '●'}
+                          </span>
+                          <span className="flex-1">{opt.label}</span>
+                          {opt.hint && (
+                            <span className="text-[10px] text-fg-faint">
+                              {opt.hint}
+                            </span>
+                          )}
+                          {pinnable && onTogglePin && (
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              aria-label={
+                                isPinned
+                                  ? isZh
+                                    ? '取消置顶'
+                                    : 'Unpin'
+                                  : isZh
+                                    ? '置顶到组首'
+                                    : 'Pin to top'
+                              }
+                              title={
+                                isPinned
+                                  ? isZh
+                                    ? '取消置顶'
+                                    : 'Unpin'
+                                  : isZh
+                                    ? '置顶到组首'
+                                    : 'Pin to top'
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                                onTogglePin(opt.id);
+                              }}
+                              className={cn(
+                                'shrink-0 text-[11px] leading-none',
+                                isPinned
+                                  ? 'text-accent'
+                                  : 'text-fg-faint hover:text-fg',
+                              )}
+                            >
+                              {isPinned ? '📌' : '◯'}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    )}
                   </Fragment>
                 );
               })

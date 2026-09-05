@@ -49,6 +49,8 @@ import {
   workspacePathKey,
 } from '@/lib/workspaceHistory';
 import { historyStore } from '@/store/history/store';
+import { searchSessionIdsIndexed } from '@/lib/sessionIndex';
+import type { SessionReader } from '@/lib/sessionSearch';
 import {
   sessionLiveStatus,
   useStore,
@@ -318,12 +320,22 @@ function sessionMatchesSearch(
   session: Session,
   workspace: Pick<WorkspaceSummary, 'name' | 'path'> | undefined,
   query: string,
+  fullTextMatchIds: Set<string> | null,
 ): boolean {
   if (!query) return true;
 
-  return [session.title, session.preview, workspace?.name, workspace?.path].some(
-    (value) => value?.toLowerCase().includes(query) ?? false,
-  );
+  // Summary fields (title / last-message preview / workspace identity) match
+  // instantly without loading message bodies.
+  if (
+    [session.title, session.preview, workspace?.name, workspace?.path].some(
+      (value) => value?.toLowerCase().includes(query) ?? false,
+    )
+  ) {
+    return true;
+  }
+
+  // Full-text matches resolve asynchronously; `null` means "still searching".
+  return fullTextMatchIds?.has(session.id) ?? false;
 }
 
 function sessionVisibleInTab(session: Session, tab: SidebarTab): boolean {
@@ -451,6 +463,10 @@ export default function Sidebar({
   const [flatLimit, setFlatLimit] = useState(WORKFLOW_HISTORY_PAGE_SIZE);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<SidebarTab>('history');
+  const [fullTextMatches, setFullTextMatches] = useState<{
+    query: string;
+    ids: Set<string>;
+  } | null>(null);
   const scopedAssets = useMemo(
     () =>
       assets.filter((asset) =>
@@ -1124,6 +1140,72 @@ export default function Sidebar({
     [scopedWorkspaceId, workspaces],
   );
 
+  // Workspace ids to full-text search against the typed query. A project-scoped
+  // sidebar searches only that workspace; otherwise every workspace is searched.
+  const searchWorkspaceIds = useMemo(
+    () =>
+      (scopedWorkspaces.length > 0 ? scopedWorkspaces : workspaces).map(
+        (workspace) => workspace.id,
+      ),
+    [scopedWorkspaces, workspaces],
+  );
+
+  // Full-text (title + every message body) results are async. Keep them keyed to
+  // the query so a fresh keystroke never flashes the previous query's matches;
+  // `null` means "still resolving" for the current query.
+  const resolvedFullTextIds =
+    fullTextMatches?.query === normalizedQuery ? fullTextMatches.ids : null;
+  const searchPending = isSearching && resolvedFullTextIds === null;
+
+  useEffect(() => {
+    if (!normalizedQuery) {
+      setFullTextMatches(null);
+      return;
+    }
+    if (searchWorkspaceIds.length === 0) {
+      // No workspaces to search (legacy flat history): fall back to the
+      // summary-only matcher rather than hanging in a pending state.
+      setFullTextMatches({ query: normalizedQuery, ids: new Set() });
+      return;
+    }
+    let cancelled = false;
+    const reader: SessionReader = {
+      listSessions: (workspaceId) =>
+        historyStore.listSessions(workspaceId).then((rows) =>
+          rows.map((row) => ({
+            sessionId: row.sessionId ?? row.id,
+            title: row.title,
+            updatedAt:
+              typeof row.updatedAt === 'number'
+                ? row.updatedAt
+                : Date.parse(String(row.updatedAt)) || 0,
+          })),
+        ),
+      getSession: (workspaceId, sessionId) =>
+        historyStore
+          .getSession(workspaceId, sessionId)
+          .then((record) => (record ? { messages: record.messages } : null)),
+    };
+    const timer = window.setTimeout(async () => {
+      const ids = new Set<string>();
+      for (const workspaceId of searchWorkspaceIds) {
+        if (cancelled) return;
+        const matches = await searchSessionIdsIndexed(
+          reader,
+          workspaceId,
+          normalizedQuery,
+        ).catch(() => new Set<string>());
+        if (cancelled) return;
+        for (const id of matches) ids.add(id);
+      }
+      if (!cancelled) setFullTextMatches({ query: normalizedQuery, ids });
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [normalizedQuery, searchWorkspaceIds]);
+
   const totalTreeSessions = useMemo(
     () =>
       scopedWorkspaces.reduce(
@@ -1201,7 +1283,12 @@ export default function Sidebar({
             tabSessions,
             sessions: normalizedQuery
               ? tabSessions.filter((session) =>
-                  sessionMatchesSearch(session, workspace, normalizedQuery),
+                  sessionMatchesSearch(
+                    session,
+                    workspace,
+                    normalizedQuery,
+                    resolvedFullTextIds,
+                  ),
                 )
               : tabSessions,
           };
@@ -1234,6 +1321,7 @@ export default function Sidebar({
       activeTab,
       selectedWorkspaceId,
       normalizedQuery,
+      resolvedFullTextIds,
       scopedWorkspaces,
       sessionTree,
       sidebarLiveState,
@@ -1245,10 +1333,15 @@ export default function Sidebar({
     () =>
       normalizedQuery
         ? tabFlatSessions.filter((session) =>
-            sessionMatchesSearch(session, undefined, normalizedQuery),
+            sessionMatchesSearch(
+              session,
+              undefined,
+              normalizedQuery,
+              resolvedFullTextIds,
+            ),
           )
         : tabFlatSessions,
-    [normalizedQuery, tabFlatSessions],
+    [normalizedQuery, resolvedFullTextIds, tabFlatSessions],
   );
 
   const totalMatchedSessions =
@@ -1476,25 +1569,41 @@ export default function Sidebar({
                 : t(locale, 'sidebar.emptySessions')}
             </div>
           ) : isSearching && totalMatchedSessions === 0 ? (
-            <div
-              role="status"
-              aria-live="polite"
-              className="px-2 py-3 text-xs text-fg-faint"
-            >
-              <div className="text-fg-dim">
-                {t(locale, 'sidebar.searchNoResults')}
-              </div>
-              <div className="mt-1">
-                {t(locale, 'sidebar.searchNoResultsHint')}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="mt-2 rounded-md border border-border px-2 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-accent"
+            searchPending ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="px-2 py-3 text-xs text-fg-faint"
               >
-                {t(locale, 'sidebar.searchClear')}
-              </button>
-            </div>
+                <div className="flex items-center gap-2 text-fg-dim">
+                  <span
+                    aria-hidden="true"
+                    className="h-3 w-3 animate-spin rounded-full border border-border border-t-accent"
+                  />
+                  <span>{t(locale, 'sidebar.searchLoading')}</span>
+                </div>
+              </div>
+            ) : (
+              <div
+                role="status"
+                aria-live="polite"
+                className="px-2 py-3 text-xs text-fg-faint"
+              >
+                <div className="text-fg-dim">
+                  {t(locale, 'sidebar.searchNoResults')}
+                </div>
+                <div className="mt-1">
+                  {t(locale, 'sidebar.searchNoResultsHint')}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="mt-2 rounded-md border border-border px-2 py-1 text-xs text-fg-dim transition-colors hover:border-accent hover:text-accent"
+                >
+                  {t(locale, 'sidebar.searchClear')}
+                </button>
+              </div>
+            )
           ) : scopedWorkspaces.length > 0 ? (
             <ul className="flex flex-col gap-2">
               {filteredWorkspaces.map(({ workspace, sessions: list, tabSessions }) => {

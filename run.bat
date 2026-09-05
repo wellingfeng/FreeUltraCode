@@ -62,12 +62,32 @@ if exist "%EXE%" (
   if errorlevel 1 goto stop_exe_fail
 )
 echo.
-echo [..] building: npm run package  ^(first build compiles Rust, may take minutes^)
+if "%MODE%"=="build" goto do_build_full
+goto do_build_exe
+
+:do_build_full
+echo [..] building full installer (NSIS) ...
 echo ============================================================
 pushd app
 call npm run package
 set "CMD_RC=!errorlevel!"
 popd
+goto build_result
+
+:do_build_exe
+echo [..] building runnable exe only (skip NSIS installer) ...
+echo ============================================================
+pushd app
+call npm run cli:build
+set "CMD_RC=!errorlevel!"
+popd
+if not "!CMD_RC!"=="0" goto build_fail
+pushd app
+call npm run tauri -- build --no-bundle
+set "CMD_RC=!errorlevel!"
+popd
+
+:build_result
 if not "!CMD_RC!"=="0" goto build_fail
 powershell -NoProfile -ExecutionPolicy Bypass -File "app\scripts\needs-rebuild.ps1" "%EXE%" "%CD%" -WriteStamp
 if errorlevel 1 goto stamp_fail

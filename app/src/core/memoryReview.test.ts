@@ -75,6 +75,7 @@ describe('prompts', () => {
     expect(REVIEW_SYSTEM).toContain('replace');
     expect(REVIEW_SYSTEM).toContain('remove');
     expect(REVIEW_SYSTEM).toContain('腾出空间');
+    expect(REVIEW_SYSTEM).toContain('importance');
   });
 
   it('user prompt wraps the transcript', () => {
@@ -101,21 +102,29 @@ describe('formatReviewMemoryContext', () => {
   it('lists entries with usage and a consolidate hint', () => {
     const out = formatReviewMemoryContext({
       label: '助手笔记（本项目）',
-      entries: ['引擎 Unity', '目录 Assets'],
+      entries: [
+        { text: '引擎 Unity', importance: 'important' },
+        { text: '目录 Assets' },
+        { text: '禁止 p4 submit', importance: 'must' },
+        { text: '喜欢深色主题', importance: 'minor' },
+      ],
       used: 20,
       limit: 100,
     });
     expect(out).toContain('助手笔记（本项目）');
-    expect(out).toContain('- 引擎 Unity');
-    expect(out).toContain('- 目录 Assets');
+    expect(out).toContain('- [重要] 引擎 Unity');
+    expect(out).toContain('- [未标记] 目录 Assets');
+    expect(out).toContain('- [必须] 禁止 p4 submit');
+    expect(out).toContain('- [不重要] 喜欢深色主题');
     expect(out).toContain('20/100');
     expect(out).toContain('replace');
+    expect(out).toContain('importance');
   });
 
   it('flags an over-limit store', () => {
     const out = formatReviewMemoryContext({
       label: 'x',
-      entries: ['a'],
+      entries: [{ text: 'a' }],
       used: 120,
       limit: 100,
     });
@@ -125,7 +134,7 @@ describe('formatReviewMemoryContext', () => {
   it('flags a near-limit store', () => {
     const out = formatReviewMemoryContext({
       label: 'x',
-      entries: ['a'],
+      entries: [{ text: 'a' }],
       used: 90,
       limit: 100,
     });

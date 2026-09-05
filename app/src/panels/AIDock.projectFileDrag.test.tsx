@@ -347,7 +347,7 @@ describe('AIDock project file drag', () => {
       const card = composerCard(view.container);
       const input = textarea(view.container);
       const fullPath =
-        'E:\\project_moon_ue5\\MoonGame\\Client\\Game\\Content\\Assets\\Scene\\Temp\\KuroWaterDemo\\KuroWaterSlopeDemo.umap';
+        'E:\\project_moon_ue5\\MoonGame\\Client\\Game\\Content\\Assets\\Scene\\Temp\\WaterDemo\\WaterSlopeDemo.umap';
 
       Object.defineProperty(card, 'getBoundingClientRect', {
         configurable: true,

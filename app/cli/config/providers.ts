@@ -64,7 +64,7 @@ export function modelClassFromModelId(model: unknown): string {
 }
 
 function normalizeAdapter(value: unknown): string {
-  if (value === 'codex' || value === 'gemini') return value;
+  if (value === 'codex' || value === 'gemini' || value === 'grok') return value;
   if (value === 'claude' || value === 'claude-code') return 'claude-code';
   return typeof value === 'string' && value ? value : 'claude-code';
 }
@@ -222,6 +222,7 @@ function apiKeyForAdapter(adapter: string): string | undefined {
   };
   if (protocol === 'codex') return pick('OPENAI_API_KEY');
   if (protocol === 'gemini') return pick('GEMINI_API_KEY', 'GOOGLE_API_KEY');
+  if (protocol === 'grok') return pick('XAI_API_KEY');
   return pick('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN');
 }
 
@@ -239,6 +240,8 @@ export function cliRouteEnv(route: ResolvedRoute): Record<string, string> | unde
       env.GOOGLE_API_KEY = apiKey;
     }
     if (baseUrl) env.GOOGLE_GEMINI_BASE_URL = baseUrl;
+  } else if (protocol === 'grok') {
+    if (apiKey) env.XAI_API_KEY = apiKey;
   } else {
     if (apiKey) {
       env.ANTHROPIC_API_KEY = apiKey;

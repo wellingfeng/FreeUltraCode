@@ -289,7 +289,7 @@ describe('model gateway compatibility', () => {
           kind: 'codex',
           transport: 'direct',
           name: 'RelayAI',
-          apiKey: 'sk-kuro',
+          apiKey: 'sk-example',
           baseUrl: 'https://relay.example/v1',
           model: 'gpt-5.5',
           models: ['gpt-5.6-sol'],
@@ -415,6 +415,22 @@ describe('model gateway compatibility', () => {
     });
   });
 
+  it('exports deepseek-harness env when a direct channel falls back to CLI', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'deepseek-harness',
+        transport: 'openai-compatible',
+        apiKey: 'ds-key',
+        baseUrl: 'https://relay.example',
+        model: 'deepseek-v4-pro',
+      }),
+    ).toMatchObject({
+      DEEPSEEK_API_KEY: 'ds-key',
+      DEEPSEEK_BASE_URL: 'https://relay.example',
+      UGS_DSH_MODEL: 'deepseek-v4-pro',
+    });
+  });
+
   it('omits deepseek-harness env when neither key nor base url is set', () => {
     expect(
       gatewayRouteEnv({
@@ -487,6 +503,32 @@ describe('model gateway compatibility', () => {
     expect(
       gatewayRouteEnv({
         adapter: 'kimi',
+        transport: 'cli',
+        apiKey: undefined,
+        baseUrl: undefined,
+        model: undefined,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('exports grok CLI env (XAI_API_KEY only; model rides --model)', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'grok',
+        transport: 'cli',
+        apiKey: 'xai-secret',
+        baseUrl: undefined,
+        model: 'grok-4.6',
+      }),
+    ).toMatchObject({
+      XAI_API_KEY: 'xai-secret',
+    });
+  });
+
+  it('omits grok env when the channel carries no key', () => {
+    expect(
+      gatewayRouteEnv({
+        adapter: 'grok',
         transport: 'cli',
         apiKey: undefined,
         baseUrl: undefined,
@@ -777,6 +819,100 @@ describe('model gateway compatibility', () => {
     const route = resolveGatewayRoute(workflow);
     // Per-tier map wins even though channel.model is a junk label.
     expect(route.model).toBe('claude-opus-4-8');
+  });
+
+  it('passes third-party gateway native gemini ids through unchanged', () => {
+    const config = {
+      version: 1,
+      providers: [
+        {
+          id: 'example_gemini',
+          kind: 'gemini',
+          name: 'ExampleGemini',
+          adapter: 'gemini',
+          channels: [
+            {
+              id: 'default',
+              name: 'gemini-3.8-flash',
+              apiKey: 'example-test',
+              baseUrl: 'https://gateway.example.com',
+              model: 'gemini-3.8-flash',
+              models: undefined,
+              route: {
+                transport: 'cli',
+                baseUrl: 'https://gateway.example.com',
+                model: 'gemini-3.8-flash',
+                models: undefined,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    window.localStorage.setItem('ugs_model_gateway_v1', JSON.stringify(config));
+
+    const workflow = buildWorkflow([]);
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'gemini',
+        modelClass: 'gemini-3.8-flash',
+        providerId: 'example_gemini',
+        channelId: 'default',
+      },
+    };
+
+    const route = resolveGatewayRoute(workflow);
+
+    // 网关注册的原生 gemini ID 原样透传，用户选什么发什么。
+    expect(route.model).toBe('gemini-3.8-flash');
+    expect(route.env).toMatchObject({
+      GOOGLE_GEMINI_BASE_URL: 'https://gateway.example.com',
+    });
+  });
+
+  it('passes third-party gateway gemini-3.7-flash through unchanged', () => {
+    const config = {
+      version: 1,
+      providers: [
+        {
+          id: 'example_gemini',
+          kind: 'gemini',
+          name: 'ExampleGemini',
+          adapter: 'gemini',
+          channels: [
+            {
+              id: 'default',
+              name: 'gemini-3.7-flash',
+              apiKey: 'example-test',
+              baseUrl: 'https://gateway.example.com',
+              model: 'gemini-3.7-flash',
+              models: undefined,
+              route: {
+                transport: 'cli',
+                baseUrl: 'https://gateway.example.com',
+                model: 'gemini-3.7-flash',
+                models: undefined,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    window.localStorage.setItem('ugs_model_gateway_v1', JSON.stringify(config));
+
+    const workflow = buildWorkflow([]);
+    workflow.meta.gateway = {
+      defaults: {
+        adapter: 'gemini',
+        modelClass: 'gemini-3.7-flash',
+        providerId: 'example_gemini',
+        channelId: 'default',
+      },
+    };
+
+    const route = resolveGatewayRoute(workflow);
+
+    expect(route.model).toBe('gemini-3.7-flash');
   });
 
   it('keeps non-sonnet legacy node models while migrating sonnet to inherit global', () => {

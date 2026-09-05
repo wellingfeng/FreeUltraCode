@@ -388,7 +388,7 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
     window.localStorage.setItem('ultragamestudio.projectRightPanelTab.v1', 'session');
     const p4Root = 'E:\\project_moon_ue5\\MoonEngine';
     const filePath =
-      'E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\KuroMoonShadingPassShader.usf';
+      'E:\\project_moon_ue5\\MoonEngine\\Engine\\Shaders\\Private\\MoonShadingPassShader.usf';
     resetStore({
       workspaceFolders: [p4Root],
       messages: [
@@ -409,7 +409,7 @@ describe('ProjectFileTree game team details vs file preview drawer', () => {
       const fileButton = Array.from(
         view.container.querySelectorAll<HTMLButtonElement>('button'),
       ).find((btn) =>
-        (btn.textContent ?? '').includes('KuroMoonShadingPassShader.usf'),
+        (btn.textContent ?? '').includes('MoonShadingPassShader.usf'),
       );
       expect(fileButton, 'absolute P4 session file row should exist').toBeTruthy();
 

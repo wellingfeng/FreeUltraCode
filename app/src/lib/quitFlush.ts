@@ -4,6 +4,9 @@ import {
 } from "@/lib/secureStorage";
 import { flushGenerationSettings } from "@/lib/generationSettingsStore";
 import { flushRemoteProfileWrites } from "@/lib/settingsProfile";
+import { flushApiConfigDiskWrites } from "@/lib/apiConfig";
+import { flushGatewayConfigDiskWrites } from "@/lib/gatewayConfig";
+import { flushPersonalInstructionsDiskWrites } from "@/lib/composerStorage";
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";
@@ -12,9 +15,32 @@ function hasWindow(): boolean {
 let beforeQuitListener: (() => void) | null = null;
 let beforeUnloadListener: (() => void) | null = null;
 
+// Extra synchronous flush tasks registered at runtime (e.g. the settings
+// personalization autosave flushing its pending debounced writes). Both the
+// browser beforeunload path and the Tauri tray-quit path run these before exit.
+const quitFlushTasks = new Set<() => void>();
+
+export function registerQuitFlushTask(task: () => void): () => void {
+  quitFlushTasks.add(task);
+  return () => {
+    quitFlushTasks.delete(task);
+  };
+}
+
+function runQuitFlushTasks(): void {
+  for (const task of [...quitFlushTasks]) {
+    try {
+      task();
+    } catch {
+      /* best-effort: a failing flush task must not block exit */
+    }
+  }
+}
+
 export function resetQuitFlushForTests(): void {
   beforeQuitListener = null;
   beforeUnloadListener = null;
+  quitFlushTasks.clear();
 }
 
 /**
@@ -29,6 +55,7 @@ export function resetQuitFlushForTests(): void {
 export async function installQuitFlushHandler(): Promise<void> {
   if (hasWindow() && !beforeUnloadListener) {
     beforeUnloadListener = () => {
+      runQuitFlushTasks();
       flushSecretsToLocalStorageFallback();
     };
     window.addEventListener("beforeunload", beforeUnloadListener);
@@ -39,30 +66,72 @@ export async function installQuitFlushHandler(): Promise<void> {
     const { listen } = await import("@tauri-apps/api/event");
     if (beforeQuitListener) return;
     beforeQuitListener = () => {
-      flushSecretsToLocalStorageFallback();
-      void Promise.all([
-        flushSecureStorage().catch(() => {
-          /* keychain write failed — localStorage fallback above still applies */
-        }),
-        flushGenerationSettings().catch(() => {
-          /* disk write failed — localStorage mirror above still applies */
-        }),
-        flushRemoteProfileWrites().catch(() => {
-          /* remote write failed — server copy may be stale */
-        }),
-        // 把仍处于 debounce 窗口内的输入框草稿立即落盘，避免「退出即丢」。
-        import("@/store/composerDraftPersistence")
-          .then(({ flushComposerDraftPersist }) => flushComposerDraftPersist())
-          .catch(() => {
-            /* draft flush failed — best-effort only */
+      // 守卫：仍有会话在运行时，退出必须用户显式确认。否则只 flush 不退出。
+      void (async () => {
+        try {
+          const { activeRunChannels, activeAiEditChannels } = await import(
+            "@/store/channelRegistry"
+          );
+          const running =
+            activeRunChannels().length + activeAiEditChannels().length;
+          if (running > 0 && hasWindow()) {
+            const ok = window.confirm(
+              `仍有 ${running} 个会话正在运行中，退出会强制中断它们。\n\n确认退出？`,
+            );
+            if (!ok) {
+              void import("@tauri-apps/api/core")
+                .then(({ invoke }) => invoke("ugs_quit_cancel"))
+                .catch(() => {
+                  /* host already gone */
+                });
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn("[quitFlush] running-session guard failed", err);
+          /* fall through:守卫失败不阻断原有 flush+退出流程 */
+        }
+
+        runQuitFlushTasks();
+        flushSecretsToLocalStorageFallback();
+        void Promise.all([
+          flushSecureStorage().catch(() => {
+            /* keychain write failed — localStorage fallback above still applies */
           }),
-      ]).finally(() => {
-        void import("@tauri-apps/api/core")
-          .then(({ invoke }) => invoke("ugs_quit_flush_done"))
-          .catch(() => {
-            /* host already gone */
-          });
-      });
+          flushGenerationSettings().catch(() => {
+            /* disk write failed — localStorage mirror above still applies */
+          }),
+          flushRemoteProfileWrites().catch(() => {
+            /* remote write failed — server copy may be stale */
+          }),
+          // 渠道/网关配置走的是 write-behind 磁盘队列，退出前必须冲刷，否则
+          // settings/providers.v1.json 等文件保持陈旧，下次启动会以磁盘为权威
+          // 源覆盖 localStorage 镜像，导致新加的渠道「重启后消失」。
+          flushApiConfigDiskWrites().catch(() => {
+            /* disk write failed — localStorage mirror above still applies */
+          }),
+          flushGatewayConfigDiskWrites().catch(() => {
+            /* disk write failed — localStorage mirror above still applies */
+          }),
+          // 个性化指令（按 adapter 分桶）也是 write-behind 磁盘镜像，退出前必须
+          // 冲刷，否则 WebView2 进程被杀时 leveldb 内存 log 未压实即丢失。
+          flushPersonalInstructionsDiskWrites().catch(() => {
+            /* disk write failed — localStorage mirror above still applies */
+          }),
+          // 把仍处于 debounce 窗口内的输入框草稿立即落盘，避免「退出即丢」。
+          import("@/store/composerDraftPersistence")
+            .then(({ flushComposerDraftPersist }) => flushComposerDraftPersist())
+            .catch(() => {
+              /* draft flush failed — best-effort only */
+            }),
+        ]).finally(() => {
+          void import("@tauri-apps/api/core")
+            .then(({ invoke }) => invoke("ugs_quit_flush_done"))
+            .catch(() => {
+              /* host already gone */
+            });
+        });
+      })();
     };
     await listen("ugs:before-quit", beforeQuitListener);
   } catch (err) {

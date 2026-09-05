@@ -5,6 +5,7 @@ import { DEFAULT_MODEL } from '@/lib/anthropic';
 import { RUNTIME_ADAPTERS, type RuntimeAdapterId } from '@/lib/adapters';
 import {
   addProvider,
+  flushApiConfigDiskWrites,
   getProviderRuntimeInfo,
   isProviderBaseUrlValid,
   providerMetadataSignature,
@@ -47,6 +48,7 @@ function providerKindToAdapter(kind: Provider['kind']): RuntimeAdapterId {
   if (kind === 'kimi') return 'kimi';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
   if (kind === 'zcode') return 'zcode';
+  if (kind === 'grok') return 'grok';
   return 'claude-code';
 }
 
@@ -56,6 +58,7 @@ function adapterToProviderKind(adapter: RuntimeAdapterId): Provider['kind'] {
   if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
+  if (adapter === 'grok') return 'grok';
   return 'anthropic';
 }
 
@@ -74,8 +77,13 @@ export function providerDraft(provider: ProviderDraft): ProviderDraft {
 function trimProviderDraft(draft: ProviderDraft): ProviderDraft {
   const model = draft.model?.trim();
   const models = uniqueStringOptions(draft.models ?? []);
+  // Any kind may run direct now: Anthropic hits the Anthropic API; codex/gemini
+  // custom relays hit the OpenAI-compatible API (see providerTransport). Keep the
+  // user's explicit choice; default anthropic to direct and the rest to cli.
+  // Must match SettingsModal.tsx's trimProviderDraft — two editor surfaces share
+  // the same ProviderDraft contract.
   const transport =
-    draft.kind === 'anthropic' ? draft.transport ?? 'direct' : 'cli';
+    draft.transport ?? (draft.kind === 'anthropic' ? 'direct' : 'cli');
   return {
     kind: draft.kind,
     name: draft.name.trim(),
@@ -249,6 +257,9 @@ export function DefaultChannelProviderEditor({
         savedProvider = addProvider(next);
       }
       await flushSecureStorage();
+      // 渠道列表走的是 write-behind 磁盘队列；保存按钮必须把它冲刷落盘，
+      // 否则托盘退出时磁盘文件陈旧，重启后以磁盘为权威源会丢渠道。
+      await flushApiConfigDiskWrites();
       onSaved(savedProvider);
     } catch {
       setSaveError(t(locale, 'settings.models.saveError'));
@@ -337,6 +348,42 @@ export function DefaultChannelProviderEditor({
                   );
                 })}
               </div>
+            </div>
+            <div className="block space-y-1">
+              <span className="text-[11px] font-medium text-fg-dim">
+                {t(locale, 'settings.models.runtimeMode')}
+              </span>
+              <div className="flex gap-1">
+                {(
+                  [
+                    ['direct', 'settings.models.runtimeModeDirect'],
+                    ['cli', 'settings.models.runtimeModeCli'],
+                  ] as const
+                ).map(([mode, labelKey]) => {
+                  const effective =
+                    editor.draft.transport ??
+                    (editor.draft.kind === 'anthropic' ? 'direct' : 'cli');
+                  const active = effective === mode;
+                  return (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => patchDraft({ transport: mode })}
+                      className={cn(
+                        'flex-1 rounded border px-2 py-1.5 text-[11px] transition-colors',
+                        active
+                          ? 'border-accent bg-accent/10 text-accent'
+                          : 'border-border bg-bg text-fg-dim hover:border-accent/50 hover:text-fg',
+                      )}
+                    >
+                      {t(locale, labelKey)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] leading-relaxed text-fg-faint">
+                {t(locale, 'settings.models.runtimeModeHelp')}
+              </p>
             </div>
             <ReadonlyField
               label={t(locale, 'settings.models.authState')}

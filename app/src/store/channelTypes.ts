@@ -87,11 +87,19 @@ export interface AiEditChannel {
    * Active CLI run with native steering. The explicit lightning action can steer a
    * queued follow-up into this turn without cancelling it. Normal sends remain
    * in the per-session FIFO queue.
+   *
+   * `native: true` means the CLI has a real in-turn steer channel (codex
+   * `turn/steer`, claude stream-json stdin, zcode `session/send`). `native:
+   * false` is the queue-steer fallback for adapters without one (gemini, kimi,
+   * grok, dsh, …): the queued message is confirmed immediately and leaves the
+   * "pending" badge, then rides the existing FIFO + full-history replay so it
+   * fires right after the current turn drains.
    */
   liveSteer?: {
     adapter: GatewaySelection['adapter'];
     runId: string;
     accepting: boolean;
+    native: boolean;
   };
 }
 

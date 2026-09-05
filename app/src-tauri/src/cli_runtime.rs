@@ -84,6 +84,11 @@ const CLI_SPECS: &[CliSpec] = &[
         label: "ZCode / GLM",
         commands: &["zcode"],
     },
+    CliSpec {
+        adapter: "grok",
+        label: "Grok",
+        commands: &["grok"],
+    },
 ];
 
 pub fn adapter_binary(adapter: &str) -> &str {
@@ -94,6 +99,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
         "kimi" => "kimi",
         "deepseek-harness" => "dsh",
         "zcode" => "zcode",
+        "grok" => "grok",
         other => other,
     }
 }
@@ -106,6 +112,7 @@ pub fn adapter_protocol(adapter: &str) -> &str {
         "kimi" => "kimi",
         "deepseek-harness" => "deepseek-harness",
         "zcode" => "zcode",
+        "grok" => "grok",
         other => other,
     }
 }
@@ -117,7 +124,7 @@ pub fn should_pass_model(adapter: &str, model: &str) -> bool {
     }
     let lower = m.to_ascii_lowercase();
     let protocol = adapter_protocol(adapter);
-    if matches!(protocol, "codex" | "gemini" | "kimi") {
+    if matches!(protocol, "codex" | "gemini" | "kimi" | "grok") {
         return !matches!(lower.as_str(), "haiku" | "sonnet" | "opus")
             && !lower.starts_with("claude-");
     }
@@ -736,6 +743,17 @@ mod tests {
     }
 
     #[test]
+    fn grok_passes_grok_models_but_not_claude_tiers() {
+        // Real xAI ids pass through as `--model`.
+        assert!(should_pass_model("grok", "grok-4.6"));
+        assert!(should_pass_model("grok", "grok-4.5"));
+        // Claude tiers / ids are filtered out for grok.
+        assert!(!should_pass_model("grok", "sonnet"));
+        assert!(!should_pass_model("grok", "claude-opus-4-8"));
+        assert!(!should_pass_model("grok", "   "));
+    }
+
+    #[test]
     fn deepseek_harness_never_passes_model() {
         // dsh reads its model from `$DSH_HOME/settings.yaml`, never `--model`.
         assert!(!should_pass_model("deepseek-harness", "deepseek-v4-pro"));
@@ -756,6 +774,12 @@ mod tests {
     fn zcode_adapter_mapping() {
         assert_eq!(adapter_binary("zcode"), "zcode");
         assert_eq!(adapter_protocol("zcode"), "zcode");
+    }
+
+    #[test]
+    fn grok_adapter_mapping() {
+        assert_eq!(adapter_binary("grok"), "grok");
+        assert_eq!(adapter_protocol("grok"), "grok");
     }
 
     #[test]

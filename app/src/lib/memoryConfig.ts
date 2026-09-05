@@ -37,12 +37,43 @@ export interface MemoryConfig {
   reviewMinIntervalMinutes: number;
   /** Prefer the cheapest model tier for review when routing allows. */
   reviewPreferCheapModel: boolean;
+  /**
+   * Explicit gateway selection for review calls when reviewPreferCheapModel
+   * is on — a haiku-tier pin on the current adapter by default. Stored as a
+   * normalized GatewaySelection JSON blob; empty/invalid falls back to the
+   * main conversation route.
+   */
+  reviewModelSelection: {
+    adapter: string;
+    modelClass: string;
+    systemDefault?: boolean;
+    providerId?: string;
+    channelId?: string;
+  } | null;
   /** When a memory write overflows, evict the oldest entries instead of rejecting. */
   evictOnOverflow: boolean;
   /** Usage percentage at which the snapshot appends a "consolidate first" nudge. */
   nudgeThresholdPct: number;
   /** Char budget for the compact snapshot injected into argv-capped adapters. */
   compactSnapshotCharLimit: number;
+  /**
+   * Scan every add/replace for prompt-injection / credentials / invisible
+   * Unicode before it lands in the store ('reject' mode). See memorySafety.ts.
+   */
+  safetyScanEnabled: boolean;
+  /**
+   * Background-review / manual-refresh writes require explicit approval in the
+   * Memory settings panel before they hit the store (Hermes' write_approval).
+   * Foreground UGS_MEMORY writes stay direct — the user saw the turn that
+   * proposed them.
+   */
+  approvalRequired: boolean;
+  /**
+   * Run the AI pre-screen (triage) automatically whenever new writes land in
+   * the pending queue — the user only ever sees what survived the AI pass.
+   * Requires approvalRequired; reuses the review model route.
+   */
+  triageAutoRun: boolean;
 }
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
@@ -55,14 +86,42 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   reviewMinMessages: 6,
   reviewMinIntervalMinutes: 30,
   reviewPreferCheapModel: true,
+  reviewModelSelection: null,
   evictOnOverflow: false,
   nudgeThresholdPct: 85,
   compactSnapshotCharLimit: 600,
+  safetyScanEnabled: true,
+  approvalRequired: false,
+  triageAutoRun: true,
 };
 
 function clampInt(value: unknown, fallback: number, min: number, max: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+type ReviewSelection = MemoryConfig['reviewModelSelection'];
+
+function coerceReviewSelection(raw: unknown): ReviewSelection {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const adapter =
+    obj.adapter === 'codex' || obj.adapter === 'gemini' ? obj.adapter : 'claude-code';
+  const modelClass =
+    typeof obj.modelClass === 'string' && obj.modelClass.trim()
+      ? obj.modelClass.trim()
+      : 'haiku';
+  return {
+    adapter,
+    modelClass,
+    ...(obj.systemDefault === true ? { systemDefault: true as const } : {}),
+    ...(typeof obj.providerId === 'string' && obj.providerId
+      ? { providerId: obj.providerId }
+      : {}),
+    ...(typeof obj.channelId === 'string' && obj.channelId
+      ? { channelId: obj.channelId }
+      : {}),
+  };
 }
 
 function coerce(raw: Partial<MemoryConfig> | null | undefined): MemoryConfig {
@@ -83,6 +142,7 @@ function coerce(raw: Partial<MemoryConfig> | null | undefined): MemoryConfig {
       1440,
     ),
     reviewPreferCheapModel: raw.reviewPreferCheapModel ?? d.reviewPreferCheapModel,
+    reviewModelSelection: coerceReviewSelection(raw.reviewModelSelection),
     evictOnOverflow: raw.evictOnOverflow ?? d.evictOnOverflow,
     nudgeThresholdPct: clampInt(raw.nudgeThresholdPct, d.nudgeThresholdPct, 50, 100),
     compactSnapshotCharLimit: clampInt(
@@ -91,6 +151,9 @@ function coerce(raw: Partial<MemoryConfig> | null | undefined): MemoryConfig {
       200,
       4000,
     ),
+    safetyScanEnabled: raw.safetyScanEnabled ?? d.safetyScanEnabled,
+    approvalRequired: raw.approvalRequired ?? d.approvalRequired,
+    triageAutoRun: raw.triageAutoRun ?? d.triageAutoRun,
   };
 }
 

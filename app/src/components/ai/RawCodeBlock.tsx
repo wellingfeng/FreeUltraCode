@@ -64,12 +64,12 @@ export default function RawCodeBlock({
     return (
       <div
         className={
-          'ai-code ai-code--tiny group/code relative my-1.5 rounded-lg px-3.5 py-2.5 ' +
+          'ai-code ai-code--tiny group/code relative my-1 rounded-sm px-2 py-1 ' +
           (wrap ? 'ai-code--wrap ' : '') +
           className
         }
       >
-        <pre className="ai-code__scroll ai-code--tiny__scroll overflow-auto leading-relaxed text-[13px]">
+        <pre className="ai-code__scroll ai-code--tiny__scroll overflow-auto leading-normal text-[12.5px]">
           <code
             className={highlighted?.className}
             style={{
@@ -79,7 +79,7 @@ export default function RawCodeBlock({
             dangerouslySetInnerHTML={{ __html: highlighted?.html ?? escapeHtml(code) }}
           />
         </pre>
-        <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded border border-border-soft bg-panel-2/80 px-0.5 py-0.5 opacity-0 backdrop-blur transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
+        <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded px-0.5 py-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
           <button
             type="button"
             onClick={() => setWrap((w) => !w)}
@@ -101,17 +101,17 @@ export default function RawCodeBlock({
   return (
     <div
       className={
-        'ai-code group/code overflow-hidden border border-[var(--code-border)] ' +
-        (compact ? 'ai-code--compact rounded-sm ' : 'my-2 rounded-lg ') +
+        'ai-code group/code overflow-hidden ' +
+        (compact ? 'ai-code--compact rounded-none ' : 'my-1.5 rounded-sm ') +
         className
       }
     >
       {showHeader && (
-        <div className="flex items-center justify-between border-b border-[var(--code-border)] bg-[var(--code-header-bg)] px-3 py-1.5">
-          <span className="font-mono text-[11px] normal-case tracking-normal text-fg-faint">
+        <div className="flex items-center justify-between px-0.5 py-0.5">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
             {lang ?? 'text'}
             {collapsible && (
-              <span className="ml-2 text-fg-faint/70">{lineCount} {t(locale, 'chat.lines')}</span>
+              <span className="ml-2 normal-case text-fg-faint/70">{lineCount} {t(locale, 'chat.lines')}</span>
             )}
           </span>
           <div className="flex items-center gap-2 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
@@ -145,7 +145,7 @@ export default function RawCodeBlock({
       <div className="relative">
         <div
           className={
-            'ai-code__scroll bg-[var(--code-bg)] leading-relaxed ' +
+            'ai-code__scroll bg-[var(--code-bg)] leading-normal ' +
             (compact ? 'text-[11.5px] ' : 'text-[12.5px] ') +
             (wrap ? 'ai-code--wrap ' : '') +
             (isDiff ? 'ai-code--diff ' : '') +
@@ -171,7 +171,7 @@ export default function RawCodeBlock({
             onClick={() => setExpanded(true)}
             title={t(locale, 'chat.expandAll')}
             aria-label={t(locale, 'chat.expandCode')}
-            className="flex w-full items-center justify-center gap-1.5 border-t border-[var(--code-border)] bg-[var(--code-header-bg)] px-3 py-1.5 text-[11px] text-fg-faint transition-colors hover:text-fg"
+            className="flex w-full items-center justify-center gap-1.5 px-3 py-1 text-[11px] text-fg-faint transition-colors hover:text-fg"
           >
             <ChevronsUpDown size={12} className="shrink-0" />
             <span>
@@ -180,7 +180,7 @@ export default function RawCodeBlock({
           </button>
         )}
         {!showHeader && (
-          <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded border border-[var(--code-border)] bg-panel-2/90 px-0.5 py-0.5 opacity-0 backdrop-blur transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
+          <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 rounded px-0.5 py-0.5 opacity-0 transition-opacity group-hover/code:opacity-100 focus-within:opacity-100">
             <button
               type="button"
               onClick={() => setWrap((w) => !w)}

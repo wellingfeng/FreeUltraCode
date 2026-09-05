@@ -1195,6 +1195,7 @@ function providerKindToAdapter(kind: ProviderKind): RuntimeAdapterId {
   if (kind === "kimi") return "kimi";
   if (kind === "deepseek-harness") return "deepseek-harness";
   if (kind === "zcode") return "zcode";
+  if (kind === "grok") return "grok";
   return "claude-code";
 }
 
@@ -1866,6 +1867,12 @@ export default function AIDock({
   const deleteQueuedChatMessage = useStore((s) => s.deleteQueuedChatMessage);
   const steerQueuedChatMessage = useStore(
     (s) => s.steerQueuedChatMessage,
+  );
+  const beginQueuedChatMessageEdit = useStore(
+    (s) => s.beginQueuedChatMessageEdit,
+  );
+  const cancelQueuedChatMessageEdit = useStore(
+    (s) => s.cancelQueuedChatMessageEdit,
   );
   const branchSessionFromMessage = useStore((s) => s.branchSessionFromMessage);
   const runSelection = useStore(
@@ -2618,15 +2625,20 @@ export default function AIDock({
     setQueuedEditDraft("");
   }, [queuedChatMessageIds, queuedEditMessageId]);
 
-  const beginQueuedMessageEdit = useCallback((message: Message) => {
-    setQueuedEditMessageId(message.id);
-    setQueuedEditDraft(message.text);
-  }, []);
+  const beginQueuedMessageEdit = useCallback(
+    (message: Message) => {
+      setQueuedEditMessageId(message.id);
+      setQueuedEditDraft(message.text);
+      beginQueuedChatMessageEdit(message.id);
+    },
+    [beginQueuedChatMessageEdit],
+  );
 
   const cancelQueuedMessageEdit = useCallback(() => {
     setQueuedEditMessageId(null);
     setQueuedEditDraft("");
-  }, []);
+    cancelQueuedChatMessageEdit();
+  }, [cancelQueuedChatMessageEdit]);
 
   const commitQueuedMessageEdit = useCallback(
     (messageId: string) => {
@@ -3177,6 +3189,28 @@ export default function AIDock({
       : "";
   const composerTipText =
     fileUploadTipText || blockedSendTipText || slashGuardTipText;
+  const [pinnedChannelIds, setPinnedChannelIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("ugs_pinned_channels_v1");
+      if (raw) return JSON.parse(raw) as string[];
+    } catch {
+      /* ignore */
+    }
+    return [];
+  });
+  const toggleChannelPin = (id: string) => {
+    setPinnedChannelIds((prev) => {
+      const next = prev.includes(id)
+        ? prev.filter((x) => x !== id)
+        : [...prev, id];
+      try {
+        localStorage.setItem("ugs_pinned_channels_v1", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
   const channelSelectOptions = useMemo<SelectOption[]>(() => {
     const defaultOptions = RUNTIME_ADAPTERS.flatMap((adapter) => {
       const hint = defaultChannelRuntimeLabel(locale, adapter);
@@ -3203,7 +3237,7 @@ export default function AIDock({
       return entries;
     });
 
-    return [
+    const raw: SelectOption[] = [
       ...defaultOptions,
       ...FREE_CHANNELS.map((c) => {
         const localStatus = c.local ? localRuntimeStatuses[c.id] : undefined;
@@ -3227,7 +3261,30 @@ export default function AIDock({
         };
       }),
     ];
-  }, [locale, defaultChannelProviders, localRuntimeStatuses]);
+    // 组内置顶：已锁定的渠道提到各自分组顶部，组间顺序保持首现顺序。
+    const pinned = new Set(pinnedChannelIds);
+    const buckets: SelectOption[][] = [];
+    const bucketIndex = new Map<string, number>();
+    for (const opt of raw) {
+      const g = opt.group ?? "";
+      let idx = bucketIndex.get(g);
+      if (idx === undefined) {
+        idx = buckets.length;
+        buckets.push([]);
+        bucketIndex.set(g, idx);
+      }
+      buckets[idx].push(opt);
+    }
+    return buckets.flatMap((items) => {
+      const sorted = [...items];
+      sorted.sort((a, b) => {
+        const pa = pinned.has(a.id) ? 0 : 1;
+        const pb = pinned.has(b.id) ? 0 : 1;
+        return pa - pb;
+      });
+      return sorted;
+    });
+  }, [locale, defaultChannelProviders, localRuntimeStatuses, pinnedChannelIds]);
   const selectedFreeChannelId = isFreeChannelSelection(runSelection);
   const pinnedDefaultProvider = runSelection.providerId
     ? defaultChannelProviders.find(
@@ -3633,6 +3690,10 @@ export default function AIDock({
     (model: string) => {
       const selectedModel = model.trim();
       if (!selectedModel) return;
+      // Always overwrite modelOverride so a stale workflow.meta.gateway.defaults
+      // value can never shadow the user's fresh pick. Explicitly clearing when
+      // "default" is chosen keeps providerDisplayModel (channel-configured
+      // model) as the visible fallback.
       const modelOverride =
         selectedModel === "default" ? undefined : selectedModel;
       if (selectedFreeChannel) {
@@ -3642,17 +3703,17 @@ export default function AIDock({
             selectedModel === "default"
               ? FREE_CHANNEL_AUTO_MODEL
               : selectedModel;
-          const modelOverride =
+          const autoOverride =
             autoModel === FREE_CHANNEL_AUTO_MODEL ? undefined : autoModel;
           setSessionRunSelection({
             ...freeChannelSelection(selectedFreeChannel.id, autoModel),
-            ...(modelOverride ? { modelOverride } : {}),
+            modelOverride: autoOverride,
           });
           return;
         }
         setSessionRunSelection({
           ...freeChannelSelection(selectedFreeChannel.id, selectedModel),
-          ...(modelOverride ? { modelOverride } : {}),
+          modelOverride,
         });
         return;
       }
@@ -3660,13 +3721,14 @@ export default function AIDock({
         const provider = selectedDefaultProvider.provider;
         setSessionRunSelection({
           ...providerSelection(provider, selectedModel),
-          ...(modelOverride ? { modelOverride } : {}),
+          modelOverride,
         });
         return;
       }
       setSessionRunSelection({
         ...systemDefaultGatewaySelection(selectedAdapter),
         modelClass: selectedModel === "default" ? "default" : selectedModel,
+        modelOverride,
       });
     },
     [
@@ -7537,6 +7599,8 @@ export default function AIDock({
               : generationMode === "speech"
                 ? speechChannelOptions
                 : channelSelectOptions;
+  // 编程模式渠道才启用置顶锁定；其余生成模式只折叠不锁定。
+  const isCodeChannelMode = channelOptions === channelSelectOptions;
   const channelValue =
     generationMode === "image"
       ? imageChannelValue
@@ -8061,6 +8125,14 @@ export default function AIDock({
                         {queuedUserMessage && (
                           <span className="shrink-0 rounded border border-accent/30 px-1.5 py-0.5 font-mono text-[10px] text-accent">
                             排队中
+                          </span>
+                        )}
+                        {m.interjected && !queuedUserMessage && (
+                          <span
+                            title={t(locale, "dock.interjectedBadgeTip")}
+                            className="shrink-0 rounded border border-accent-3/30 px-1.5 py-0.5 font-mono text-[10px] text-accent-3"
+                          >
+                            {t(locale, "dock.interjectedBadge")}
                           </span>
                         )}
                         {isUser && m.text.trim() && (
@@ -9287,6 +9359,11 @@ export default function AIDock({
                 icon="✦"
                 variant="ghost"
                 showSelectedHint={false}
+                collapsibleGroups
+                collapsedGroupsKey="ugs_collapsed_channel_groups_v1"
+                pinnable={isCodeChannelMode}
+                pinnedIds={isCodeChannelMode ? pinnedChannelIds : undefined}
+                onTogglePin={isCodeChannelMode ? toggleChannelPin : undefined}
               />
               {modelOptionsForMode.length > 0 && (
                 <Select

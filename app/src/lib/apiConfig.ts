@@ -58,7 +58,8 @@ export type ProviderKind =
   | 'gemini'
   | 'kimi'
   | 'deepseek-harness'
-  | 'zcode';
+  | 'zcode'
+  | 'grok';
 export type ProviderTransport = 'direct' | 'cli';
 
 /** One locally stored provider configuration. */
@@ -182,6 +183,15 @@ function diskWriteSoon(key: string, relPath: string): void {
       }
     });
   pendingFlush.set(key, next);
+}
+
+/**
+ * Await every queued disk write so the on-disk files reflect the current cache
+ * before the process exits. Called from the quit-flush handshake; resolves
+ * even if individual writes failed (errors are logged inside diskWriteSoon).
+ */
+export async function flushApiConfigDiskWrites(): Promise<void> {
+  await Promise.all([...pendingFlush.values()]);
 }
 
 /** Generate a stable id; `crypto.randomUUID` with a best-effort fallback. */
@@ -312,6 +322,7 @@ const PROVIDER_KINDS: ProviderKind[] = [
   'kimi',
   'deepseek-harness',
   'zcode',
+  'grok',
 ];
 
 type ActiveByKind = Partial<Record<ProviderKind, string>>;
@@ -574,6 +585,7 @@ function normalizeProviderKind(value: unknown): ProviderKind {
     return 'deepseek-harness';
   }
   if (value === 'zcode' || value === 'glm') return 'zcode';
+  if (value === 'grok') return 'grok';
   return 'anthropic';
 }
 
@@ -650,6 +662,7 @@ function providerAdapter(provider: Pick<Provider, 'kind'>): RuntimeAdapterId {
   if (provider.kind === 'kimi') return 'kimi';
   if (provider.kind === 'deepseek-harness') return 'deepseek-harness';
   if (provider.kind === 'zcode') return 'zcode';
+  if (provider.kind === 'grok') return 'grok';
   return 'claude-code';
 }
 
@@ -704,6 +717,19 @@ function syncGatewayProvidersFromProviders(list: Provider[]): void {
   );
   nextProviders.push(...list.map(providerToGatewayProvider));
   saveGatewayConfig({ version: 1, providers: nextProviders });
+}
+
+/**
+ * Rebuild the gateway mirror from the authoritative provider list. Called at
+ * boot (after disk hydration) so a stale `modelGateway.v1.json` snapshot is
+ * repaired from `providers.v1.json`. The run header renders the gateway's
+ * provider name and the channel picker renders the provider list; keeping the
+ * two in lockstep requires both this boot-time rebuild and the removal of the
+ * legacy localStorage overlay in `loadGatewayConfig` (which used to re-clobber
+ * a freshly-synced name with a stale one, e.g. "ExampleAI" over "ExampleGemini").
+ */
+export function syncGatewayFromProviders(): void {
+  syncGatewayProvidersFromProviders(loadProviders());
 }
 
 function upsertGatewayProvider(provider: Provider): void {
@@ -955,6 +981,7 @@ export function getActiveProviderIds(): Record<ProviderKind, string> {
     kimi: resolveActiveForKind(list, map, 'kimi'),
     'deepseek-harness': resolveActiveForKind(list, map, 'deepseek-harness'),
     zcode: resolveActiveForKind(list, map, 'zcode'),
+    grok: resolveActiveForKind(list, map, 'grok'),
   };
 }
 

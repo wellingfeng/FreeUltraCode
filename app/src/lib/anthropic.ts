@@ -208,6 +208,15 @@ export async function streamAnthropic(args: StreamArgs): Promise<string> {
     throw new Error('模型返回空内容：响应被内容安全过滤器拦截。');
   }
   if (!full.trim()) {
+    // Distinguish "the SSE stream carried zero events" (protocol / model
+    // mismatch — e.g. a Gemini model routed through an Anthropic /v1/messages
+    // endpoint that 200s but emits nothing) from "events arrived but no text"
+    // (auth failure, model unavailable, request intercepted).
+    if (stopReason == null && usage == null) {
+      throw new Error(
+        '模型返回空内容：SSE 流无任何事件（协议或模型不匹配——请检查渠道 transport 是否与模型协议一致）。',
+      );
+    }
     throw new Error('模型返回空内容：未收到任何文本 token（可能原因：上游鉴权失败、模型不可用或请求被拦截）。');
   }
   return full;

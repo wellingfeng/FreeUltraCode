@@ -9,7 +9,8 @@ import { initializeSecureStorage } from "@/lib/secureStorage";
 import { installQuitFlushHandler } from "@/lib/quitFlush";
 import { initializeGenerationSettingsStore } from "@/lib/generationSettingsStore";
 import { initializeGatewayConfigStore } from "@/lib/gatewayConfig";
-import { initializeApiConfigStore } from "@/lib/apiConfig";
+import { initializeApiConfigStore, syncGatewayFromProviders } from "@/lib/apiConfig";
+import { initializePersonalInstructionsStore } from "@/lib/composerStorage";
 import { refreshModelPricing } from "@/lib/modelPricing";
 
 const rootEl = document.getElementById("root");
@@ -27,6 +28,15 @@ async function bootstrap(): Promise<void> {
     initializeGatewayConfigStore(),
   ]);
   await initializeApiConfigStore();
+  // 用权威的 providers 数据重建网关镜像，修复 modelGateway.v1.json 与
+  // providers.v1.json 脱节导致的「渠道名显示成旧值」问题（如 ExampleGemini 显示
+  // 成 ExampleAI）。必须在 useStore 冷启动（首次 import）之前完成，否则路由头
+  // 仍会读到陈旧的 gateway name。
+  syncGatewayFromProviders();
+  // 个性化指令（按 adapter 分桶）需要在 settingsSlice 冷启动（首次 import
+  // useStore 时同步跑 loadPersonalInstructionsByModel）之前完成磁盘 hydrate，
+  // 否则启动时会从 localStorage 读到陈旧值。必须放在 dynamic import useStore 之前。
+  await initializePersonalInstructionsStore();
   // 退出兜底（托盘右键菜单「退出」/ 浏览器关闭）：把内存密钥同步落盘
   // localStorage，避免 keychain 异步写未完成时丢失就地编辑的 API Key。
   void installQuitFlushHandler();

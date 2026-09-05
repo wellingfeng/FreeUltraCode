@@ -28,6 +28,12 @@ export interface MemoryOp {
   content?: string;
   /** A short unique substring identifying the entry for replace/remove. */
   oldText?: string;
+  /**
+   * AI-suggested importance tier: 'must' | 'important' | 'minor' (Chinese
+   * variants are accepted and normalized). Defaults to 'important' on add;
+   * on replace it overrides the existing tier.
+   */
+  importance?: string;
 }
 
 /** A parsed memory-write request: a batch of ops against one target store. */
@@ -97,6 +103,11 @@ function normalizeOp(raw: unknown): MemoryOp | null {
   // Accept both camelCase (oldText) and snake_case (old_text) from models.
   const old = obj.oldText ?? obj.old_text;
   if (typeof old === 'string') op.oldText = old;
+  // Importance tier is free-form from the model (must/important/minor plus
+  // English/Chinese aliases); the store normalizes it on write.
+  if (typeof obj.importance === 'string' && obj.importance.trim()) {
+    op.importance = obj.importance;
+  }
   return op;
 }
 
@@ -178,10 +189,11 @@ export const MEMORY_WRITE_INSTRUCTION =
   '\n\n【长期记忆写入协议】你可以把"跨会话仍然有用"的稳定事实写入长期记忆。' +
   '需要写入时，在回复的末尾输出一个记忆块（用户看不到它，会被自动剥离），然后正常结束：\n' +
   `${MEMORY_OPEN}\n` +
-  '{"target":"user","operations":[{"action":"add","content":"简短的一条事实"}]}\n' +
+  '{"target":"user","operations":[{"action":"add","content":"简短的一条事实","importance":"important"}]}\n' +
   `${MEMORY_CLOSE}\n` +
   '- target：`user`=关于用户是谁（称呼、角色、偏好、沟通风格、常用引擎）；`memory`=你的笔记（当前项目引擎判读结果、资源目录约定、工具链怪癖、踩过的坑）。\n' +
   '- operations：原子批量执行，只在最终结果校验字数上限，所以同一个块里可以先 remove/replace 腾出空间再 add。action ∈ add|replace|remove；replace/remove 需要 oldText（已有条目的一段唯一子串）。\n' +
+  '- importance（重要度，add/replace 必须给出）：`must`=必须（用户明确纠正、硬性偏好、会导致返工的约定）；`important`=重要（环境、引擎、约定、工作流等稳定事实，默认值）；`minor`=不重要（锦上添花的细节，可被最先淘汰）。存储层接受中英文写法（必须/重要/不重要）。replace 不带 importance 时保留原条目的重要度。\n' +
   '- 何时写：用户表达偏好/纠正/个人信息，或你确认了关于其环境、约定、工作流的稳定事实时，主动写。优先级：用户偏好与纠正 > 环境事实 > 流程。最好的记忆能让用户不必重复自己。\n' +
   '- 不要写（这些会变成日后反噬你的"自我强加约束"）：环境型失败（缺二进制、命令找不到、未装依赖、未配置凭据）；对工具/功能的负面断言（"X 工具坏了""无法用 Y"）；会话内已解决的临时错误；一次性任务叙述；琐碎或可随时重新发现的信息。\n' +
   '- 条目要短、信息密度高。每条一句话。无需写入时不要输出记忆块。';

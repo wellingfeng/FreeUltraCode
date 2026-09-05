@@ -270,6 +270,7 @@ import {
   renderMemorySnapshotCompact,
 } from '@/lib/memoryStore';
 import { runConsolidatingReview } from '@/lib/memoryConsolidate';
+import { makeReviewInvoker } from '@/lib/memoryRefresh';
 import { renderKnowledgeBaseContextForPrompt } from '@/lib/knowledgeBase';
 import {
   MEMORY_WRITE_INSTRUCTION,
@@ -294,6 +295,7 @@ import {
 import {
   formatRecallHits,
   type SessionReader,
+  type SessionSearchHit,
 } from '@/lib/sessionSearch';
 import { searchSessionsIndexed } from '@/lib/sessionIndex';
 import {
@@ -330,6 +332,7 @@ import {
   type RunContext as RuntimeRunContext,
   type RunFailure,
   type RunGateway,
+  WORKSPACE_LAYOUT_DIRECTIVE,
 } from '@/runtime';
 import {
   DEFAULT_LOCALE,
@@ -858,6 +861,7 @@ function runtimeAdapterFromProviderKind(kind: unknown): GatewaySelection['adapte
   if (kind === 'kimi') return 'kimi';
   if (kind === 'deepseek-harness') return 'deepseek-harness';
   if (kind === 'zcode') return 'zcode';
+  if (kind === 'grok') return 'grok';
   return 'claude-code';
 }
 
@@ -914,7 +918,13 @@ function providerMatchesHistoricalModel(provider: Provider, model: string): bool
 function adapterFromHistoricalRouteName(
   routeName: string,
 ): RuntimeAdapterId | null {
-  const adapters: RuntimeAdapterId[] = ['claude-code', 'codex', 'gemini', 'kimi'];
+  const adapters: RuntimeAdapterId[] = [
+    'claude-code',
+    'codex',
+    'gemini',
+    'kimi',
+    'grok',
+  ];
   return (
     adapters.find((adapter) =>
       sameRouteLabel(runtimeAdapterLabel(adapter), routeName),
@@ -4499,6 +4509,7 @@ export const useStore = create<StoreState>((set, get) => ({
   chattingSessions: [],
   queuedChatMessageIds: [],
   steerableQueuedChatMessageIds: [],
+  editingQueuedChatMessageId: null,
   waitingInputSessions: [],
   blockedSendTip: null,
 
@@ -4726,6 +4737,7 @@ export const useStore = create<StoreState>((set, get) => ({
     });
   },
 
+  // [workflow 编排已废弃] 运行入口已短路（startWorkflowRun 入口直接 return）。
   // Run action — execute the blueprint node-by-node.
   //
   // Flow:
@@ -5019,6 +5031,7 @@ export const useStore = create<StoreState>((set, get) => ({
     }
     updateAiEditSessionSummary(ch);
     persistQueuedChatConversation(ch);
+    clearQueuedChatEditFor(messageId);
     return true;
   },
 
@@ -5027,6 +5040,7 @@ export const useStore = create<StoreState>((set, get) => ({
     if (!entry) return false;
     entry.cancelled = true;
     chatTurnQueueEntries.delete(entry.channel.key);
+    clearQueuedChatEditFor(messageId);
     syncQueuedChatMessageIds();
     const ids = new Set([messageId]);
     const ch = entry.channel;
@@ -5060,6 +5074,19 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   steerQueuedChatMessage: (messageId) => steerQueuedChatTurn(messageId),
+
+  beginQueuedChatMessageEdit: (messageId) => {
+    // Only a message that is still queued may be edited; otherwise the gate
+    // would pause a slot that no longer exists.
+    if (!queuedChatTurnEntryForMessage(messageId)) return;
+    beginQueuedChatEditGate(messageId);
+    useStore.setState({ editingQueuedChatMessageId: messageId });
+  },
+
+  cancelQueuedChatMessageEdit: () => {
+    const messageId = useStore.getState().editingQueuedChatMessageId;
+    if (messageId) clearQueuedChatEditFor(messageId);
+  },
 
   branchSessionFromMessage: (messageId) => {
     void branchChatSessionFromMessage(messageId);
@@ -5576,10 +5603,17 @@ ${previousReply.slice(0, 4000)}
         opts.cliCommand,
         opts.permission,
       ).catch(() => false);
-      if (liveSteerSupported) {
-        ch.liveSteer = { adapter: cli.adapter, runId, accepting: true };
-        syncQueuedChatMessageIds();
-      }
+      // Always expose a steer surface so the lightning action works on every
+      // adapter. `native` marks the ones with a real in-turn steer channel
+      // (codex/claude/zcode); the rest fall back to queue-steer semantics —
+      // see trySteerQueuedCliTurn.
+      ch.liveSteer = {
+        adapter: cli.adapter,
+        runId,
+        accepting: true,
+        native: liveSteerSupported,
+      };
+      syncQueuedChatMessageIds();
       // Capture the backend's real token usage (claude/codex emit cache hits
       // via the `ai-cli-usage` event). When present we record it as authoritative
       // so the status bar shows the true cache percentage instead of `--`.
@@ -6209,6 +6243,9 @@ ${previousReply.slice(0, 4000)}
           knowledgeContext,
           useCli ? projectMcpGuidance : '',
           backgroundJobBlock,
+          // 简单直聊同样会产出临时脚本/文档/HTML 等副产物，必须与 workflow
+          // agent 节点（gateway.ts）一样注入目录约定，否则模型全写进项目根目录。
+          WORKSPACE_LAYOUT_DIRECTIVE,
         ].join('');
         // DeepSeek Harness (dsh) reads its task ONLY from an argv positional
         // argument (no stdin), and on Windows it launches via `cmd /C dsh.cmd`,
@@ -6584,14 +6621,33 @@ ${previousReply.slice(0, 4000)}
                     .getSession(wid, sid)
                     .then((rec) => (rec ? { messages: rec.messages } : null)),
               };
-              const hits = await searchSessionsIndexed(
+              const hits: SessionSearchHit[] = await searchSessionsIndexed(
                 reader,
                 recallWorkspaceId,
                 recall.query,
                 { limit: Math.min(recall.limit ?? 5, 8), excludeSessionId: ch.sessionId ?? undefined },
               ).catch(() => []);
+              // Workspace-first with a global fallback: a query about a global
+              // fact (user preferences, cross-project tooling) finds nothing in
+              // one project's history — search all workspaces before giving up.
+              let effectiveHits: SessionSearchHit[] = hits;
+              if (!effectiveHits.length) {
+                const allWs = await historyStore.listWorkspaces().catch(() => []);
+                for (const ws of allWs) {
+                  if (ws.id === recallWorkspaceId) continue;
+                  const wsHits = await searchSessionsIndexed(
+                    reader,
+                    ws.id,
+                    recall.query,
+                    { limit: 4, excludeSessionId: ch.sessionId ?? undefined },
+                  ).catch(() => []);
+                  effectiveHits = effectiveHits.concat(wsHits);
+                  if (effectiveHits.length >= 8) break;
+                }
+                effectiveHits = effectiveHits.slice(0, 8);
+              }
               newBubble(withAiTiming('⟳ 生成中…'));
-              continuation = `历史会话检索结果（query: ${recall.query}）：\n${formatRecallHits(hits)}\n\n请基于以上检索结果继续回答用户。`;
+              continuation = `历史会话检索结果（query: ${recall.query}）：\n${formatRecallHits(effectiveHits)}\n\n请基于以上检索结果继续回答用户。`;
               continue;
             }
             // Model-driven asset generation (UGS_GEN protocol). Only honored when
@@ -6719,9 +6775,29 @@ ${previousReply.slice(0, 4000)}
             : [];
           finalAnswer = stripMemoryWrites(finalAnswer);
           if (memoryWrites.length) {
+            // Fire-and-forget, but not SILENT: rejections (safety scan, char
+            // limit) and duplicate skips are logged so a blocked write is
+            // diagnosable from the console instead of vanishing.
             void applyMemoryWrites(memoryWrites, workspaceMemoryId, {
               evictOnOverflow: memoryConfig.evictOnOverflow,
-            }).catch(() => {});
+              safetyScan: memoryConfig.safetyScanEnabled ? 'reject' : 'off',
+            })
+              .then((results) => {
+                for (const r of results) {
+                  if (!r.success) {
+                    console.warn('[memory] 写入被拒', r.target, r.error);
+                  } else if (r.skipped?.length) {
+                    console.info(
+                      '[memory] 跳过',
+                      r.target,
+                      r.skipped.map((s) => s.reason).join('；'),
+                    );
+                  }
+                }
+              })
+              .catch((err) => {
+                console.warn('[memory] 写入失败', err);
+              });
           }
           // Background self-review (stage 5): when enabled and rate-limit/signal
           // gates pass, fork a cheap fire-and-forget model call that replays the
@@ -6756,24 +6832,37 @@ ${previousReply.slice(0, 4000)}
                   const contexts = [
                     formatReviewMemoryContext({
                       label: '用户画像（全局）',
-                      entries: userUsage.entries.map((e) => e.text),
+                      entries: userUsage.entries,
                       used: userUsage.used,
                       limit: userUsage.limit,
                     }),
                     formatReviewMemoryContext({
                       label: '助手笔记（本项目）',
-                      entries: memUsage.entries.map((e) => e.text),
+                      entries: memUsage.entries,
                       used: memUsage.used,
                       limit: memUsage.limit,
                     }),
                   ];
+                  const mainInvoke = (system: string, userContent: string) =>
+                    completeDirectWithSpeed({ system, userContent });
                   await runConsolidatingReview({
-                    invokeModel: (system, userContent) =>
-                      completeDirectWithSpeed({ system, userContent }),
+                    // Cheap-model pin (reviewPreferCheapModel +
+                    // reviewModelSelection), falling back to the main route.
+                    invokeModel: makeReviewInvoker(memoryConfig, mainInvoke),
+                    // Two-stage summary replay: compress the overflow head
+                    // into a digest instead of truncating it away. The
+                    // pre-built transcript stays as the no-digest fallback.
                     transcript,
+                    messages: transcriptMsgs,
+                    summarize: makeReviewInvoker(memoryConfig, mainInvoke),
                     contexts,
                     workspaceId: workspaceMemoryId,
                     evictOnOverflow: memoryConfig.evictOnOverflow,
+                    // Autonomous review writes stage for approval when
+                    // approvalRequired is on (Hermes write_approval); the
+                    // foreground UGS_MEMORY path above stays direct.
+                    approvalMode: memoryConfig.approvalRequired ? 'queue' : 'direct',
+                    source: 'review',
                   });
                 } catch {
                   /* review is best-effort; never disturb the chat turn */
@@ -7448,13 +7537,24 @@ interface ChatTurnQueueEntry {
   started: boolean;
   cancelled: boolean;
   steering: boolean;
+  /**
+   * Queue-steer confirmation (non-native adapters): the user steered this
+   * queued message into the active turn, so it drops the "pending" badge and
+   * merges into the running stream immediately. The FIFO entry itself stays
+   * alive — the message still fires after the current turn drains, via the
+   * full-history replay — so nothing is lost.
+   */
+  confirmed?: boolean;
 }
 
 const chatTurnQueueEntries = new Map<string, ChatTurnQueueEntry>();
 
 function queuedChatMessageIds(): string[] {
   return [...chatTurnQueueEntries.values()]
-    .filter((entry) => !entry.started && !entry.cancelled)
+    .filter(
+      (entry) =>
+        !entry.started && !entry.cancelled && !entry.steering && !entry.confirmed,
+    )
     .map((entry) => entry.messageId);
 }
 
@@ -7480,6 +7580,7 @@ function steerableQueuedChatMessageIds(): string[] {
         !entry.started &&
         !entry.cancelled &&
         !entry.steering &&
+        !entry.confirmed &&
         runningSteerEntryForQueued(entry) !== null,
     )
     .map((entry) => entry.messageId);
@@ -7503,6 +7604,46 @@ function queuedChatTurnEntryForMessage(
   );
 }
 
+/**
+ * Inline-edit gates. A queued message open in the editor holds an unresolved
+ * promise; its FIFO slot awaits it before starting, so a turn never fires with
+ * stale text while the user is still typing. Committing, cancelling, deleting or
+ * steering the message resolves the gate and lets the queue drain.
+ */
+interface QueuedChatEditGate {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+const queuedChatEditGates = new Map<string, QueuedChatEditGate>();
+
+function beginQueuedChatEditGate(messageId: string): void {
+  if (queuedChatEditGates.has(messageId)) return;
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  queuedChatEditGates.set(messageId, { promise, resolve });
+}
+
+function endQueuedChatEditGate(messageId: string): void {
+  const gate = queuedChatEditGates.get(messageId);
+  if (!gate) return;
+  queuedChatEditGates.delete(messageId);
+  gate.resolve();
+}
+
+function waitForQueuedChatEdit(messageId: string): Promise<void> {
+  return queuedChatEditGates.get(messageId)?.promise ?? Promise.resolve();
+}
+
+function clearQueuedChatEditFor(messageId: string): void {
+  endQueuedChatEditGate(messageId);
+  if (useStore.getState().editingQueuedChatMessageId === messageId) {
+    useStore.setState({ editingQueuedChatMessageId: null });
+  }
+}
+
 function persistQueuedChatConversation(ch: AiEditChannel): void {
   const patch: SessionPatch = {
     messages: ch.chat ? mergeAiEditChatMessages(ch) : ch.messages,
@@ -7520,6 +7661,21 @@ async function trySteerQueuedCliTurn(entry: ChatTurnQueueEntry): Promise<boolean
     ?.text.trim();
   if (!text) return false;
 
+  // Non-native adapters (gemini, kimi, grok, dsh, …) have no in-turn steer
+  // channel. Confirm the message instead: drop its "pending" badge so it reads
+  // as sent in the stream (the text already lives in the shared `messages`
+  // list — the badge is only an overlay), then let the FIFO fire it right
+  // after the current turn drains. The full-history replay carries the
+  // context, so the model still sees it in order. Nothing is merged into the
+  // running channel, nothing is cancelled, and the queue slot is kept — we
+  // only re-label the UI state.
+  if (!running.channel.liveSteer.native) {
+    entry.confirmed = true;
+    clearQueuedChatEditFor(entry.messageId);
+    syncQueuedChatMessageIds();
+    return true;
+  }
+
   entry.steering = true;
   syncQueuedChatMessageIds();
   try {
@@ -7527,21 +7683,44 @@ async function trySteerQueuedCliTurn(entry: ChatTurnQueueEntry): Promise<boolean
     if (!steered || entry.cancelled) return false;
     entry.cancelled = true;
     chatTurnQueueEntries.delete(entry.channel.key);
+    clearQueuedChatEditFor(entry.messageId);
     syncQueuedChatMessageIds();
 
     const userMessage = entry.channel.messages.find(
       (message) => message.id === entry.messageId,
     );
     if (userMessage) {
-      running.channel.ownedMessageIds?.add(userMessage.id);
-      running.channel.messages = mergeMessagesById(
-        running.channel.messages,
-        [userMessage],
-      );
+      // 插话已注入正在运行的这一轮，它属于本轮输入，所以要显示在本轮回复气泡
+      // 之前。否则后续流式内容继续写进它上方那个气泡，插话会被永久压在会话最
+      // 底部（时间条之上、操作按钮之下），看起来像还没发出去。
+      const interjection: Message = { ...userMessage, interjected: true };
+      const firstReplyId = running.channel.messages.find(
+        (message) =>
+          message.role === 'assistant' &&
+          running.channel.ownedMessageIds?.has(message.id),
+      )?.id;
+      const placeInterjection = (list: Message[]): Message[] => {
+        const rest = list.filter((message) => message.id !== interjection.id);
+        const at = firstReplyId
+          ? rest.findIndex((message) => message.id === firstReplyId)
+          : -1;
+        if (at < 0) return [...rest, interjection];
+        return [...rest.slice(0, at), interjection, ...rest.slice(at)];
+      };
+      running.channel.ownedMessageIds?.add(interjection.id);
+      running.channel.messages = placeInterjection(running.channel.messages);
       running.channel.workflow = simpleWorkflowFromMessages(
         running.channel.workflow,
         running.channel.messages,
       );
+      // The visible list is the merge base, so it needs the same order — merging
+      // preserves `base` positions and would otherwise pull the interjection
+      // back to the tail on the next streaming commit.
+      if (aiEditViewActive(running.channel)) {
+        useStore.setState((state) => ({
+          messages: placeInterjection(state.messages),
+        }));
+      }
       // Keep the active assistant bubble streaming. The user message was
       // already appended to durable history by sendPrompt; persisting this
       // channel here would stamp the still-running assistant as completed.
@@ -7587,6 +7766,11 @@ function enqueueChatTurn(
   const prev = chatTurnQueues.get(sessionKey) ?? Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
     if (entry.cancelled || !aiEditRegistered(ch)) return;
+    // Pause the slot while the user is editing this queued message. The gate
+    // resolves on commit/cancel/delete/steer, then the turn runs with the final
+    // text. Re-check cancellation afterwards: deleting while editing must skip.
+    await waitForQueuedChatEdit(entry.messageId);
+    if (entry.cancelled || !aiEditRegistered(ch)) return;
     entry.started = true;
     syncQueuedChatMessageIds();
     try {
@@ -7610,6 +7794,7 @@ function clearPendingChatTurns(sessionKey: string): void {
     if (entry.sessionKey !== sessionKey || entry.started) continue;
     entry.cancelled = true;
     chatTurnQueueEntries.delete(key);
+    clearQueuedChatEditFor(entry.messageId);
   }
   syncQueuedChatMessageIds();
 }
@@ -7624,10 +7809,12 @@ function clearPendingChatTurns(sessionKey: string): void {
 export function __resetSimpleChatRuntimeForTests(): void {
   chatTurnQueues.clear();
   chatTurnQueueEntries.clear();
+  queuedChatEditGates.clear();
   sessionTitleNamingInFlight.clear();
   sessionIntentAutoTitles.clear();
   sessionTitleNamingEpoch += 1;
   syncQueuedChatMessageIds();
+  useStore.setState({ editingQueuedChatMessageId: null });
   chatNativeSessions.clear();
 }
 
@@ -7852,6 +8039,13 @@ export function removeAiEditChannel(ch: AiEditChannel | null): void {
   const rootPath = ch.workspaceRootPath;
   rememberAiEditSnapshot(ch);
   flushAiEditPersist(ch);
+  // Leak guard: any still-pending interaction resolver bound to this channel
+  // must be cancelled before the channel disappears from the registry.
+  // Otherwise the resolver lingers in `pendingInteractionResolvers`, the
+  // session stays in `waitingInputSessions`, and the Sidebar keeps showing a
+  // yellow "awaiting input" dot for a widget the user can no longer see or
+  // answer (channel already gone → no visible message carries the widget).
+  resolvePendingAiEditInteractions(ch);
   activeAiEdits.delete(ch.key);
   syncAiEditingSessions();
   refreshSessionChangesForKey(sessionKey, rootPath);
@@ -7915,7 +8109,7 @@ function stopActiveChat(): void {
  */
 function steerQueuedChatTurn(messageId: string): boolean {
   const entry = queuedChatTurnEntryForMessage(messageId);
-  if (!entry || entry.steering) return false;
+  if (!entry || entry.steering || entry.confirmed) return false;
   const running = runningSteerEntryForQueued(entry);
   if (!running) return false;
   void trySteerQueuedCliTurn(entry);
@@ -8365,6 +8559,11 @@ function finishRun(ch: RunChannel | null): void {
   if (!ch) return;
   const sessionKey = { workspaceId: ch.workspaceId, sessionId: ch.sessionId };
   const rootPath = ch.config.cwd;
+  // Leak guard: any still-pending interaction resolver bound to this channel
+  // must be cancelled before the channel disappears from the registry.
+  // Otherwise `waitingInputSessions` keeps this session and the Sidebar keeps
+  // showing a phantom yellow "awaiting input" dot with no widget to answer.
+  resolvePendingInteractions(ch);
   activeRuns.delete(ch.key);
   syncRunningSessions();
   refreshSessionChangesForKey(sessionKey, rootPath);
@@ -9081,7 +9280,17 @@ function getRunLaunchContext(state: StoreState): {
   return { workspaceId: null, sessionId: state.activeSessionId };
 }
 
+// [workflow 编排已废弃] 总闸：蓝图编排运行链路已停用（UI 无编排入口，canvas/ 画布
+// 早已无人引用）。返回 true 时 startWorkflowRun/stopWorkflowRun 入口直接短路；
+// 改回 false 即可整体恢复，执行器代码（executeViaCliInterpreter/executeViaSimulator/
+// runtime/dag.ts 等）全部保留。用函数而非常量，避免 TS 把后续代码判成不可达。
+function workflowOrchestrationDisabled(): boolean {
+  return true;
+}
+
 function startWorkflowRun(resume: boolean): void {
+  // [workflow 编排已废弃] 见 workflowOrchestrationDisabled 注释。
+  if (workflowOrchestrationDisabled()) return;
   const state = useStore.getState();
   if (isWorkflowReadOnly(state)) return;
 
@@ -9203,6 +9412,8 @@ function startWorkflowRun(resume: boolean): void {
 }
 
 function stopWorkflowRun(): void {
+  // [workflow 编排已废弃] 与 startWorkflowRun 同批停用，见 workflowOrchestrationDisabled。
+  if (workflowOrchestrationDisabled()) return;
   const state = useStore.getState();
   const ch = getRunChannel(state.activeWorkspaceId ?? null, state.activeSessionId);
   if (!ch) return;

@@ -1,4 +1,5 @@
 import { SIMPLE_CHAT_SYSTEM, buildAssetCapabilityBlock } from '@/lib/anthropic';
+import { WORKSPACE_LAYOUT_DIRECTIVE } from '@/runtime';
 import { isLocale, languageAdaptationPrompt, languageDirectiveReminder } from '@/lib/i18n';
 import {
   preferredReadyImageProviderId,
@@ -575,6 +576,8 @@ async function buildRemotePrompt(options: StartRemoteChatTurnOptions): Promise<s
     options.projectEngineGuidance,
     knowledgeContext,
     '\n你运行在云端项目工作区。可以修改该项目仓库；回答需总结改动、风险、验证。不要输出 workflow 蓝图。',
+    // 与本地直聊对齐：云端工作区同样禁止把副产物散落在项目根目录。
+    WORKSPACE_LAYOUT_DIRECTIVE,
   ].join('');
   const locale = isLocale(options.locale) ? options.locale : 'zh-CN';
   // Recency reminder: a long agentic remote run accumulates lots of English

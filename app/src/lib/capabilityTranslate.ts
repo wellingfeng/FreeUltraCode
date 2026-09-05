@@ -45,6 +45,7 @@ const AGENT_SUPPORT: Record<
       reason: '尚无标准 skill 安装目录，待接入',
     },
     zcode: { supported: false, reason: '尚无标准 skill 安装目录，待接入' },
+    grok: { supported: true },
   },
   mcp: {
     'claude-code': { supported: true },
@@ -60,6 +61,7 @@ const AGENT_SUPPORT: Record<
       reason: '尚无标准 MCP 配置文件，待接入',
     },
     zcode: { supported: false, reason: '尚无标准 MCP 配置文件，待接入' },
+    grok: { supported: false, reason: '尚无标准 MCP 配置文件，待接入' },
   },
   lsp: {
     // LSP 是运行时能力：任何 agent 都只能「复用」同一 LSP 进程，而不是翻译文本。
@@ -88,6 +90,10 @@ const AGENT_SUPPORT: Record<
       reason: 'LSP 为运行时能力，仅生成统一目录清单供复用',
     },
     zcode: {
+      supported: true,
+      reason: 'LSP 为运行时能力，仅生成统一目录清单供复用',
+    },
+    grok: {
       supported: true,
       reason: 'LSP 为运行时能力，仅生成统一目录清单供复用',
     },

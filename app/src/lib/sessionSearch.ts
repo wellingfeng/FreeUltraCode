@@ -206,6 +206,28 @@ export function rankSessions(
   return hits.slice(0, opts.limit);
 }
 
+/**
+ * Boolean full-text match over a single session: true when any query term
+ * appears in the title or any message body. Unlike `rankSessions` (which drops
+ * title-only hits for lack of a message anchor), this keeps every match so a
+ * sidebar filter can surface sessions regardless of where the text sits.
+ */
+export function sessionMatchesQuery(
+  session: SearchableSession,
+  query: string,
+): boolean {
+  const terms = queryTerms(query);
+  if (terms.length === 0) return false;
+  const titleLower = norm(session.title);
+  if (terms.some((term) => titleLower.includes(term))) return true;
+  for (const msg of session.messages) {
+    const lower = norm(msg.text);
+    if (!lower) continue;
+    if (terms.some((term) => lower.includes(term))) return true;
+  }
+  return false;
+}
+
 // --- history-store-backed entry point ---------------------------------------
 
 /** Reader the search uses to pull sessions. Mirrors the historyStore subset. */

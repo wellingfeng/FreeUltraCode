@@ -117,6 +117,13 @@ export interface Message {
    * builders MUST drop messages with this flag before sending to the LLM.
    */
   localOnly?: boolean;
+  /**
+   * User message that was steered ("插话") into an already-running turn instead
+   * of starting a new one. It belongs to that turn's input, so the stream shows
+   * it just above the turn's reply bubble rather than stranded at the tail of
+   * the conversation, where it reads as "not sent yet".
+   */
+  interjected?: boolean;
 }
 
 /**

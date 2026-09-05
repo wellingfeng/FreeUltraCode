@@ -5,6 +5,7 @@ import {
   queryTerms,
   rankSessions,
   searchSessions,
+  sessionMatchesQuery,
   type SearchableSession,
   type SessionReader,
 } from './sessionSearch';
@@ -101,6 +102,35 @@ describe('searchSessions (reader-backed)', () => {
 
   it('returns empty for an empty query', async () => {
     expect(await searchSessions(reader, 'ws', '')).toEqual([]);
+  });
+});
+
+describe('sessionMatchesQuery', () => {
+  it('matches text in any message body', () => {
+    const s = session('s1', '战斗系统', [
+      ['user', '开始讨论'],
+      ['assistant', '这里提到了宋亚东这个名字'],
+    ]);
+    expect(sessionMatchesQuery(s, '宋亚东')).toBe(true);
+  });
+
+  it('matches user input as well as assistant output', () => {
+    const s = session('s2', '普通标题', [
+      ['user', '请介绍宋亚东'],
+      ['assistant', '好的'],
+    ]);
+    expect(sessionMatchesQuery(s, '宋亚东')).toBe(true);
+  });
+
+  it('matches a title-only hit (unlike ranked search)', () => {
+    const s = session('s3', '宋亚东的专访', [['user', '随便聊聊']]);
+    expect(sessionMatchesQuery(s, '宋亚东')).toBe(true);
+  });
+
+  it('returns false for no match and for blank query', () => {
+    const s = session('s4', '无关标题', [['user', '没有目标词']]);
+    expect(sessionMatchesQuery(s, '宋亚东')).toBe(false);
+    expect(sessionMatchesQuery(s, '')).toBe(false);
   });
 });
 

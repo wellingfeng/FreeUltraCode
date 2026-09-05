@@ -5,6 +5,7 @@ export const RUNTIME_ADAPTERS = [
   { id: 'kimi', label: 'Kimi Code' },
   { id: 'deepseek-harness', label: 'DeepSeek Harness' },
   { id: 'zcode', label: 'ZCode / GLM' },
+  { id: 'grok', label: 'Grok' },
 ] as const;
 
 export type RuntimeAdapterId = (typeof RUNTIME_ADAPTERS)[number]['id'];

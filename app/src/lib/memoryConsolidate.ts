@@ -24,9 +24,14 @@
 
 import {
   REVIEW_SYSTEM,
+  DIGEST_SYSTEM,
+  buildDigestUserPrompt,
   buildReviewUserPrompt,
   buildConsolidateFeedback,
   buildConsolidateRetryPrompt,
+  joinDigestAndTail,
+  splitTranscriptForDigest,
+  DIGEST_MAX_RATIO,
   MAX_CONSOLIDATE_RETRIES,
 } from '@/core/memoryReview';
 import { parseMemoryWrites, type MemoryTarget } from '@/core/memoryProtocol';
@@ -37,6 +42,12 @@ export interface ConsolidatingReviewOptions {
   invokeModel: (system: string, userContent: string) => Promise<string>;
   /** The bounded transcript of what to review. */
   transcript: string;
+  /**
+   * Raw messages for the two-stage digest path: when given (and summarize is
+   * set), the overflow head is model-compressed into a digest that is
+   * prepended to the verbatim tail instead of being discarded.
+   */
+  messages?: { role: string; text: string }[];
   /** Current-store snapshot blocks to inject on the first attempt. */
   contexts?: string[];
   /** Scopes the `memory` store; ignored for `user`. */
@@ -45,8 +56,23 @@ export interface ConsolidatingReviewOptions {
   evictOnOverflow?: boolean;
   /** Restrict applied writes to one store (refresh scope); undefined = both. */
   target?: MemoryTarget;
+  /** Source label recorded on queued writes (approvalMode 'queue'). */
+  source?: 'review' | 'refresh';
+  /**
+   * Two-stage digest (summary replay): when the transcript overflows its
+   * budget, `summarize` compresses the overflow head into dense facts that
+   * are prepended to the verbatim tail. Omit → legacy truncate-keep-tail.
+   * Should point at the cheap review model; failures fall back to truncation.
+   */
+  summarize?: (system: string, userContent: string) => Promise<string>;
   /** Extra retries past the first attempt (default MAX_CONSOLIDATE_RETRIES). */
   maxRetries?: number;
+  /**
+   * 'direct' (default) applies writes to the store immediately. 'queue' stages
+   * them into the pending-approval list instead (lib/memoryPending.ts) — used
+   * when approvalRequired is on, for autonomous/unsupervised review paths.
+   */
+  approvalMode?: 'direct' | 'queue';
 }
 
 export interface ConsolidatingReviewResult {
@@ -58,18 +84,52 @@ export interface ConsolidatingReviewResult {
   wroteMemory: boolean;
   /** Error strings from the final round's rejections (empty when settled). */
   lastErrors: string[];
+  /** Ops staged for approval instead of applied (approvalMode 'queue'). */
+  queuedOps: number;
 }
 
 export async function runConsolidatingReview(
   opts: ConsolidatingReviewOptions,
 ): Promise<ConsolidatingReviewResult> {
   const maxAttempts = 1 + Math.max(0, opts.maxRetries ?? MAX_CONSOLIDATE_RETRIES);
-  let userContent = buildReviewUserPrompt(opts.transcript, opts.contexts ?? []);
   let appliedOps = 0;
   let wroteUser = false;
   let wroteMemory = false;
+  let queuedOps = 0;
   let lastErrors: string[] = [];
   let attempts = 0;
+  const approvalMode = opts.approvalMode ?? 'direct';
+
+  // Two-stage digest: compress the overflow head instead of dropping it.
+  // Runs whenever raw messages + summarize are provided; on any digest
+  // failure the caller's pre-built (truncated) transcript is the fallback.
+  let digestUsed = false;
+  let userContent = '';
+  if (opts.messages?.length && opts.summarize) {
+    const overflow = splitTranscriptForDigest(opts.messages);
+    if (overflow) {
+      const digestMax = Math.max(
+        200,
+        Math.floor(DIGEST_MAX_RATIO * (overflow.overflow.length + overflow.tail.length)),
+      );
+      try {
+        const digest = await opts.summarize(
+          DIGEST_SYSTEM,
+          buildDigestUserPrompt(overflow.overflow, digestMax),
+        );
+        userContent = buildReviewUserPrompt(
+          joinDigestAndTail(digest.slice(0, digestMax), overflow.tail),
+          opts.contexts ?? [],
+        );
+        digestUsed = true;
+      } catch {
+        /* digest is best-effort; fall back to the caller's transcript */
+      }
+    }
+  }
+  if (!digestUsed) {
+    userContent = buildReviewUserPrompt(opts.transcript, opts.contexts ?? []);
+  }
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     attempts = attempt;
@@ -79,6 +139,25 @@ export async function runConsolidatingReview(
     );
     if (!proposals.length) {
       // "无" / nothing emitted — the review is done, nothing to retry.
+      lastErrors = [];
+      break;
+    }
+
+    if (approvalMode === 'queue') {
+      // Autonomous path: stage everything and stop looping — there is no
+      // rejection feedback to consolidate against until a human approves.
+      const { queuePendingMemoryWrites } = await import('./memoryPending');
+      queuedOps += await queuePendingMemoryWrites(
+        proposals,
+        opts.source ?? 'review',
+        opts.workspaceId,
+      );
+      for (const p of proposals) {
+        if (p.target === 'user') wroteUser = true;
+        if (p.target === 'memory') wroteMemory = true;
+      }
+      // Staged ops are NOT counted as appliedOps — the caller reports them
+      // separately via queuedOps (they have not hit the store yet).
       lastErrors = [];
       break;
     }
@@ -121,5 +200,5 @@ export async function runConsolidatingReview(
     );
   }
 
-  return { attempts, appliedOps, wroteUser, wroteMemory, lastErrors };
+  return { attempts, appliedOps, wroteUser, wroteMemory, lastErrors, queuedOps };
 }

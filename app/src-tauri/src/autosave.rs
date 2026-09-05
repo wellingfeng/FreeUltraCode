@@ -78,7 +78,7 @@ pub struct AutosaveConfig {
 impl Default for AutosaveConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             interval_minutes: DEFAULT_INTERVAL_MINUTES,
             retention_days: DEFAULT_RETENTION_DAYS,
         }

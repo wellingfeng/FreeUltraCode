@@ -1,6 +1,6 @@
 /**
  * `ugs list <resource>` — query environment capabilities (spec §3.6).
- *   adapters  : scan PATH for claude/codex/gemini CLIs (via io/which-cli).
+ *   adapters  : scan PATH for claude/codex/gemini/grok CLIs (via io/which-cli).
  *   models    : built-in model list per adapter.
  *   templates : built-in templates + ~/.ugs/templates/*.ugs.json.
  */
@@ -16,7 +16,7 @@ export interface ListOptions extends GlobalOptions {
   adapter?: string;
 }
 
-const KNOWN_ADAPTERS = ['claude-code', 'codex', 'gemini'];
+const KNOWN_ADAPTERS = ['claude-code', 'codex', 'gemini', 'grok'];
 
 const BUILTIN_MODELS: Record<string, Array<{ model: string; cls: string; desc: string }>> = {
   'claude-code': [
@@ -26,6 +26,10 @@ const BUILTIN_MODELS: Record<string, Array<{ model: string; cls: string; desc: s
   ],
   codex: [{ model: 'gpt-5-codex', cls: 'default', desc: 'OpenAI Codex' }],
   gemini: [{ model: 'gemini-2.5-pro', cls: 'default', desc: 'Google Gemini' }],
+  grok: [
+    { model: 'grok-4.6', cls: 'default', desc: 'xAI Grok (default)' },
+    { model: 'grok-4.5', cls: 'default', desc: 'xAI Grok' },
+  ],
 };
 
 export async function runList(resource: string, opts: ListOptions): Promise<number> {

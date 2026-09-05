@@ -567,11 +567,23 @@ export function gatewayRouteEnv(
 ): Record<string, string> | undefined {
   const env: Record<string, string> = {};
   if (route.adapter === 'gemini') {
+    // route.env is consumed ONLY by the CLI subprocess path (aiEditViaCli) —
+    // including the direct→cli network-failure fallback in modelGateway.ts.
+    // The openai-compatible HTTP fetcher reads route.apiKey/baseUrl directly,
+    // so always export GEMINI_* here regardless of transport: the CLI fallback
+    // needs them, and the HTTP path ignores them.
     if (route.apiKey) {
       env.GEMINI_API_KEY = route.apiKey;
       env.GOOGLE_API_KEY = route.apiKey;
     }
     if (route.baseUrl) env.GOOGLE_GEMINI_BASE_URL = route.baseUrl;
+  } else if (route.adapter === 'deepseek-harness') {
+    // A direct-compatible DeepSeek channel can still be forced through dsh
+    // when the session needs project MCP. Build dsh's env from the adapter,
+    // not the channel transport, so that fallback never receives OPENAI_*.
+    if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
+    if (route.baseUrl) env.DEEPSEEK_BASE_URL = route.baseUrl;
+    if (route.model) env.UGS_DSH_MODEL = route.model;
   } else if (route.transport === 'anthropic') {
     if (route.apiKey) {
       env.ANTHROPIC_API_KEY = route.apiKey;
@@ -601,18 +613,6 @@ export function gatewayRouteEnv(
     } else if (route.adapter === 'codex') {
       if (route.apiKey) env.OPENAI_API_KEY = route.apiKey;
       if (route.baseUrl) env.OPENAI_BASE_URL = route.baseUrl;
-    } else if (route.adapter === 'deepseek-harness') {
-      // dsh reads its DeepSeek key + endpoint from the inherited environment /
-      // credential store (DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL). The model id
-      // itself lives in the cordis composition (`agent-default-model`), which
-      // is normally only settable via `$DSH_HOME/settings.yaml`; UGS therefore
-      // forwards the channel's model through a private env var
-      // (`UGS_DSH_MODEL`) and bakes it into the `--patch` overlay that
-      // `ai_cli` writes for this run (see `dsh_log::ugs_patch_yaml`). The
-      // env var is read by UGS only — dsh never sees it directly.
-      if (route.apiKey) env.DEEPSEEK_API_KEY = route.apiKey;
-      if (route.baseUrl) env.DEEPSEEK_BASE_URL = route.baseUrl;
-      if (route.model) env.UGS_DSH_MODEL = route.model;
     } else if (route.adapter === 'zcode') {
       // ZCode reads its provider + model from `~/.zcode/cli/config.json`
       // (provider.zai + model.main), never from env vars directly. The Rust
@@ -639,6 +639,11 @@ export function gatewayRouteEnv(
         env.KIMI_MODEL_NAME = route.model;
         if (route.baseUrl) env.KIMI_MODEL_BASE_URL = route.baseUrl;
       }
+    } else if (route.adapter === 'grok') {
+      // grok (`@xai-official/grok`) reads its xAI credential from `XAI_API_KEY`
+      // (a "xai-..." key from console.x.ai). The model id rides `--model` in
+      // the CLI branch, so only the key needs an env override here.
+      if (route.apiKey) env.XAI_API_KEY = route.apiKey;
     }
   }
   return Object.keys(env).length > 0 ? env : undefined;
@@ -683,6 +688,7 @@ function adapterToProviderKind(adapter: string): ProviderKind {
   if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'deepseek-harness';
   if (adapter === 'zcode') return 'zcode';
+  if (adapter === 'grok') return 'grok';
   return 'anthropic';
 }
 
@@ -866,7 +872,8 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
     value === 'gemini' ||
     value === 'kimi' ||
     value === 'deepseek-harness' ||
-    value === 'zcode'
+    value === 'zcode' ||
+    value === 'grok'
   ) {
     return value;
   }

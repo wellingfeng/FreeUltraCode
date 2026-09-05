@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { parseFileRef } from './lib/filePath';
+import { classifyInlineCode } from './lib/inlineCodeKind';
 import FileChip, { type OpenFileFn } from './FileChip';
 
 /**
@@ -21,8 +22,28 @@ export default function InlineCode({
   const text = childrenToText(children);
   const ref = text ? parseFileRef(text, { allowSpaces: true }) : null;
 
+  // Color by token category (path / command / flag / function / identifier)
+  // using the same theme vars the fenced code blocks use, so an answer's prose
+  // and its code blocks share one palette. Unknown content keeps the plain
+  // accent color.
+  const kind = classifyInlineCode(text);
+  const kindClass =
+    kind === 'cmd'
+      ? ' ai-inline-code--cmd'
+      : kind === 'flag'
+        ? ' ai-inline-code--flag'
+        : kind === 'func'
+          ? ' ai-inline-code--func'
+          : kind === 'path'
+            ? ' ai-inline-code--path'
+            : kind === 'ident'
+              ? ' ai-inline-code--ident'
+              : '';
+
   const plainCode = (
-    <code className="ai-inline-code rounded bg-[color-mix(in_oklab,var(--code-bg)_55%,transparent)] px-1.5 py-0.5 font-mono text-[12.5px] text-accent-2">
+    <code
+      className={`ai-inline-code rounded-none bg-[color-mix(in_oklab,var(--code-bg)_30%,transparent)] px-1 py-0 font-mono text-[12px] text-accent-2${kindClass}`}
+    >
       {children}
     </code>
   );

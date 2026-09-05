@@ -28,7 +28,7 @@ export interface AutosaveConfig {
 }
 
 export const DEFAULT_AUTOSAVE_CONFIG: AutosaveConfig = {
-  enabled: true,
+  enabled: false,
   intervalMinutes: 5,
   retentionDays: 7,
 };

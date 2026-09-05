@@ -27,6 +27,8 @@ export function adapterBinary(adapter: string): string {
       return 'codex';
     case 'gemini':
       return 'gemini';
+    case 'grok':
+      return 'grok';
     default:
       return adapter;
   }
@@ -42,6 +44,8 @@ export function adapterProtocol(adapter: string): 'claude' | 'codex' | 'gemini' 
       return 'codex';
     case 'gemini':
       return 'gemini';
+    case 'grok':
+      return 'grok';
     default:
       return adapter;
   }
@@ -50,7 +54,7 @@ export function adapterProtocol(adapter: string): 'claude' | 'codex' | 'gemini' 
 /**
  * Whether a model id/label is safe to forward as the CLI's `--model` flag.
  * Mirrors `should_pass_model` in cli_runtime.rs exactly:
- *   - codex/gemini: reject Claude tiers + `claude-*` ids, pass real upstream ids.
+ *   - codex/gemini/grok: reject Claude tiers + `claude-*` ids, pass real upstream ids.
  *   - claude-code: only genuine `claude*` ids or the bare tier aliases.
  */
 export function shouldPassModel(adapter: string, model: string | undefined): boolean {
@@ -58,7 +62,7 @@ export function shouldPassModel(adapter: string, model: string | undefined): boo
   if (!m) return false;
   const lower = m.toLowerCase();
   const protocol = adapterProtocol(adapter);
-  if (protocol === 'codex' || protocol === 'gemini') {
+  if (protocol === 'codex' || protocol === 'gemini' || protocol === 'grok') {
     return (
       lower !== 'haiku' &&
       lower !== 'sonnet' &&

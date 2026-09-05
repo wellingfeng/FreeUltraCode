@@ -70,7 +70,9 @@ function providerToGatewayProvider(provider: Provider): GatewayProvider {
             ? 'deepseek-harness'
             : provider.kind === 'zcode'
               ? 'zcode'
-              : 'claude-code';
+              : provider.kind === 'grok'
+                ? 'grok'
+                : 'claude-code';
   const transport =
     provider.transport === 'cli' || provider.kind !== 'anthropic'
       ? 'cli'

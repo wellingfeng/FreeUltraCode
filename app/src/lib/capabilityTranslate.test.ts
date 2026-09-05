@@ -19,6 +19,7 @@ describe('capability translate plan', () => {
         'kimi',
         'deepseek-harness',
         'zcode',
+        'grok',
       ]),
     );
   });
@@ -33,6 +34,7 @@ describe('capability translate plan', () => {
     expect(byId.kimi.supported).toBe(false);
     expect(byId['deepseek-harness'].supported).toBe(false);
     expect(byId.zcode.supported).toBe(false);
+    expect(byId.grok.supported).toBe(true);
   });
 
   it('defaults MCP translation targets to the three native-config agents', () => {

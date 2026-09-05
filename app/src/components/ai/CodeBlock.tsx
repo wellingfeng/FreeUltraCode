@@ -174,8 +174,8 @@ function TableFromText({ raw }: { raw: string }) {
   const rows = lines.slice(2).map(splitTableRow);
   const width = header.length;
   return (
-    <div className="ai-table-wrap my-2 overflow-x-auto rounded-lg border border-border">
-      <table className="ai-table w-full border-collapse text-[13px]">
+    <div className="ai-table-wrap overflow-x-auto">
+      <table className="ai-table w-full border-collapse">
         <thead>
           <tr>
             {header.map((cell, i) => (
@@ -229,8 +229,8 @@ function AsciiTableFromText({ raw }: { raw: string }) {
   const body = rows.slice(1).map(splitAsciiTableRow);
   const width = header.length;
   return (
-    <div className="ai-table-wrap my-2 overflow-x-auto rounded-lg border border-border">
-      <table className="ai-table w-full border-collapse text-[13px]">
+    <div className="ai-table-wrap overflow-x-auto">
+      <table className="ai-table w-full border-collapse">
         <thead>
           <tr>
             {header.map((cell, i) => (
@@ -264,7 +264,7 @@ function PlainTextBlock({ raw }: { raw: string }) {
   const text = raw.replace(/\n$/, '');
   const mono = hasBoxDrawing(raw);
   const bodyClass =
-    'ai-plain-block__body whitespace-pre-wrap rounded-lg px-3.5 py-2.5 text-[13px] leading-relaxed text-fg ' +
+    'ai-plain-block__body whitespace-pre-wrap rounded-sm px-2.5 py-2 text-[12.5px] leading-normal text-fg ' +
     (mono ? 'font-mono overflow-x-auto' : 'break-words');
   return (
     <div
@@ -276,7 +276,7 @@ function PlainTextBlock({ raw }: { raw: string }) {
         <button
           type="button"
           onClick={() => navigator.clipboard?.writeText(text)}
-          className="absolute right-1.5 top-1.5 z-10 rounded border border-border-soft bg-panel-2/80 px-1.5 py-0.5 text-[11px] text-fg-faint backdrop-blur transition-colors hover:text-fg"
+          className="absolute right-1.5 top-1.5 z-10 rounded px-1.5 py-0.5 text-[11px] text-fg-faint transition-colors hover:text-fg"
           title={t(locale, 'chat.copy')}
         >
           <Copy size={11} className="inline mr-0.5" />

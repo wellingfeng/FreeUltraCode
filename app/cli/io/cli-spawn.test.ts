@@ -451,3 +451,89 @@ process.stdin.on('end', () => {
     }
   });
 });
+
+describe('spawnCliAgent (grok argv)', () => {
+  // Fake grok: dump argv, read the prompt from --prompt-file, then emit a
+  // claude-shaped terminal result (streaming-messages-json reuses that parser).
+  function fakeGrokBody(argvOut: string): string {
+    return `
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argvOut)}, JSON.stringify(argv));
+const pi = argv.indexOf('--prompt-file');
+const prompt = pi >= 0 ? fs.readFileSync(argv[pi + 1], 'utf8') : '';
+process.stdout.write(JSON.stringify({ type: 'result', result: 'GROK_RESULT:' + prompt }) + '\\n');
+process.exit(0);
+`;
+  }
+
+  it('assembles grok argv, passes prompt via --prompt-file, parses result', async () => {
+    const argvOut = join(dir, 'argv-grok.json');
+    const bin = makeFakeCli('fake-grok', fakeGrokBody(argvOut));
+    const out = await spawnCliAgent('grok-prompt', {
+      adapter: 'grok',
+      cliCommand: bin,
+      model: 'grok-4.6',
+      permission: 'full',
+      cwd: dir,
+    });
+
+    expect(out).toBe('GROK_RESULT:grok-prompt');
+
+    const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+    // grok ≥ v1.0.13 requires `-p` to take an inline value; we use --prompt-file
+    // instead, so `-p` must NOT appear in argv.
+    expect(argv).not.toContain('-p');
+    expect(argv).toContain('--output-format');
+    expect(argv[argv.indexOf('--output-format') + 1]).toBe('streaming-messages-json');
+    expect(argv).toContain('--model');
+    expect(argv[argv.indexOf('--model') + 1]).toBe('grok-4.6');
+    expect(argv).toContain('--permission-mode');
+    expect(argv[argv.indexOf('--permission-mode') + 1]).toBe('bypassPermissions');
+    expect(argv).toContain('--cwd');
+    expect(argv).toContain('--prompt-file');
+    // Note: --prompt-file points at a temp dir that spawnCliAgent cleans up on
+    // settle, so the file is already gone by the time we get here. The fake
+    // grok body already echoed the prompt back into `out` above, which proves
+    // the file existed and carried 'grok-prompt'.
+    const promptPath = argv[argv.indexOf('--prompt-file') + 1];
+    expect(promptPath).toMatch(/ultragamestudio-grok-.*prompt\.txt$/);
+  });
+
+  it('maps readonly to plan mode and omits permission-mode for ask', async () => {
+    const argvOut1 = join(dir, 'argv-grok-ro.json');
+    const bin1 = makeFakeCli('fake-grok-ro', fakeGrokBody(argvOut1));
+    await spawnCliAgent('p', {
+      adapter: 'grok',
+      cliCommand: bin1,
+      permission: 'readonly',
+      cwd: dir,
+    });
+    const argv1: string[] = JSON.parse(readFileSync(argvOut1, 'utf8'));
+    expect(argv1[argv1.indexOf('--permission-mode') + 1]).toBe('plan');
+
+    const argvOut2 = join(dir, 'argv-grok-ask.json');
+    const bin2 = makeFakeCli('fake-grok-ask', fakeGrokBody(argvOut2));
+    await spawnCliAgent('p', {
+      adapter: 'grok',
+      cliCommand: bin2,
+      permission: 'ask',
+      cwd: dir,
+    });
+    const argv2: string[] = JSON.parse(readFileSync(argvOut2, 'utf8'));
+    expect(argv2).not.toContain('--permission-mode');
+  });
+
+  it('drops Claude tier model labels for grok', async () => {
+    const argvOut = join(dir, 'argv-grok-model.json');
+    const bin = makeFakeCli('fake-grok-model', fakeGrokBody(argvOut));
+    await spawnCliAgent('p', {
+      adapter: 'grok',
+      cliCommand: bin,
+      model: 'opus', // Claude tier — must NOT be passed as --model
+      cwd: dir,
+    });
+    const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
+    expect(argv).not.toContain('--model');
+  });
+});

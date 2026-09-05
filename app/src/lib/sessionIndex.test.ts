@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { searchSessions } from './sessionSearch';
-import { invalidateSessionIndex, searchSessionsIndexed } from './sessionIndex';
+import {
+  invalidateSessionIndex,
+  searchSessionIdsIndexed,
+  searchSessionsIndexed,
+} from './sessionIndex';
 
 interface FakeSession {
   title: string;
@@ -150,5 +154,38 @@ describe('sessionIndex', () => {
     });
     const hits = await searchSessionsIndexed(makeReader(), 'ws', '??');
     expect(hits).toEqual([]);
+  });
+
+  it('returns every matching session id with no top-N limit', async () => {
+    sessions.set('s1', {
+      title: '无关标题',
+      updatedAt: 1000,
+      messages: [{ role: 'assistant', text: '消息体里提到宋亚东' }],
+    });
+    sessions.set('s2', {
+      title: '宋亚东的专访',
+      updatedAt: 2000,
+      messages: [{ role: 'user', text: '别的' }],
+    });
+    sessions.set('s3', {
+      title: '完全无关',
+      updatedAt: 3000,
+      messages: [{ role: 'user', text: '没有目标词' }],
+    });
+
+    const ids = await searchSessionIdsIndexed(makeReader(), 'ws', '宋亚东');
+    expect(ids).toEqual(new Set(['s1', 's2']));
+  });
+
+  it('returns an empty set for an empty query without touching the reader', async () => {
+    sessions.set('s1', {
+      title: '资源导入',
+      updatedAt: 1000,
+      messages: [{ role: 'user', text: '导入贴图' }],
+    });
+    const calls = { count: 0 };
+    const ids = await searchSessionIdsIndexed(makeReader(calls), 'ws', '');
+    expect(ids).toEqual(new Set());
+    expect(calls.count).toBe(0);
   });
 });

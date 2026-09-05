@@ -78,6 +78,7 @@ export function adapterDefaultCommand(adapter: RuntimeAdapterId): string {
   if (adapter === 'kimi') return 'kimi';
   if (adapter === 'deepseek-harness') return 'dsh';
   if (adapter === 'zcode') return 'zcode';
+  if (adapter === 'grok') return 'grok';
   return 'claude';
 }
 
@@ -757,7 +758,9 @@ function normalizeLegacyAdapter(value: unknown): LegacyCliSource['adapter'] | un
     value === 'codex' ||
     value === 'gemini' ||
     value === 'kimi' ||
-    value === 'deepseek-harness'
+    value === 'deepseek-harness' ||
+    value === 'zcode' ||
+    value === 'grok'
   ) {
     return value;
   }
@@ -1065,6 +1068,13 @@ function inferLegacyKnownCliFromToken(
       ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
     };
   }
+  if (stem === 'grok') {
+    return {
+      adapter: 'grok',
+      command: 'grok',
+      ...(looksLikeLegacyPath(compact) ? { pathHint: compact } : {}),
+    };
+  }
   return null;
 }
 
@@ -1341,7 +1351,8 @@ function normalizeAdapter(value: unknown): RuntimeAdapterId {
     value === 'kimi' ||
     value === 'claude-code' ||
     value === 'deepseek-harness' ||
-    value === 'zcode'
+    value === 'zcode' ||
+    value === 'grok'
   ) {
     return value;
   }
@@ -1359,6 +1370,7 @@ function inferAdapterFromPath(path: string): RuntimeAdapterId {
     return 'deepseek-harness';
   }
   if (lower.includes('zcode')) return 'zcode';
+  if (lower.includes('grok')) return 'grok';
   return 'claude-code';
 }
 
