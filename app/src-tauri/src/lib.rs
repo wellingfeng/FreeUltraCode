@@ -3424,6 +3424,44 @@ fn codex_mcp_config_path() -> Option<PathBuf> {
     user_home_dir().map(|h| h.join(".codex").join("config.toml"))
 }
 
+/// Whether `~/.codex/config.toml` explicitly selects a non-default
+/// `model_provider` (e.g. a relay defined via `[model_providers.<id>]`, like the
+/// common `model_provider = "sss"` + `[model_providers.sss]` layout). A top-level
+/// `model_provider = "openai"` (or absent) means no custom routing and UGS may
+/// still override the endpoint via `OPENAI_BASE_URL`.
+///
+/// When a named provider is selected, UGS must NOT inject `OPENAI_BASE_URL` /
+/// `OPENAI_API_KEY` env: codex resolves the provider, `wire_api` and credential
+/// from its own (already working) config + `auth.json`, and overriding them
+/// redirects the request off the configured relay — whose `wire_api`/auth no
+/// longer match, so the relay rejects the turn (surfaced by UGS as
+/// `CLI "..." turn status failed` after an HTTP 40x).
+fn codex_config_selects_named_provider(config_toml: &str) -> bool {
+    config_toml
+        .parse::<toml::Value>()
+        .ok()
+        .and_then(|doc| {
+            doc.get("model_provider")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned)
+        })
+        .map(|selected| selected.trim().to_owned())
+        .map(|selected| !selected.is_empty() && selected != "openai")
+        .unwrap_or(false)
+}
+
+/// Read `~/.codex/config.toml` (if present) and decide whether codex already
+/// routes through a named model provider that UGS should respect.
+fn codex_uses_named_model_provider() -> bool {
+    let Some(path) = codex_mcp_config_path() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    codex_config_selects_named_provider(&text)
+}
+
 /// Codex 原生 MCP 配置写入 `~/.codex/config.toml` 的 `[mcp_servers.<name>]`。
 fn merge_codex_mcp_servers(
     servers: &serde_json::Map<String, serde_json::Value>,
@@ -14705,6 +14743,14 @@ const DEFAULT_AI_CLI_TIMEOUT_SECS: u64 = 0;
 /// long-running tool calls routinely stay silent far past 30 minutes.
 const DEFAULT_AI_CLI_IDLE_TIMEOUT_SECS: u64 = 7200;
 const CLI_ERROR_CONTEXT_LIMIT: usize = 1200;
+/// dsh headless 一次任务走 argv 位置参数；Windows CreateProcess 把整条命令行
+/// 限制在 ~32767 个 UTF-16 字符（os error 206「文件名或扩展名太长」）。超过该
+/// 安全阈值就改走 `--patch` 覆盖层里的 `headless-runner.task`，把任务文本放下
+/// 文件、避开命令行长度问题（见 is_dsh 分支）。
+const DSH_MAX_CMDLINE_LEN: usize = 28_000;
+/// dsh 退回 `.cmd` shim（cmd /C）时的命令行上限：cmd.exe 只容忍 ~8191 字符，
+/// 留出 dsh 路径与参数余量后用更保守的安全阈值。
+const DSH_CMDSHIM_MAX_CMDLINE_LEN: usize = 6_000;
 /// Idle gap (no stdout activity) after which a "still running" heartbeat line is
 /// emitted to the run log, so a long node never looks completely frozen even
 /// during a long tool execution or a slow first token.
@@ -16963,6 +17009,7 @@ async fn ai_cli(
         // existing `codex exec` path for ask-each-time mode until that callback
         // surface is wired; full/read-only turns can steer safely today.
         let codex_app_server = is_codex
+            && std::env::var("UGS_CODEX_APP_SERVER").ok().as_deref() == Some("1")
             && permission.as_deref() != Some("ask")
             && codex_cli_supports_app_server(&binary, &shell);
         let codex_last_message_path = if is_codex && !codex_app_server {
@@ -17262,9 +17309,33 @@ async fn ai_cli(
             let dsh_base_url = env_vars
                 .as_ref()
                 .and_then(|vars| vars.get("DEEPSEEK_BASE_URL").map(String::as_str));
+            // Windows CreateProcess 把整条命令行限制在 ~32767 个 UTF-16 字符
+            // （os error 206「文件名或扩展名太长」）。直接 `node bin.js` 已把上限
+            // 从 cmd.exe 的 ~8191 提到 ~32767，但长对话回合（系统前缀 + 历史 +
+            // 位于最后的任务）仍会把它撑爆。一旦估计会溢出，就把任务写进
+            // `--patch` 覆盖层里 `headless-runner` 的 `task` 配置（dsh-headless
+            // 正是读这个字段驱动本轮任务），让命令行上只留短小的 patch 路径与
+            // 占位位置参数，从而彻底规避命令行长问题。
+            let dsh_argv_estimate = dsh_node_entry.as_deref().map(str::len).unwrap_or(0)
+                + 96 // node.exe 路径 + 引号/分隔符余量
+                + dsh_patch_path.to_string_lossy().len()
+                + task.len()
+                + 64; // --patch / --profile headless + 分隔符
+            // 命中 `node <bin.js>` 直启（布局完整）时上限 ~32767；退回 `.cmd`
+            // shim（cmd /C，布局缺 bin.js）时上限骤降到 ~8191，阈值也相应收紧。
+            let dsh_cmdline_cap = if dsh_node_entry.is_some() {
+                DSH_MAX_CMDLINE_LEN
+            } else {
+                DSH_CMDSHIM_MAX_CMDLINE_LEN
+            };
+            let task_via_patch = dsh_argv_estimate > dsh_cmdline_cap;
             let _ = std::fs::write(
                 &dsh_patch_path,
-                dsh_log::ugs_patch_yaml(dsh_model, dsh_base_url),
+                dsh_log::ugs_patch_yaml(
+                    dsh_model,
+                    dsh_base_url,
+                    task_via_patch.then_some(task.as_str()),
+                ),
             );
             temp_files.push(TempFileGuard::new(dsh_patch_path.clone()));
             args.push("--patch".into());
@@ -17272,7 +17343,13 @@ async fn ai_cli(
             dsh_sessions_root = Some(dsh_root);
             args.push("--profile".into());
             args.push("headless".into());
-            args.push(task);
+            if task_via_patch {
+                // 占位位置参数：满足 headless-startup 的“非空任务”校验，
+                // 真正的任务文本由 --patch 覆盖层里的 headless-runner.task 提供。
+                args.push(".".into());
+            } else {
+                args.push(task);
+            }
             // dsh's sandbox admits a single workspace root (the session's
             // `process.cwd()`) and has no `--add-dir` flag. So when extra
             // workspace folders are configured, root the session at their
@@ -17576,9 +17653,24 @@ async fn ai_cli(
         } else {
             build_launch_command(&binary, &args, &shell)
         };
+        // If codex's own `~/.codex/config.toml` already selects a named
+        // `model_provider` (the user's working relay + credential), UGS must
+        // NOT override `OPENAI_BASE_URL`/`OPENAI_API_KEY`. Injecting them makes
+        // codex resolve a different provider/wire/auth than the configured one,
+        // so the relay rejects the turn (HTTP 40x surfaced as "turn status
+        // failed"). The selected model still rides `--model`; codex uses its own
+        // config + `auth.json` for endpoint/wire/credentials.
+        let codex_respects_own_config = is_codex && codex_uses_named_model_provider();
         if let Some(env_vars) = env_vars.as_ref() {
             for (key, value) in env_vars {
                 if !key.trim().is_empty() && key != "UGS_CLAUDE_BARE" {
+                    if codex_respects_own_config
+                        && (key == "OPENAI_BASE_URL"
+                            || key == "OPENAI_API_KEY"
+                            || key == "OPENAI_MODEL")
+                    {
+                        continue;
+                    }
                     cmd.env(key, value);
                 }
             }
@@ -20671,6 +20763,34 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("thread/start 响应超时"));
+    }
+
+    #[test]
+    fn codex_config_selects_named_provider_detects_relay_layouts() {
+        // A named relay provider (the common packyapi layout) must be respected
+        // so UGS doesn't override OPENAI_BASE_URL/OPENAI_API_KEY.
+        assert!(codex_config_selects_named_provider(
+            r#"
+model_provider = "sss"
+model = "gpt-5.6-sol"
+[model_providers.sss]
+name = "packycode"
+base_url = "https://www.packyapi.com/v1"
+wire_api = "responses"
+requires_openai_auth = true
+"#
+        ));
+        // Default / no custom routing -> UGS may still override the endpoint.
+        assert!(!codex_config_selects_named_provider(
+            "model = \"gpt-5.6-sol\"\n"
+        ));
+        assert!(!codex_config_selects_named_provider(
+            "model_provider = \"openai\"\n"
+        ));
+        assert!(!codex_config_selects_named_provider(
+            "model_provider = \"\"\n"
+        ));
+        assert!(!codex_config_selects_named_provider("not valid toml ["));
     }
 
     #[test]

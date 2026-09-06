@@ -9,9 +9,10 @@
  *   1. explicit override (`cliCommand` arg — an absolute path or a bare name)
  *   2. `UGS_<ADAPTER>_PATH` env var (e.g. UGS_CLAUDE_PATH / UGS_CODEX_PATH)
  *   3. config-file `adapters.<adapter>.path` (passed in by the caller)
- *   4. PATH scan for the adapter's default binary name (+ PATHEXT on Windows)
+ *   4. official Codex runtime (`CODEX_CLI_PATH` / Codex Desktop config)
+ *   5. PATH scan for the adapter's default binary name (+ PATHEXT on Windows)
  */
-import { chmodSync, copyFileSync, readdirSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
 
@@ -177,10 +178,48 @@ function searchPath(command: string): string | null {
   return null;
 }
 
+function preferredCodexPath(): string | null {
+  const configured = process.env.CODEX_CLI_PATH?.trim();
+  if (configured && isExecutableFile(configured)) return configured;
+
+  const configPath = join(
+    process.env.CODEX_HOME?.trim() || join(userHomeDir(), '.codex'),
+    'config.toml',
+  );
+  try {
+    const text = readFileSync(configPath, 'utf8');
+    const match = text.match(/CODEX_CLI_PATH\s*=\s*(['"])(.*?)\1/);
+    const path = match?.[2]?.trim();
+    if (path && isExecutableFile(path)) return path;
+  } catch {
+    /* use the installed runtime fallback */
+  }
+
+  if (IS_WINDOWS) {
+    const root = process.env.LOCALAPPDATA?.trim();
+    if (root) {
+      try {
+        const paths = readdirSync(join(root, 'OpenAI', 'Codex', 'bin'))
+          .map((name) => join(root, 'OpenAI', 'Codex', 'bin', name, 'codex.exe'))
+          .filter(isExecutableFile)
+          .sort()
+          .reverse();
+        return paths[0] ?? null;
+      } catch {
+        /* use PATH below */
+      }
+    }
+  }
+  return null;
+}
+
 /** Resolve a bare command or path to an executable file path, or null. */
 export function resolveCommand(command: string): string | null {
   if (looksLikePath(command)) {
     return isExecutableFile(command) ? command : null;
+  }
+  if (command.toLowerCase() === 'codex') {
+    return preferredCodexPath() ?? searchPath(command);
   }
   return searchPath(command);
 }

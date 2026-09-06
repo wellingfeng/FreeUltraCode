@@ -5,6 +5,8 @@ import MermaidBlock from './MermaidBlock';
 import SvgBlock from './SvgBlock';
 import ComfyGraphBlock from './ComfyGraphBlock';
 import WorldModelBlock from './WorldModelBlock';
+import FileChip, { type OpenFileFn } from './FileChip';
+import { parseFileRef, type FileRef } from './lib/filePath';
 import { useStore } from '@/store/useStore';
 import { t } from '@/lib/i18n';
 import {
@@ -55,8 +57,12 @@ function languageOf(preNode: HastNode | undefined): string | null {
  */
 export default function CodeBlock({
   node,
+  onOpenFile,
+  cwd,
 }: {
   node?: HastNode;
+  onOpenFile?: OpenFileFn;
+  cwd?: string;
 }) {
   const raw = useMemo(() => nodeText(node).replace(/\n$/, ''), [node]);
   const lang = languageOf(node);
@@ -100,6 +106,20 @@ export default function CodeBlock({
     // 避免把中文散文/ASCII 框图误判成代码并染上 hljs 颜色。
     if (lang === null && looksLikeCode(raw)) {
       return <RawCodeBlock raw={raw} language={null} />;
+    }
+    // 纯文件引用块：AI 把生成的文件绝对路径（word/pdf/ppt/html 等）包进一个
+    // 无语言或 text/txt 的 fence 时，上面不会命中代码高亮，PlainTextBlock 会把它
+    // 渲染成不可点击的纯文本面板。这里检测“整块全是文件引用”，改渲染成可点击的
+    // FileChip 列表，保证生成的文档始终可以点击打开。
+    const fileRefBlock = buildFileRefBlock(raw);
+    if (fileRefBlock) {
+      return (
+        <div className="ai-file-ref-block flex flex-col gap-1 py-1">
+          {fileRefBlock.map((ref, i) => (
+            <FileChip key={i} refData={ref} onOpenFile={onOpenFile} cwd={cwd} />
+          ))}
+        </div>
+      );
     }
     return <PlainTextBlock raw={raw} />;
   }
@@ -250,6 +270,29 @@ function AsciiTableFromText({ raw }: { raw: string }) {
       </table>
     </div>
   );
+}
+
+/**
+ * When a plain-text fence is composed entirely of local file references — one
+ * per non-empty line, e.g. an agent reporting generated document/image paths —
+ * return the parses so the block renders as clickable chips instead of inert
+ * text. Returns null when any non-empty line is not itself a file reference, so
+ * prose, ASCII diagrams and real code are never hijacked.
+ */
+function buildFileRefBlock(raw: string): FileRef[] | null {
+  const lines = raw
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const refs: FileRef[] = [];
+  for (const line of lines) {
+    const ref = parseFileRef(line, { allowSpaces: true });
+    if (!ref) return null;
+    refs.push(ref);
+  }
+  return refs;
 }
 
 /**

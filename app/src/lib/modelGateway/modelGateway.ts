@@ -136,7 +136,10 @@ function shouldFallbackDirectFetchToCli(
   return (
     message === 'Failed to fetch' ||
     message.includes('NetworkError') ||
-    message.includes('Load failed')
+    message.includes('Load failed') ||
+    /protocol_not_supported|does not support chat completions|不支持\s+chat completions/i.test(
+      message,
+    )
   );
 }
 

@@ -99,7 +99,7 @@ pub fn ugs_dsh_sessions_root() -> PathBuf {
 /// 已在 spawn 时注入 `DEEPSEEK_API_KEY`，不写进 config。
 ///
 /// 两个字段都来自 `env_vars`（`UGS_DSH_MODEL` / `DEEPSEEK_BASE_URL`）。
-pub fn ugs_patch_yaml(model: Option<&str>, base_url: Option<&str>) -> String {
+pub fn ugs_patch_yaml(model: Option<&str>, base_url: Option<&str>, task: Option<&str>) -> String {
     let mut out = String::from(
         "- id: session-persistence-jsonl\n  config:\n    root: !!js process.env.UGS_DSH_SESSIONS\n    packChunks: false\n    compression: none\n",
     );
@@ -160,6 +160,18 @@ pub fn ugs_patch_yaml(model: Option<&str>, base_url: Option<&str>) -> String {
             yaml_scalar(base_url)
         ));
     }
+    // 大任务透传：把一次性任务写进 `headless-runner` 的 `task` 配置，而不是
+    // 当作 argv 位置参数传给 dsh。dsh-headless 的 runner 就是读这个配置字段
+    // （bundle 默认 `task: !!js ctx.headlessStartup.task`）来驱动本轮任务的，
+    // 因此用 overlay 按 id 整行替换 config 即可让任务文本走文件，绕开 Windows
+    // CreateProcess 的命令行长度上限（os error 206）。headless-startup 仍会因
+    // 占位位置参数而照常提供非空服务。
+    if let Some(task) = task.map(str::trim).filter(|t| !t.is_empty()) {
+        out.push_str(&format!(
+            "- id: headless-runner\n  config:\n    task: {}\n",
+            yaml_scalar(task)
+        ));
+    }
     out
 }
 
@@ -181,11 +193,25 @@ fn is_official_deepseek(base_url: &str) -> bool {
     host == "api.deepseek.com" || host.ends_with(".deepseek.com") || host == "deepseek.com"
 }
 
-/// 把任意字符串编为 YAML 双引号标量，转义反斜杠与双引号。
+/// 把任意字符串编为 YAML 双引号标量，转义反斜杠、双引号与全部控制字符。
 /// dsh 的 patch 文件按 YAML 解析，URL/model id 含 `:`、`/` 等字符时
-/// 必须引用，避免被误读为 map/anchor。
+/// 必须引用，避免被误读为 map/anchor。任务文本可能含换行/制表等控制字符，
+/// 同样必须转义，否则会破坏 YAML 双引号标量结构。
 fn yaml_scalar(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut escaped = String::with_capacity(value.len() + 2);
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            c if (c as u32) < 0x20 => escaped.push_str(&format!("\\x{:02x}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
     format!("\"{escaped}\"")
 }
 
@@ -795,7 +821,7 @@ mod tests {
 
     #[test]
     fn ugs_patch_yaml_targets_persistence_row() {
-        let yaml = ugs_patch_yaml(None, None);
+        let yaml = ugs_patch_yaml(None, None, None);
         assert!(yaml.contains("session-persistence-jsonl"));
         assert!(yaml.contains("compression: none"));
         assert!(yaml.contains("packChunks: false"));
@@ -807,7 +833,7 @@ mod tests {
 
     #[test]
     fn ugs_patch_yaml_overrides_default_model_when_channel_supplies_one() {
-        let yaml = ugs_patch_yaml(Some("deepseek-v4-pro"), None);
+        let yaml = ugs_patch_yaml(Some("deepseek-v4-pro"), None, None);
         assert!(yaml.contains("agent-default-model"));
         assert!(yaml.contains("provider: deepseek-official"));
         assert!(yaml.contains("model: \"deepseek-v4-pro\""));
@@ -821,7 +847,11 @@ mod tests {
     fn ugs_patch_yaml_keeps_native_for_official_base_url() {
         // 官方端点即便显式给出 baseURL，也走 native deepseek-official，
         // 保留 thinking/reasoning 能力。
-        let yaml = ugs_patch_yaml(Some("deepseek-v4-pro"), Some("https://api.deepseek.com"));
+        let yaml = ugs_patch_yaml(
+            Some("deepseek-v4-pro"),
+            Some("https://api.deepseek.com"),
+            None,
+        );
         assert!(yaml.contains("provider: deepseek-official"));
         assert!(yaml.contains("id: llm-deepseek"));
         assert!(yaml.contains("baseURL: \"https://api.deepseek.com\""));
@@ -836,6 +866,7 @@ mod tests {
         let yaml = ugs_patch_yaml(
             Some("deepseek-v4-pro"),
             Some("https://gateway.example.com/v1"),
+            None,
         );
         assert!(yaml.contains("id: llm-pi-ai"));
         assert!(yaml.contains("provider: deepseek-compat"));
@@ -853,11 +884,40 @@ mod tests {
     fn ugs_patch_yaml_third_party_without_model_falls_back_to_native() {
         // 第三方 baseURL 但缺 model：无法安全声明 pi-ai catalog（会
         // UNKNOWN_MODEL），退回 native + baseURL 覆盖，保持旧行为不崩。
-        let yaml = ugs_patch_yaml(None, Some("https://gateway.example.com/v1"));
+        let yaml = ugs_patch_yaml(None, Some("https://gateway.example.com/v1"), None);
         assert!(!yaml.contains("llm-pi-ai"));
         assert!(yaml.contains("id: llm-deepseek"));
         assert!(yaml.contains("baseURL: \"https://gateway.example.com/v1\""));
         assert!(!yaml.contains("agent-default-model"));
+    }
+
+    #[test]
+    fn ugs_patch_yaml_embeds_task_into_headless_runner() {
+        // 大任务（会溢出 Windows 命令行长度）应写入 `headless-runner` 的
+        // `task` 配置，而不是 argv；缺省无任务时绝不生成该行。
+        let yaml = ugs_patch_yaml(None, None, None);
+        assert!(!yaml.contains("headless-runner"));
+
+        let task = "运行一下测试\n并检查 \"引号\" 与反斜杠 \\。";
+        let yaml = ugs_patch_yaml(None, None, Some(task));
+        assert!(yaml.contains("id: headless-runner"));
+        assert!(yaml.contains(r#"task: "运行一下测试\n并检查 \"引号\" 与反斜杠 \\。""#));
+
+        // 空白任务不会写入（与 headless 拒绝空白任务一致）。
+        let yaml = ugs_patch_yaml(None, None, Some("   "));
+        assert!(!yaml.contains("headless-runner"));
+    }
+
+    #[test]
+    fn yaml_scalar_escapes_control_chars() {
+        assert_eq!(yaml_scalar("a\nb\tc"), r#""a\nb\tc""#);
+        assert_eq!(yaml_scalar("say \"hi\""), r#""say \"hi\"""#);
+        assert_eq!(yaml_scalar("a\\b"), r#""a\\b""#);
+        // 单行普通值不受影响（与旧行为一致）。
+        assert_eq!(
+            yaml_scalar("https://api.deepseek.com"),
+            r#""https://api.deepseek.com""#
+        );
     }
 
     #[test]

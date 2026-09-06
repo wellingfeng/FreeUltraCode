@@ -14,6 +14,7 @@ import {
   adapterBinary,
   adapterProtocol,
   repairClaudeBunInstall,
+  resolveCommand,
   shouldPassModel,
 } from './which-cli';
 
@@ -39,6 +40,21 @@ describe('grok adapter mapping', () => {
     expect(shouldPassModel('grok', 'opus')).toBe(false);
     expect(shouldPassModel('grok', 'sonnet')).toBe(false);
     expect(shouldPassModel('grok', 'claude-3-5-sonnet')).toBe(false);
+  });
+});
+
+describe('codex executable selection', () => {
+  it('honors the official Codex runtime before PATH', () => {
+    const binary = join(dir, 'official-codex.exe');
+    writeFileSync(binary, 'codex', 'utf8');
+    const previous = process.env.CODEX_CLI_PATH;
+    process.env.CODEX_CLI_PATH = binary;
+    try {
+      expect(resolveCommand('codex')).toBe(binary);
+    } finally {
+      if (previous == null) delete process.env.CODEX_CLI_PATH;
+      else process.env.CODEX_CLI_PATH = previous;
+    }
   });
 });
 

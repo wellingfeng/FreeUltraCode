@@ -8,7 +8,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { spawnCliAgent } from './cli-spawn';
+import { codexConfigSelectsNamedModelProvider, spawnCliAgent } from './cli-spawn';
 
 const IS_WINDOWS = process.platform === 'win32';
 let dir: string;
@@ -535,5 +535,24 @@ process.exit(0);
     });
     const argv: string[] = JSON.parse(readFileSync(argvOut, 'utf8'));
     expect(argv).not.toContain('--model');
+  });
+});
+
+describe('codexConfigSelectsNamedModelProvider', () => {
+  it('detects a custom relay model_provider (packyapi layout)', () => {
+    expect(
+      codexConfigSelectsNamedModelProvider(
+        'model_provider = "sss"\nmodel = "gpt-5.6-sol"\n' +
+          '[model_providers.sss]\nbase_url = "https://www.packyapi.com/v1"\n' +
+          'wire_api = "responses"\n',
+      ),
+    ).toBe(true);
+  });
+
+  it('returns false for no/dropped/openai model_provider', () => {
+    expect(codexConfigSelectsNamedModelProvider('model = "gpt-5.6-sol"\n')).toBe(false);
+    expect(codexConfigSelectsNamedModelProvider('model_provider = "openai"\n')).toBe(false);
+    expect(codexConfigSelectsNamedModelProvider('model_provider = ""\n')).toBe(false);
+    expect(codexConfigSelectsNamedModelProvider('not valid toml [')).toBe(false);
   });
 });

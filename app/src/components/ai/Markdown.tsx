@@ -365,7 +365,13 @@ function MarkdownImpl({
   };
 
   return {
-    pre: ({ node }) => <CodeBlock node={node as never} />,
+    pre: ({ node }) => (
+      <CodeBlock
+        node={node as never}
+        onOpenFile={ctxRef.current.onOpenFile}
+        cwd={ctxRef.current.cwd}
+      />
+    ),
     code: ({ className, children, ...props }) => {
       // Block code lives inside a <pre> (handled above). rehype-highlight tags
       // it with `language-*`/`hljs`; an indented or info-less fence has neither,

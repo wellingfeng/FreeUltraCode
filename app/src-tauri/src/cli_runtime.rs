@@ -349,6 +349,12 @@ pub fn resolve_command_path(command: &str) -> Option<PathBuf> {
         return raw.exists().then(|| raw.to_path_buf());
     }
 
+    if command.eq_ignore_ascii_case("codex") {
+        if let Some(path) = preferred_codex_path() {
+            return Some(path);
+        }
+    }
+
     #[cfg(windows)]
     {
         let mut variants = vec![command.to_string()];
@@ -364,6 +370,58 @@ pub fn resolve_command_path(command: &str) -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         search_path(&[command.to_string()])
+    }
+}
+
+fn preferred_codex_path() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("CODEX_CLI_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+
+    let config_path = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".codex")))?
+        .join("config.toml");
+    if let Ok(text) = fs::read_to_string(config_path) {
+        if let Ok(doc) = text.parse::<toml::Value>() {
+            if let Some(path) = doc
+                .get("mcp_servers")
+                .and_then(|value| value.get("node_repl"))
+                .and_then(|value| value.get("env"))
+                .and_then(|value| value.get("CODEX_CLI_PATH"))
+                .and_then(toml::Value::as_str)
+            {
+                let path = PathBuf::from(path);
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)?
+            .join("OpenAI")
+            .join("Codex")
+            .join("bin");
+        let mut candidates = fs::read_dir(root)
+            .ok()?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path().join("codex.exe"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| right.cmp(left));
+        return candidates.into_iter().next();
+    }
+
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 

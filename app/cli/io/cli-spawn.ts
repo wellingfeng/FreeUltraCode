@@ -602,9 +602,25 @@ export function spawnCliAgent(prompt: string, opts: SpawnCliAgentOpts): Promise<
 
   return new Promise<string>((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env };
+    // If codex's own `~/.codex/config.toml` already selects a named
+    // `model_provider` (the user's working relay + credential), UGS must NOT
+    // override OPENAI_BASE_URL/OPENAI_API_KEY. Injecting them makes codex
+    // resolve a different provider/wire/auth than the configured one, so the
+    // relay rejects the turn (HTTP 40x surfaced as "turn status failed"). The
+    // selected model still rides `--model`; codex uses its own config +
+    // auth.json for endpoint/wire/credentials.
+    const codexRespectsOwnConfig =
+      isCodex && codexConfigSelectsNamedModelProviderFromDisk();
     if (opts.env) {
       for (const [k, v] of Object.entries(opts.env)) {
-        if (k.trim() && k !== 'UGS_CLAUDE_BARE') env[k] = v;
+        if (!k.trim() || k === 'UGS_CLAUDE_BARE') continue;
+        if (
+          codexRespectsOwnConfig &&
+          (k === 'OPENAI_BASE_URL' || k === 'OPENAI_API_KEY' || k === 'OPENAI_MODEL')
+        ) {
+          continue;
+        }
+        env[k] = v;
       }
     }
     normalizeSpawnEnv(env);
@@ -921,6 +937,49 @@ function codexLastMessageReady(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Codex CLI host name of the user's `~/.codex/config.toml`, or null when the
+ * file is missing/unreadable.
+ */
+function codexConfigPath(): string | null {
+  try {
+    return join(homedir(), '.codex', 'config.toml');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a `~/.codex/config.toml` text explicitly selects a non-default
+ * `model_provider` (e.g. `model_provider = "sss"` + `[model_providers.sss]`).
+ * When true, UGS must not override OPENAI_BASE_URL/OPENAI_API_KEY and instead
+ * let codex use its own (working) provider/wire/credentials; the model still
+ * rides `--model`. Mirrors lib.rs `codex_config_selects_named_provider`.
+ */
+export function codexConfigSelectsNamedModelProvider(text: string): boolean {
+  // Minimal TOML scan: a top-level `model_provider = "<value>"` line.
+  const match = /^\s*model_provider\s*=\s*"([^"]*)"\s*$/m.exec(text);
+  if (!match) return false;
+  const value = match[1].trim();
+  return value !== '' && value !== 'openai';
+}
+
+/**
+ * Read `~/.codex/config.toml` (if present) and decide whether codex already
+ * routes through a named model provider that UGS should respect.
+ */
+function codexConfigSelectsNamedModelProviderFromDisk(): boolean {
+  const path = codexConfigPath();
+  if (!path) return false;
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return false;
+  }
+  return codexConfigSelectsNamedModelProvider(text);
 }
 
 const ERROR_CONTEXT_LIMIT = 1200;

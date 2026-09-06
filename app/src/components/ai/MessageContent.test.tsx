@@ -545,6 +545,25 @@ describe('MessageContent integration', () => {
     expect(html).toMatch(/session-captures/);
   });
 
+  it('renders a fenced Windows document path as a clickable file chip', () => {
+    // 关键回归：AI 把生成的 Word/PDF/HTML 绝对路径包进一个无语言 fence 时，之前
+    // 走 PlainTextBlock 渲染成不可点击的纯文本面板；必须仍是可点击的 FileChip。
+    const B = String.fromCharCode(92);
+    const path = `E:${B}gdc${B}gdc-dubbed-videos${B}6q10dLQSzn0_notes.docx`;
+    const html = renderToStaticMarkup(
+      createElement(MessageContent, {
+        text: `Word 文件完整路径：\n\n\`\`\`\n${path}\n\`\`\``,
+        streaming: false,
+        onOpenFile: () => {},
+      }),
+    );
+
+    expect(html).toMatch(/ai-file-chip/);
+    expect(html).toMatch(/ai-file-chip--interactive/);
+    expect(html).not.toMatch(/ai-plain-block/);
+    expect(html).toMatch(/6q10dLQSzn0_notes\.docx/);
+  });
+
   it('shows a reveal-in-folder menu for interactive file chips', async () => {
     const calls: Array<{ path: string; reveal?: boolean }> = [];
     const container = document.createElement('div');

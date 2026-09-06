@@ -176,6 +176,53 @@ describe('completeGatewayText', () => {
     expect(mocks.aiEditViaCli).not.toHaveBeenCalled();
   });
 
+  it('falls back to Codex CLI when a relay only supports Responses', async () => {
+    mocks.completeOpenAICompatible.mockRejectedValue(
+      new Error(
+        'HTTP 400: {"error":{"code":"protocol_not_supported","message":"模型不支持 chat completions 协议"}}',
+      ),
+    );
+    mocks.resolveCliInvocation.mockResolvedValue({
+      adapter: 'codex',
+      command: 'codex',
+      status: 'ready',
+      source: 'system',
+    });
+
+    const route = {
+      selection: {
+        adapter: 'codex' as const,
+        modelClass: 'gpt-5.6-sol' as const,
+        providerId: 'packy',
+        channelId: 'default',
+      },
+      adapter: 'codex' as const,
+      modelClass: 'gpt-5.6-sol' as const,
+      model: 'gpt-5.6-sol',
+      providerId: 'packy',
+      channelId: 'default',
+      transport: 'openai-compatible' as const,
+      mode: 'direct' as const,
+      apiKey: 'sk-relay',
+      baseUrl: 'https://www.packyapi.com/v1',
+      label: 'Codex · packy',
+      source: 'global' as const,
+      env: {
+        OPENAI_API_KEY: 'sk-relay',
+        OPENAI_BASE_URL: 'https://www.packyapi.com/v1',
+      },
+    };
+
+    await expect(
+      completeGatewayText({ route, system: 'system prompt', userContent: 'user prompt' }),
+    ).resolves.toBe('cli fallback');
+    expect(mocks.aiEditViaCli).toHaveBeenCalledWith(
+      'system prompt\n\nuser prompt',
+      'codex',
+      expect.objectContaining({ cliCommand: 'codex', model: 'gpt-5.6-sol' }),
+    );
+  });
+
   it('records Anthropic-style CLI cache usage through the generic CLI parser', async () => {
     mocks.aiEditViaCli.mockImplementation(async (_prompt, _adapter, opts) => {
       opts.onUsage?.({

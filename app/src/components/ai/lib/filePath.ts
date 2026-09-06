@@ -218,6 +218,10 @@ const KNOWN_EXT = new Set([
   // browser-previewable images
   'png', 'apng', 'jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp', 'gif', 'webp',
   'bmp', 'dib', 'ico', 'cur', 'svg', 'avif',
+  // game render / config artifacts (bare filenames such as `foo.set`,
+  // `foo.set4` / `foo.set8` are reported by the agent without any path
+  // separator, so without these they'd never render as a clickable chip)
+  'set', 'set4', 'set8',
   // 3D model assets
   'glb', 'gltf', 'obj', 'stl', 'fbx', 'ply', 'usdz', 'blend',
   // video assets

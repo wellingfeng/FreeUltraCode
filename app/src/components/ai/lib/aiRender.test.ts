@@ -181,9 +181,23 @@ describe('parseFileRef', () => {
       'summary.docx',
       'budget.xlsx',
       'slides.pptx',
+      // Agent-reported game render/config artifacts come as BARE filenames with
+      // no path separator, so they must still parse as a file reference.
+      'shader.set',
+      'pipeline.set4',
+      'config.set8',
     ]) {
       expect(parseFileRef(name)?.basename).toBe(name);
     }
+  });
+
+  it('keeps agent-reported bare game artifacts as real refs', () => {
+    // `.set` / `.set4` / `.set8` carry no separator, so this is the case that
+    // used to fall back to plain prose and never render a clickable chip.
+    expect(looksLikePath('ggGtdrlDRefBent-.set')).toBe(true);
+    const ref = parseFileRef('ggGtdrlDRefBent-.set')!;
+    expect(ref.path).toBe('ggGtdrlDRefBent-.set');
+    expect(ref.basename).toBe('ggGtdrlDRefBent-.set');
   });
 
   it('accepts known extensionless config filenames', () => {
